@@ -47,7 +47,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
+    <div className="h-screen w-screen flex flex-col bg-[#090d16] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
       
       {/* Top Header */}
       <Header
@@ -60,11 +60,11 @@ const MainLayout: React.FC = () => {
       />
 
       {/* Main Tab Views */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
         
         {/* Tab 1: Synchronized Co-Study Theater + Quick Live Situation Bar */}
         {activeTab === 'video' && (
-          <div className="flex-1 flex flex-col overflow-y-auto">
+          <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
             <div className="max-w-7xl mx-auto w-full px-4 pt-3 pb-1">
               <LiveSituationTracker onNavigateToTab={setActiveTab} />
             </div>
@@ -94,7 +94,7 @@ const MainLayout: React.FC = () => {
 
         {/* Tab 2: Split-Screen Co-Study Mode */}
         {activeTab === 'split' && (
-          <div className="w-full max-w-7xl mx-auto p-3 flex flex-col lg:flex-row gap-3 h-[calc(100vh-4.5rem)]">
+          <div className="w-full max-w-7xl mx-auto p-3 flex flex-col lg:flex-row gap-3 h-full overflow-hidden">
             
             {/* Left 50%: Video Player */}
             <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -151,33 +151,55 @@ const MainLayout: React.FC = () => {
 
         {/* Tab 3: Dedicated Live Situation & Stopwatch Tracker */}
         {activeTab === 'tracker' && (
-          <div className="max-w-5xl mx-auto w-full p-4 overflow-y-auto">
+          <div className="flex-1 min-h-0 max-w-5xl mx-auto w-full p-4 overflow-y-auto">
             <LiveSituationTracker onNavigateToTab={setActiveTab} />
           </div>
         )}
 
         {/* Tab 4: Fullscreen Shared Whiteboard */}
-        {activeTab === 'whiteboard' && <WhiteboardCanvas />}
+        {activeTab === 'whiteboard' && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <WhiteboardCanvas />
+          </div>
+        )}
 
         {/* Tab 5: Collaborative Notes */}
-        {activeTab === 'notes' && <SharedNotesEditor />}
+        {activeTab === 'notes' && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <SharedNotesEditor />
+          </div>
+        )}
 
         {/* Tab 6: Personal AI Study Coach & Teacher */}
         {activeTab === 'ai-coach' && (
-          <AICoachHub
-            initialPrompt={aiCoachPresetPrompt}
-            onNavigateToCalendar={() => setActiveTab('calendar')}
-          />
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <AICoachHub
+              initialPrompt={aiCoachPresetPrompt}
+              onNavigateToCalendar={() => setActiveTab('calendar')}
+            />
+          </div>
         )}
 
         {/* Tab 7: Productivity Analytics */}
-        {activeTab === 'analytics' && <AnalyticsDashboard />}
+        {activeTab === 'analytics' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <AnalyticsDashboard />
+          </div>
+        )}
 
         {/* Tab 8: Study Calendar Heatmap */}
-        {activeTab === 'calendar' && <StudyCalendarView />}
+        {activeTab === 'calendar' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <StudyCalendarView />
+          </div>
+        )}
 
         {/* Tab 9: Multi-Tier Leaderboards */}
-        {activeTab === 'leaderboards' && <LeaderboardsView />}
+        {activeTab === 'leaderboards' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <LeaderboardsView />
+          </div>
+        )}
 
       </main>
 
