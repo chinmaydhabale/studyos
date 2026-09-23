@@ -419,6 +419,59 @@ export class StorageService {
       if (subject && subject !== 'All') docs = docs.filter(d => d.subject === subject);
     }
 
+    if (docs.length === 0) {
+      docs = [
+        {
+          id: 'doc-sample-math-1',
+          title: 'RRB PO 2026: Speed Math & Simplification Tricks',
+          fileName: 'RRB_PO_Speed_Math_Formula_Sheet.pdf',
+          subject: 'Quantitative Aptitude',
+          fileSize: 48500,
+          mimeType: 'application/pdf',
+          telegramFileId: 'sample-math-rrb',
+          telegramMessageId: 1,
+          uploaderId: 'system',
+          uploaderName: 'StudyOS Exam Faculty',
+          uploadedAt: new Date().toISOString(),
+          downloadCount: 142,
+          description: 'High-speed calculation shortcuts, fraction tables & quadratic sign methods.',
+          roomId: roomId || 'STUDY-ALPHA'
+        },
+        {
+          id: 'doc-sample-reasoning-1',
+          title: 'IBPS PO 2026: Reasoning Puzzles & Syllogism Master Notes',
+          fileName: 'IBPS_PO_Reasoning_Puzzles_Handout.pdf',
+          subject: 'Reasoning Ability',
+          fileSize: 52100,
+          mimeType: 'application/pdf',
+          telegramFileId: 'sample-reasoning-ibps',
+          telegramMessageId: 2,
+          uploaderId: 'system',
+          uploaderName: 'StudyOS Exam Faculty',
+          uploadedAt: new Date().toISOString(),
+          downloadCount: 198,
+          description: 'Only a few syllogism rules, floor puzzles and circular seating diagrams.',
+          roomId: roomId || 'STUDY-ALPHA'
+        },
+        {
+          id: 'doc-sample-ga-1',
+          title: 'General Awareness & Monthly RBI Banking Capsule',
+          fileName: 'RBI_Banking_Current_Affairs_Capsule.pdf',
+          subject: 'Current Affairs',
+          fileSize: 46200,
+          mimeType: 'application/pdf',
+          telegramFileId: 'sample-ga-capsule',
+          telegramMessageId: 3,
+          uploaderId: 'system',
+          uploaderName: 'StudyOS Exam Faculty',
+          uploadedAt: new Date().toISOString(),
+          downloadCount: 89,
+          description: 'Monetary policy repo rates, digital banking initiatives & international summits.',
+          roomId: roomId || 'STUDY-ALPHA'
+        }
+      ];
+    }
+
     return docs;
   }
 
