@@ -40,6 +40,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
   // Telegram config state
   const [teleStatus, setTeleStatus] = useState<TelegramConfig | null>(null);
   const [detectingChannel, setDetectingChannel] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [manualChannelId, setManualChannelId] = useState<string>('');
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
 
@@ -118,6 +119,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
       if (data.success) {
         addToast('Channel Detected!', data.message, 'success');
         fetchTelegramStatus();
+        fetchDocuments();
         setShowConfigModal(false);
       } else {
         addToast('Detection Result', data.message || 'No update found.', 'warning');
@@ -126,6 +128,30 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
       addToast('Detection Error', err.message || 'Failed to detect channel', 'alert');
     } finally {
       setDetectingChannel(false);
+    }
+  };
+
+  // Sync documents from channel
+  const handleSyncChannel = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/telegram/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        addToast('Channel Synced!', data.message, 'success');
+        fetchDocuments();
+        fetchTelegramStatus();
+      } else {
+        addToast('Sync Result', data.message || 'No new documents found in channel.', 'info');
+      }
+    } catch (e: any) {
+      addToast('Sync Failed', e.message || 'Could not sync from channel', 'alert');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -270,6 +296,18 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
               </>
             )}
           </button>
+
+          {teleStatus?.isConfigured && (
+            <button
+              onClick={handleSyncChannel}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/30 hover:bg-sky-500/20 transition-all disabled:opacity-50"
+              title="Sync any new documents posted in the Telegram channel into Study Vault"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync Channel'}</span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsUploadOpen(true)}

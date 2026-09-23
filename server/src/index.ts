@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -186,11 +187,21 @@ app.post('/api/telegram/detect', async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/telegram/config', requireAdmin, async (req, res) => {
+app.post('/api/telegram/config', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (adminToken && req.header('x-admin-token') !== adminToken) {
+    return res.status(401).json({ error: 'Unauthorized: valid x-admin-token required' });
+  }
   const { channelId, channelTitle } = req.body;
   if (!channelId) return res.status(400).json({ error: 'Channel ID required' });
   const result = await telegramService.setChannelConfig(channelId, channelTitle);
   res.json({ success: true, config: result });
+});
+
+app.post('/api/telegram/sync', async (req, res) => {
+  const { roomId } = req.body || {};
+  const result = await telegramService.syncDocumentsFromUpdates(roomId);
+  res.json(result);
 });
 
 app.post('/api/telegram/upload', upload.single('file'), async (req, res) => {
