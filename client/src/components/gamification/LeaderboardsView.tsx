@@ -15,24 +15,49 @@ import {
 } from 'lucide-react';
 import { LeaderboardEntry } from '../../types.js';
 import { useStudy } from '../../context/StudyContext.js';
+import { useSocket } from '../../context/SocketContext.js';
 import { API_BASE_URL } from '../../config.js';
 
 type TierFilter = 'Friends' | 'Study Room' | 'College' | 'City' | 'Country' | 'Global';
 
 export const LeaderboardsView: React.FC = () => {
   const { xp, level, coins, streak, badges, triggerCelebration } = useStudy();
+  const { currentUser, addToast } = useSocket();
   const [filter, setFilter] = useState<TierFilter>('Global');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`${API_BASE_URL}/api/leaderboard?filter=${encodeURIComponent(filter)}`)
-      .then((res) => res.json())
-      .then((data) => setEntries(data))
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
-  }, [filter]);
+    fetch(
+      `${API_BASE_URL}/api/leaderboard?filter=${encodeURIComponent(filter)}&userId=${encodeURIComponent(currentUser.id)}`,
+      { signal: controller.signal }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error(`Leaderboard request failed (${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data)) {
+          setEntries([]);
+          addToast('Leaderboard Unavailable', 'Could not load leaderboard data. Please try again.', 'alert');
+          return;
+        }
+        setEntries(data);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted || err?.name === 'AbortError') return;
+        setEntries([]);
+        addToast('Leaderboard Error', err?.message || 'Failed to load leaderboard.', 'alert');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [filter, currentUser.id, addToast]);
 
   const achievementBadges = [
     { title: '🔥 7-Day Streak', desc: 'Maintained 7 consecutive study days without missing.', unlocked: true, color: 'from-amber-500/20 to-orange-500/20 border-amber-500/30 text-amber-300' },
@@ -168,7 +193,7 @@ export const LeaderboardsView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-white/5">
               {entries.map((student) => {
-                const isMe = student.id === 'user_self';
+                const isMe = student.id === currentUser.id;
                 return (
                   <tr
                     key={student.id}

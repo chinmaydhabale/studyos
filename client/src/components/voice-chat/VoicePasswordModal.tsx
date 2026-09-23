@@ -14,38 +14,64 @@ export const VoicePasswordModal: React.FC<VoicePasswordModalProps> = ({
   onSuccess,
   onClose
 }) => {
-  const { roomId, addToast } = useSocket();
+  const { roomId, socket, addToast } = useSocket();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Prefer the socket handshake (it already knows this room's password) and fall
+  // back to the REST endpoint if the realtime connection is not up yet.
+  const verifyOverSocket = (): Promise<{ success: boolean; message: string }> => {
+    return new Promise((resolve, reject) => {
+      if (!socket?.connected) {
+        reject(new Error('offline'));
+        return;
+      }
+      const timeout = window.setTimeout(() => reject(new Error('timeout')), 8000);
+      socket.emit('voice:verify_password', { roomId, password }, (res: { success: boolean; message: string }) => {
+        window.clearTimeout(timeout);
+        resolve(res);
+      });
+    });
+  };
+
+  const verifyOverHttp = async (): Promise<{ success: boolean; message: string }> => {
+    const res = await fetch(`${API_BASE_URL}/api/voice/verify-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, password })
+    });
+    const data = await res.json();
+    return { success: res.ok && Boolean(data.success), message: data.message || data.error || '' };
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsVerifying(true);
 
-    // Verify password with server
-    fetch(`${API_BASE_URL}/api/voice/verify-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId, password })
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (res.ok && data.success) {
-          addToast('Voice Chat Unlocked! 🎙️', 'Microphone enabled. You can now talk with your study partner.', 'success');
-          onSuccess();
-          onClose();
-        } else {
-          setError(data.message || 'Incorrect room password. (Hint: study123)');
-        }
-      })
-      .catch(() => {
-        setError('Server error verifying password.');
-      })
-      .finally(() => setIsVerifying(false));
+    try {
+      let result: { success: boolean; message: string };
+      try {
+        result = await verifyOverSocket();
+      } catch (socketErr) {
+        result = await verifyOverHttp();
+      }
+
+      if (result.success) {
+        addToast('Voice Chat Unlocked! 🎙️', 'Microphone enabled. You can now talk with your study partner.', 'success');
+        onSuccess();
+        onClose();
+      } else {
+        setError(result.message || 'Incorrect room password.');
+      }
+    } catch (err) {
+      setError('Could not verify the password. Please check your connection and try again.');
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   return (
@@ -100,7 +126,7 @@ export const VoicePasswordModal: React.FC<VoicePasswordModalProps> = ({
 
           <div className="flex items-center justify-between text-[11px] text-slate-500">
             <span>Room: {roomId}</span>
-            <span>Default Passkey: <strong className="text-indigo-400 font-mono">study123</strong></span>
+            <span>Ask your group creator for the room passkey</span>
           </div>
 
           <button

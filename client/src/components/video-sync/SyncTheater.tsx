@@ -37,6 +37,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     sendVideoPlay,
     sendVideoPause,
     sendVideoSeek,
+    sendVideoRate,
     peers,
     currentUser,
     addToast
@@ -56,12 +57,22 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isInternalActionRef = useRef<boolean>(false);
+  // Always-current mirrors so the mount-time player init effect never reads stale state
+  const videoStateRef = useRef(videoState);
+  const volumeRef = useRef(volume);
+  videoStateRef.current = videoState;
+  volumeRef.current = volume;
+  // Tracks the last rate we applied locally so remote echoes don't re-apply / loop
+  const lastAppliedRateRef = useRef<number>(1);
 
-  // Helper to extract YouTube ID from full URL
+  // Helper to extract YouTube ID from full URL. Returns '' for anything unparseable
+  // so callers can warn the user instead of silently loading an unrelated lecture.
   const extractVideoId = (url: string): string => {
-    if (!url) return 'k7YS_P_t3uA';
-    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-    return match ? match[1] : (url.length === 11 ? url : 'k7YS_P_t3uA');
+    if (!url) return '';
+    const trimmed = url.trim();
+    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    if (match) return match[1];
+    return /^[\w-]{11}$/.test(trimmed) ? trimmed : '';
   };
 
   // Load YouTube IFrame API script
@@ -77,9 +88,11 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       const el = document.getElementById('yt-player-frame');
       if (!el) return;
       if (window.YT && window.YT.Player && !playerRef.current) {
+        // Read the freshest state at init time instead of the mount-time closure
+        const latest = videoStateRef.current;
         try {
           playerRef.current = new window.YT.Player('yt-player-frame', {
-            videoId: videoState.videoId || 'k7YS_P_t3uA',
+            videoId: latest.videoId || 'k7YS_P_t3uA',
             playerVars: {
               autoplay: 0,
               controls: 0, // Custom synchronized controls
@@ -92,11 +105,18 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
               onReady: (event: any) => {
                 setPlayerReady(true);
                 setDuration(event.target.getDuration());
-                event.target.setVolume(volume);
-                if (videoState.currentTime > 0) {
-                  event.target.seekTo(videoState.currentTime, true);
+                event.target.setVolume(volumeRef.current);
+                // Re-read the latest state here too — the room may have moved on
+                // between mount and the player actually becoming ready.
+                const ready = videoStateRef.current;
+                if (ready.currentTime > 0) {
+                  event.target.seekTo(ready.currentTime, true);
                 }
-                if (videoState.isPlaying) {
+                if (ready.playbackRate && ready.playbackRate !== 1) {
+                  event.target.setPlaybackRate(ready.playbackRate);
+                  lastAppliedRateRef.current = ready.playbackRate;
+                }
+                if (ready.isPlaying) {
                   event.target.playVideo();
                 }
               },
@@ -149,9 +169,11 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   useEffect(() => {
     if (!playerReady || !playerRef.current) return;
 
+    // Only swallow the echo of our own action. A remote update that arrives right
+    // after a local one must still be applied, so we clear the flag and continue
+    // instead of returning early.
     if (isInternalActionRef.current) {
       isInternalActionRef.current = false;
-      return;
     }
 
     try {
@@ -174,6 +196,20 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       console.warn('Sync error:', e);
     }
   }, [videoState.isPlaying, videoState.currentTime, videoState.lastUpdated, playerReady]);
+
+  // Apply remote playback-rate changes to the local player
+  useEffect(() => {
+    if (!playerReady || !playerRef.current) return;
+    const rate = videoState.playbackRate;
+    if (!rate || rate === lastAppliedRateRef.current) return;
+    try {
+      playerRef.current.setPlaybackRate(rate);
+      lastAppliedRateRef.current = rate;
+      setPlaybackRate(rate);
+    } catch (e) {
+      console.warn('Rate sync error:', e);
+    }
+  }, [videoState.playbackRate, playerReady]);
 
   // Periodic time tracker for slider & time display
   useEffect(() => {
@@ -207,7 +243,10 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const handleSeekDelta = (deltaSeconds: number) => {
     if (!playerReady || !playerRef.current) return;
     isInternalActionRef.current = true;
-    const newTime = Math.max(0, Math.min(duration, currentTime + deltaSeconds));
+    // Only clamp to the end when the duration is actually known; otherwise a
+    // forward seek while duration is still 0 would snap back to the start.
+    const upperBound = duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
+    const newTime = Math.max(0, Math.min(upperBound, currentTime + deltaSeconds));
     playerRef.current.seekTo(newTime, true);
     setCurrentTime(newTime);
     sendVideoSeek(newTime);
@@ -227,6 +266,11 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     const targetUrl = url || inputUrl;
     if (!targetUrl.trim()) return;
     const vid = extractVideoId(targetUrl);
+    if (!vid) {
+      // Keep the current video and warn instead of loading an unrelated lecture
+      addToast('Invalid YouTube Link', 'That link could not be parsed. Please paste a valid YouTube video URL.', 'warning');
+      return;
+    }
     sendVideoChange(targetUrl, vid);
     setInputUrl('');
     addToast('Class Loaded', 'New YouTube lecture loaded for both students!', 'success');
@@ -236,6 +280,8 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     if (!playerReady || !playerRef.current) return;
     playerRef.current.setPlaybackRate(rate);
     setPlaybackRate(rate);
+    lastAppliedRateRef.current = rate;
+    sendVideoRate(rate);
   };
 
   const formatTime = (secs: number) => {

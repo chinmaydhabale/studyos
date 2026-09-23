@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 
 export type AmbientSoundType = 'none' | 'lofi' | 'rain' | 'library' | 'whitenoise';
@@ -33,20 +33,30 @@ interface StudyContextType {
 
 const StudyContext = createContext<StudyContextType | null>(null);
 
+const XP_PER_LEVEL = 400;
+
+const modeDurations = {
+  focus: 25 * 60,
+  short_break: 5 * 60,
+  long_break: 15 * 60
+} as const;
+
 export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Focus Timer States (25m focus, 5m short break, 15m long break)
   const [timerMode, setTimerModeState] = useState<'focus' | 'short_break' | 'long_break'>('focus');
-  const [timeLeft, setTimeLeft] = useState(25 * 60);
+  const [timeLeft, setTimeLeft] = useState(modeDurations.focus);
   const [isRunning, setIsRunning] = useState(false);
   const [totalFocusSecondsToday, setTotalFocusSecondsToday] = useState(0); // Starts at 0
   const [breakCountToday, setBreakCountToday] = useState(0); // Starts at 0
 
   // Gamification States (Starts at pure 0)
   const [xp, setXp] = useState(0);
-  const [level, setLevel] = useState(1);
   const [coins, setCoins] = useState(0);
   const [streak, setStreak] = useState(0);
   const [badges, setBadges] = useState<string[]>([]);
+
+  // Level is derived from XP so it can never drift out of sync
+  const level = useMemo(() => Math.floor(xp / XP_PER_LEVEL) + 1, [xp]);
 
   // Ambient Sounds
   const [ambientSound, setAmbientSound] = useState<AmbientSoundType>('none');
@@ -55,6 +65,7 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const audioCtxRef = useRef<AudioContext | null>(null);
   const noiseNodeRef = useRef<AudioNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const celebratedLevelRef = useRef(1);
 
   const triggerCelebration = useCallback(() => {
     confetti({
@@ -64,63 +75,66 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, []);
 
+  // State updaters stay pure — XP/coins/streak are plain increments, and the
+  // level-up celebration is handled in an effect below (never inside an updater).
   const addXp = useCallback((amount: number, _reason?: string) => {
-    setXp(prev => {
-      const newXp = prev + amount;
-      const nextLevel = Math.floor(newXp / 400) + 1;
-      if (nextLevel > level) {
-        setLevel(nextLevel);
-        triggerCelebration();
-      }
-      return newXp;
-    });
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    setXp(prev => prev + amount);
     setCoins(prev => prev + Math.floor(amount / 5));
     setStreak(s => (s === 0 ? 1 : s));
+  }, []);
+
+  useEffect(() => {
+    if (level > celebratedLevelRef.current) {
+      celebratedLevelRef.current = level;
+      triggerCelebration();
+    }
   }, [level, triggerCelebration]);
 
   const setTimerMode = useCallback((mode: 'focus' | 'short_break' | 'long_break') => {
     setTimerModeState(mode);
     setIsRunning(false);
-    if (mode === 'focus') setTimeLeft(25 * 60);
-    else if (mode === 'short_break') setTimeLeft(5 * 60);
-    else setTimeLeft(15 * 60);
+    setTimeLeft(modeDurations[mode]);
   }, []);
 
   const startTimer = () => setIsRunning(true);
   const pauseTimer = () => setIsRunning(false);
-  const resetTimer = () => {
+  const resetTimer = useCallback(() => {
     setIsRunning(false);
-    setTimerMode(timerMode);
-  };
+    setTimerModeState(prev => {
+      setTimeLeft(modeDurations[prev]);
+      return prev;
+    });
+  }, []);
 
-  // Timer Tick
+  // Timer Tick — the updater only counts down; nothing else happens inside it.
   useEffect(() => {
     if (!isRunning) return;
     const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setIsRunning(false);
-
-          if (timerMode === 'focus') {
-            addXp(100, 'Completed Focus Session');
-            triggerCelebration();
-            setTimerMode('short_break');
-          } else {
-            setBreakCountToday(b => b + 1);
-            setTimerMode('focus');
-          }
-          return 0;
-        }
-        if (timerMode === 'focus') {
-          setTotalFocusSecondsToday(s => s + 1);
-        }
-        return prev - 1;
-      });
+      setTimeLeft(prev => (prev <= 1 ? 0 : prev - 1));
+      if (timerMode === 'focus') {
+        setTotalFocusSecondsToday(s => s + 1);
+      }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isRunning, timerMode, addXp, triggerCelebration, setTimerMode]);
+  }, [isRunning, timerMode]);
+
+  // Handle a finished interval outside of the updater so StrictMode's double
+  // invocation of updaters can never award XP or fire confetti twice.
+  useEffect(() => {
+    if (!isRunning || timeLeft > 0) return;
+
+    setIsRunning(false);
+    if (timerMode === 'focus') {
+      addXp(100, 'Completed Focus Session');
+      triggerCelebration();
+      setTimerMode('short_break');
+    } else {
+      setBreakCountToday(b => b + 1);
+      setTimerMode('focus');
+    }
+  }, [timeLeft, isRunning, timerMode, addXp, triggerCelebration, setTimerMode]);
 
   // Ambient Sounds synthesis
   useEffect(() => {

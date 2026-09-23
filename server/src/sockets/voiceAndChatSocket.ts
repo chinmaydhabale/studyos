@@ -1,12 +1,39 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
 import { aiCoach } from '../services/aiCoachService.js';
+import { updateRoomPeerVoiceState } from './studyRoomSocket.js';
 import { ChatMessage } from '../types.js';
+
+const DEFAULT_ROOM = 'study-room-alpha';
+
+// roomId -> (socketId -> userName) for everyone currently in the voice channel
+const voiceRoomMembers: Map<string, Map<string, string>> = new Map();
+
+function cleanRoomId(roomId?: string): string {
+  return (roomId || DEFAULT_ROOM).trim().toUpperCase();
+}
+
+function addVoiceMember(roomId: string, socketId: string, userName: string): Array<{ peerId: string; name: string }> {
+  const members = voiceRoomMembers.get(roomId) || new Map<string, string>();
+  const existing = Array.from(members.entries())
+    .filter(([peerId]) => peerId !== socketId)
+    .map(([peerId, name]) => ({ peerId, name }));
+  members.set(socketId, userName);
+  voiceRoomMembers.set(roomId, members);
+  return existing;
+}
+
+function removeVoiceMember(roomId: string, socketId: string): void {
+  const members = voiceRoomMembers.get(roomId);
+  if (!members) return;
+  members.delete(socketId);
+  if (members.size === 0) voiceRoomMembers.delete(roomId);
+}
 
 export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
   // Join Room Chat & Voice Channel
   socket.on('chat:join', (data: { roomId: string }) => {
-    const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+    const roomId = cleanRoomId(data.roomId);
     const oldChatRoom = (socket as any).currentChatRoom;
     if (oldChatRoom && oldChatRoom !== `chat_${roomId}`) {
       socket.leave(oldChatRoom);
@@ -31,7 +58,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     pdfDocTitle?: string;
     isAiDoubt?: boolean;
   }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = data.roomId || DEFAULT_ROOM;
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       roomId,
@@ -86,51 +113,91 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     }
   });
 
-  // WebRTC Audio Signaling for real-time voice chat between students
+  // WebRTC Audio Signaling for real-time voice chat between students.
+  // Every signal must reach exactly one peer, otherwise a 3+ person room
+  // produces overlapping offers/answers (glare) and no call can connect.
   socket.on('webrtc:offer', (data: { roomId: string; offer: any; to?: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
-    socket.to(`voice_${roomId}`).emit('webrtc:offer', {
-      from: socket.id,
-      offer: data.offer
-    });
+    const payload = { from: socket.id, offer: data.offer };
+    if (data.to) {
+      io.to(data.to).emit('webrtc:offer', payload);
+      return;
+    }
+    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:offer', payload);
   });
 
   socket.on('webrtc:answer', (data: { roomId: string; answer: any; to?: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
-    socket.to(`voice_${roomId}`).emit('webrtc:answer', {
-      from: socket.id,
-      answer: data.answer
-    });
+    const payload = { from: socket.id, answer: data.answer };
+    if (data.to) {
+      io.to(data.to).emit('webrtc:answer', payload);
+      return;
+    }
+    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:answer', payload);
   });
 
-  socket.on('webrtc:ice_candidate', (data: { roomId: string; candidate: any }) => {
-    const roomId = data.roomId || 'study-room-alpha';
-    socket.to(`voice_${roomId}`).emit('webrtc:ice_candidate', {
-      from: socket.id,
-      candidate: data.candidate
-    });
+  socket.on('webrtc:ice_candidate', (data: { roomId: string; candidate: any; to?: string }) => {
+    const payload = { from: socket.id, candidate: data.candidate };
+    if (data.to) {
+      io.to(data.to).emit('webrtc:ice_candidate', payload);
+      return;
+    }
+    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:ice_candidate', payload);
   });
 
   // Join voice room
-  socket.on('voice:join', (data: { roomId: string }) => {
-    const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+  socket.on('voice:join', (data: { roomId: string; userName?: string }) => {
+    const roomId = cleanRoomId(data.roomId);
     const oldVoiceRoom = (socket as any).currentVoiceRoom;
     if (oldVoiceRoom && oldVoiceRoom !== `voice_${roomId}`) {
       socket.leave(oldVoiceRoom);
+      const oldRoomId = oldVoiceRoom.replace(/^voice_/, '');
+      removeVoiceMember(oldRoomId, socket.id);
+      io.to(oldVoiceRoom).emit('voice:peer_left', { peerId: socket.id });
     }
     (socket as any).currentVoiceRoom = `voice_${roomId}`;
     socket.join(`voice_${roomId}`);
-    socket.to(`voice_${roomId}`).emit('voice:peer_joined', { peerId: socket.id });
+
+    // Tell the newcomer who is already in the call so it can offer to each of them,
+    // and let the existing peers know a newcomer joined.
+    const existingPeers = addVoiceMember(roomId, socket.id, data.userName || 'Student');
+    socket.emit('voice:peers', { roomId, peers: existingPeers });
+    socket.to(`voice_${roomId}`).emit('voice:peer_joined', {
+      peerId: socket.id,
+      userName: data.userName || 'Student'
+    });
+  });
+
+  // Leave voice room explicitly (e.g. user re-locks the voice channel)
+  socket.on('voice:leave', (data: { roomId: string }) => {
+    const roomId = cleanRoomId(data.roomId);
+    socket.leave(`voice_${roomId}`);
+    removeVoiceMember(roomId, socket.id);
+    socket.to(`voice_${roomId}`).emit('voice:peer_left', { peerId: socket.id });
+    (socket as any).currentVoiceRoom = null;
   });
 
   // Mic state & Voice Activity Detection (Speaking indicator)
   socket.on('voice:state', (data: { roomId: string; isMuted: boolean; isSpeaking: boolean; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
-    socket.to(roomId).emit('voice:peer_state', {
+    const roomId = cleanRoomId(data.roomId);
+    const payload = {
       socketId: socket.id,
       userName: data.userName,
       isMuted: data.isMuted,
       isSpeaking: data.isSpeaking
+    };
+    // Keep the room roster in sync so the presence bar shows live mic state,
+    // and reach members who have not unlocked voice yet as well.
+    updateRoomPeerVoiceState(io, roomId, socket.id, {
+      isMuted: data.isMuted,
+      isSpeaking: data.isSpeaking
+    });
+    io.to(`voice_${roomId}`).to(roomId).emit('voice:peer_state', payload);
+  });
+
+  socket.on('disconnect', () => {
+    voiceRoomMembers.forEach((members, roomId) => {
+      if (!members.has(socket.id)) return;
+      removeVoiceMember(roomId, socket.id);
+      io.to(`voice_${roomId}`).emit('voice:peer_left', { peerId: socket.id });
     });
   });
 }

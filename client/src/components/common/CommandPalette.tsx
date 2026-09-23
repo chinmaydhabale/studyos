@@ -15,6 +15,7 @@ import { useStudy } from '../../context/StudyContext.js';
 
 interface CommandPaletteProps {
   isOpen: boolean;
+  onOpen: () => void;
   onClose: () => void;
   onNavigateTab: (tab: string) => void;
   onRunAiPrompt: (prompt: string) => void;
@@ -22,6 +23,7 @@ interface CommandPaletteProps {
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
   isOpen,
+  onOpen,
   onClose,
   onNavigateTab,
   onRunAiPrompt
@@ -32,9 +34,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        const isTypingInPalette =
+          isOpen && (tag === 'input' || tag === 'textarea' || target?.isContentEditable === true);
+        if (isTypingInPalette) return;
         e.preventDefault();
         if (isOpen) onClose();
-        else onClose(); // parent handles toggle
+        else onOpen();
       }
       if (e.key === 'Escape' && isOpen) {
         onClose();
@@ -42,7 +49,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onOpen, onClose]);
 
   if (!isOpen) return null;
 

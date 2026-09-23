@@ -14,20 +14,22 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useStudy } from '../../context/StudyContext.js';
+import { useSocket } from '../../context/SocketContext.js';
 import { API_BASE_URL } from '../../config.js';
 
 export const AnalyticsDashboard: React.FC = () => {
   const { totalFocusSecondsToday, breakCountToday, streak } = useStudy();
+  const { currentUser } = useSocket();
   const [summary, setSummary] = useState<any>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/analytics`)
+    fetch(`${API_BASE_URL}/api/analytics?userId=${encodeURIComponent(currentUser.id)}`)
       .then((res) => res.json())
       .then((data) => setSummary(data))
       .catch((err) => console.error(err));
-  }, []);
+  }, [currentUser.id]);
 
-  const todayHoursFormatted = (totalFocusSecondsToday / 3600).toFixed(1);
+  const todayHoursFormatted = ((totalFocusSecondsToday || 0) / 3600).toFixed(1);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)] overflow-y-auto space-y-4">

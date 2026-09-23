@@ -123,6 +123,7 @@ export interface SharedNote {
 
 export interface StudyTask {
   id: string;
+  userId?: string;
   title: string;
   subject: string;
   durationMinutes: number;

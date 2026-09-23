@@ -21,18 +21,53 @@ export const StudyCalendarView: React.FC = () => {
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/calendar?userId=${encodeURIComponent(currentUser.id)}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Calendar request failed (${res.status})`);
+        return res.json();
+      })
       .then((data) => {
+        if (!Array.isArray(data)) {
+          setHistory([]);
+          setSelectedDay(null);
+          addToast('Calendar Unavailable', 'Could not load your study calendar. Please try again.', 'alert');
+          return;
+        }
         setHistory(data);
         if (data.length > 0) {
-          setSelectedDay(data[data.length - 1]); // Today
+          // Records come back in insertion order, so pick today's LOCAL date
+          // explicitly and fall back to the most recent record.
+          const now = new Date();
+          const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          const todayRecord = data.find((r: CalendarDayRecord) => r.date === todayLocal);
+          setSelectedDay(todayRecord || data[data.length - 1]);
+        } else {
+          setSelectedDay(null);
         }
+      })
+      .catch((err) => {
+        setHistory([]);
+        setSelectedDay(null);
+        addToast('Calendar Error', err?.message || 'Failed to load study calendar.', 'alert');
       });
 
-    fetch(`${API_BASE_URL}/api/tasks`)
-      .then((res) => res.json())
-      .then((data) => setTasks(data));
-  }, [currentUser.id]);
+    fetch(`${API_BASE_URL}/api/tasks?userId=${encodeURIComponent(currentUser.id)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Tasks request failed (${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!Array.isArray(data)) {
+          setTasks([]);
+          addToast('Tasks Unavailable', 'Could not load your study tasks. Please try again.', 'alert');
+          return;
+        }
+        setTasks(data);
+      })
+      .catch((err) => {
+        setTasks([]);
+        addToast('Tasks Error', err?.message || 'Failed to load study tasks.', 'alert');
+      });
+  }, [currentUser.id, addToast]);
 
   const handleToggleTask = async (id: string) => {
     try {
@@ -41,11 +76,17 @@ export const StudyCalendarView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name })
       });
+      if (!res.ok) {
+        throw new Error(`Task update failed (${res.status})`);
+      }
       const updated = await res.json();
+      if (!updated || typeof updated !== 'object' || !('id' in updated)) {
+        throw new Error('Unexpected task response');
+      }
       setTasks(prev => prev.map(t => t.id === id ? updated : t));
       addToast('Task Status Updated', `Task marked as ${updated.completed ? 'completed (+50 XP)' : 'pending'}.`, 'success');
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      addToast('Task Update Failed', e?.message || 'Could not update the task. Please try again.', 'alert');
     }
   };
 

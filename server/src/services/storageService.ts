@@ -24,6 +24,21 @@ import { CalendarRecordModel } from '../models/CalendarRecord.js';
 import { StudyGroupModel } from '../models/StudyGroup.js';
 import { StudyDocumentModel } from '../models/StudyDocument.js';
 
+// Documents loaded from MongoDB via toObject() carry `_id`/`__v`. MongoDB rejects
+// $set updates that touch the immutable `_id`, so always strip them before writing.
+const stripDbFields = <T extends object>(obj: T): T => {
+  const { _id, __v, ...rest } = obj as any;
+  return rest as T;
+};
+
+// "Today" must follow the local calendar day — toISOString() would give the UTC day,
+// which is still yesterday for users in India between 00:00 and 05:30 local time.
+export const localDateKey = (date: Date = new Date()): string => {
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+};
+
 export class StorageService {
   private users: Map<string, UserProfile> = new Map();
   private videoStates: Map<string, VideoSyncState> = new Map();
@@ -84,21 +99,21 @@ export class StorageService {
       // Sync Users
       const dbUsers = await UserModel.find({});
       dbUsers.forEach(u => {
-        this.users.set(u.id, u.toObject() as any);
+        this.users.set(u.id, stripDbFields(u.toObject()) as any);
       });
 
       // Sync Tasks
       const dbTasks = await TaskModel.find({});
-      this.tasks = dbTasks.map(t => t.toObject() as any);
+      this.tasks = dbTasks.map(t => stripDbFields(t.toObject()) as any);
 
       // Sync Activity Sessions
       const dbSessions = await ActivitySessionModel.find({});
-      this.activitySessions = dbSessions.map(s => s.toObject() as any);
+      this.activitySessions = dbSessions.map(s => stripDbFields(s.toObject()) as any);
 
       // Sync Shared Notes
       const dbNotes = await SharedNoteModel.find({});
       dbNotes.forEach(n => {
-        this.notes.set(n.roomId, n.toObject() as any);
+        this.notes.set(n.roomId, stripDbFields(n.toObject()) as any);
       });
 
       // Sync Whiteboard Elements
@@ -106,7 +121,7 @@ export class StorageService {
       const roomMap = new Map<string, WhiteboardElement[]>();
       dbWb.forEach(el => {
         const list = roomMap.get(el.roomId) || [];
-        list.push(el.toObject() as any);
+        list.push(stripDbFields(el.toObject()) as any);
         roomMap.set(el.roomId, list);
       });
       roomMap.forEach((elems, rId) => {
@@ -115,18 +130,18 @@ export class StorageService {
 
       // Sync Calendar Records
       const dbCal = await CalendarRecordModel.find({});
-      this.calendarHistory = dbCal.map(c => c.toObject() as any);
+      this.calendarHistory = dbCal.map(c => stripDbFields(c.toObject()) as any);
 
       // Sync Groups
       const dbGroups = await StudyGroupModel.find({});
       dbGroups.forEach(g => {
-        this.groups.set(g.roomId, g.toObject() as any);
+        this.groups.set(g.roomId, stripDbFields(g.toObject()) as any);
       });
 
       // Sync Documents
       const dbDocs = await StudyDocumentModel.find({});
       dbDocs.forEach(d => {
-        this.documents.set(d.id, d.toObject() as any);
+        this.documents.set(d.id, stripDbFields(d.toObject()) as any);
       });
 
       console.log(`✅ Loaded ${this.users.size} registered users, ${this.groups.size} study groups, and ${this.documents.size} documents from MongoDB.`);
@@ -176,7 +191,7 @@ export class StorageService {
     if (isDbConnected()) {
       UserModel.findOneAndUpdate(
         { id: profile.id },
-        { $set: updated },
+        { $set: stripDbFields(updated) },
         { upsert: true, returnDocument: 'after' }
       ).catch(e => console.warn('MongoDB User save error:', e.message));
     }
@@ -429,7 +444,9 @@ export class StorageService {
       if (subject && subject !== 'All') docs = docs.filter(d => d.subject === subject);
     }
 
-    if (docs.length === 0) {
+    // The shared sample library is only offered when browsing without a room filter,
+    // so a specific study room never shows documents that were never uploaded to it.
+    if (docs.length === 0 && !roomId) {
       docs = [
         {
           id: 'doc-sample-math-1',
@@ -445,7 +462,7 @@ export class StorageService {
           uploadedAt: new Date().toISOString(),
           downloadCount: 142,
           description: 'High-speed calculation shortcuts, fraction tables & quadratic sign methods.',
-          roomId: roomId || 'STUDY-ALPHA'
+          roomId: 'SAMPLE-LIBRARY'
         },
         {
           id: 'doc-sample-reasoning-1',
@@ -461,7 +478,7 @@ export class StorageService {
           uploadedAt: new Date().toISOString(),
           downloadCount: 198,
           description: 'Only a few syllogism rules, floor puzzles and circular seating diagrams.',
-          roomId: roomId || 'STUDY-ALPHA'
+          roomId: 'SAMPLE-LIBRARY'
         },
         {
           id: 'doc-sample-ga-1',
@@ -477,7 +494,7 @@ export class StorageService {
           uploadedAt: new Date().toISOString(),
           downloadCount: 89,
           description: 'Monetary policy repo rates, digital banking initiatives & international summits.',
-          roomId: roomId || 'STUDY-ALPHA'
+          roomId: 'SAMPLE-LIBRARY'
         }
       ];
     }
@@ -510,7 +527,8 @@ export class StorageService {
     userName: string,
     activityName: string,
     category: 'study' | 'break' | 'personal',
-    durationSeconds: number
+    durationSeconds: number,
+    dateKey?: string
   ): ActivitySession {
     const session: ActivitySession = {
       id: `session-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -544,7 +562,7 @@ export class StorageService {
         if (user.streak === 0) user.streak = 1;
 
         // Update Today's real calendar entry (per user)
-        const todayDate = new Date().toISOString().split('T')[0];
+        const todayDate = dateKey || localDateKey();
         let todayRecord = this.calendarHistory.find(r => r.date === todayDate && r.userId === userId);
         if (!todayRecord) {
           todayRecord = {
@@ -570,7 +588,7 @@ export class StorageService {
         if (isDbConnected()) {
           CalendarRecordModel.findOneAndUpdate(
             { date: todayDate, userId },
-            { $set: todayRecord },
+            { $set: stripDbFields(todayRecord) },
             { upsert: true }
           ).catch(() => {});
         }
@@ -580,7 +598,7 @@ export class StorageService {
       user.activityStartTime = null;
 
       if (isDbConnected()) {
-        UserModel.findOneAndUpdate({ id: userId }, { $set: user }).catch(() => {});
+        UserModel.findOneAndUpdate({ id: userId }, { $set: stripDbFields(user) }).catch(() => {});
       }
     }
 
@@ -594,7 +612,7 @@ export class StorageService {
     return this.activitySessions;
   }
 
-  public getUserDailyActivitySummary(userId: string): {
+  public getUserDailyActivitySummary(userId: string, dateKey?: string): {
     userId: string;
     userName: string;
     todayStudySeconds: number;
@@ -602,7 +620,7 @@ export class StorageService {
     sessionCount: number;
     subjectBreakdown: Record<string, number>;
   } {
-    const todayDate = new Date().toISOString().split('T')[0];
+    const todayDate = dateKey || localDateKey();
     const userSessions = this.activitySessions.filter(s =>
       s.userId === userId && s.startedAt && s.startedAt.startsWith(todayDate)
     );
@@ -718,15 +736,17 @@ export class StorageService {
     if (isDbConnected()) {
       SharedNoteModel.findOneAndUpdate(
         { roomId },
-        { $set: note },
+        { $set: stripDbFields(note) },
         { upsert: true }
       ).catch(() => {});
     }
     return note;
   }
 
-  public getTasks(): StudyTask[] {
-    return this.tasks;
+  public getTasks(userId?: string): StudyTask[] {
+    if (!userId) return this.tasks;
+    // Legacy tasks created before per-user isolation stay visible to everyone.
+    return this.tasks.filter(t => !t.userId || t.userId === userId);
   }
 
   public addTask(task: StudyTask): StudyTask {
@@ -739,29 +759,38 @@ export class StorageService {
 
   public toggleTask(id: string, completedBy?: { userId?: string; userName?: string }): StudyTask | undefined {
     const task = this.tasks.find(t => t.id === id);
-    if (task) {
-      task.completed = !task.completed;
+    if (!task) return undefined;
+
+    const wasCompleted = task.completed;
+    task.completed = !wasCompleted;
+
+    // Reward only on the pending -> completed transition, and take it back on undo,
+    // otherwise the same task could be toggled forever to mint infinite XP.
+    const userId = completedBy?.userId;
+    const user = userId ? this.users.get(userId) : undefined;
+    if (user) {
       if (task.completed) {
-        // Award 50 XP only to the user who completed the task
-        const userId = completedBy?.userId || 'guest';
-        const user = this.users.get(userId);
-        if (user) {
-          user.xp += 50;
-          user.coins += 10;
-          user.tasksCompleted += 1;
-          user.level = Math.floor(user.xp / 400) + 1;
-          if (isDbConnected()) {
-            UserModel.findOneAndUpdate(
-              { id: userId },
-              { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
-            ).catch(() => {});
-          }
-        }
+        user.xp += 50;
+        user.coins += 10;
+        user.tasksCompleted += 1;
+      } else {
+        user.xp = Math.max(0, user.xp - 50);
+        user.coins = Math.max(0, user.coins - 10);
+        user.tasksCompleted = Math.max(0, user.tasksCompleted - 1);
       }
+      user.level = Math.floor(user.xp / 400) + 1;
       if (isDbConnected()) {
-        TaskModel.findOneAndUpdate({ id }, { $set: { completed: task.completed } }).catch(() => {});
+        UserModel.findOneAndUpdate(
+          { id: userId },
+          { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
+        ).catch(() => {});
       }
     }
+
+    if (isDbConnected()) {
+      TaskModel.findOneAndUpdate({ id }, { $set: { completed: task.completed } }).catch(() => {});
+    }
+
     return task;
   }
 
@@ -787,9 +816,23 @@ export class StorageService {
     return this.quizBank;
   }
 
-  public getLeaderboards(filter: 'Friends' | 'Study Room' | 'College' | 'City' | 'Country' | 'Global'): LeaderboardEntry[] {
+  public getLeaderboards(filter: 'Friends' | 'Study Room' | 'College' | 'City' | 'Country' | 'Global', userId?: string): LeaderboardEntry[] {
     // Build real leaderboard strictly from registered users!
-    const realUsers = Array.from(this.users.values());
+    const me = userId ? this.users.get(userId) : undefined;
+    let realUsers = Array.from(this.users.values());
+
+    // Scope the board to the requester's own college / city / country when asked.
+    // 'Friends' and 'Study Room' have no relationship model yet, so they fall back to Global.
+    if (me) {
+      if (filter === 'College') {
+        realUsers = realUsers.filter(u => u.college && u.college === me.college);
+      } else if (filter === 'City') {
+        realUsers = realUsers.filter(u => u.city && u.city === me.city);
+      } else if (filter === 'Country') {
+        realUsers = realUsers.filter(u => u.country && u.country === me.country);
+      }
+    }
+
     realUsers.sort((a, b) => b.xp - a.xp || b.totalStudyHours - a.totalStudyHours);
 
     return realUsers.map((u, idx) => ({

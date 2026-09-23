@@ -13,6 +13,7 @@ import {
   PdfPresentationState
 } from '../types.js';
 import { API_BASE_URL, SOCKET_URL } from '../config.js';
+import { useVoiceChat } from '../hooks/useVoiceChat.js';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -71,6 +72,7 @@ interface SocketContextType {
   sendVideoPlay: (currentTime: number) => void;
   sendVideoPause: (currentTime: number) => void;
   sendVideoSeek: (seekToTime: number) => void;
+  sendVideoRate: (rate: number) => void;
   sendWhiteboardElement: (elem: WhiteboardElement) => void;
   clearWhiteboard: () => void;
   sendWhiteboardCursor: (x: number, y: number) => void;
@@ -177,6 +179,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [selectedPeerForDossier, setSelectedPeerForDossier] = useState<RoomPeer | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
+  const previousRoomIdRef = useRef<string>('');
+  // Always-current values for socket handlers that live across renders
+  const roomIdRef = useRef<string>(initialRoomId);
+  const userRef = useRef<UserProfile>(initialUserData.user);
+  roomIdRef.current = roomId;
+  userRef.current = currentUser;
 
   // Authentication: Register
   const registerUser = useCallback(async (data: {
@@ -339,18 +347,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Save user changes to localStorage and server
   const updateUserProfile = useCallback((profile: Partial<UserProfile>) => {
-    setCurrentUser(prev => {
-      const updated = { ...prev, ...profile };
-      try {
-        localStorage.setItem('studyos_auth_user_v1', JSON.stringify(updated));
-      } catch (e) {}
+    const updated = { ...userRef.current, ...profile };
+    setCurrentUser(updated);
+    try {
+      localStorage.setItem('studyos_auth_user_v1', JSON.stringify(updated));
+    } catch (e) {}
 
-      // Emit join with updated profile
-      if (updated.name && roomId) {
-        socketRef.current?.emit('room:join', { roomId, user: updated });
-      }
-      return updated;
-    });
+    // Emit join with updated profile (kept out of the state updater so it runs once)
+    if (updated.name && roomId) {
+      socketRef.current?.emit('room:join', { roomId, user: updated });
+    }
   }, [roomId]);
 
   const addToast = useCallback((title: string, message: string, type: 'info' | 'success' | 'warning' | 'alert' = 'info') => {
@@ -368,7 +374,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  // Initialize Socket Connection
+  // Initialize Socket Connection — created once so changing rooms or renaming
+  // yourself never tears down the realtime connection and its listeners.
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
@@ -380,11 +387,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('connect', () => {
       console.log('Connected to StudyOS real-time server:', newSocket.id);
-      if (currentUser.name) {
-        newSocket.emit('room:join', { roomId, user: currentUser });
+      const activeRoom = roomIdRef.current;
+      const activeUser = userRef.current;
+      if (activeUser.name) {
+        newSocket.emit('room:join', { roomId: activeRoom, user: activeUser });
       }
-      newSocket.emit('video:join', { roomId, userName: currentUser.name || 'Student' });
-      newSocket.emit('chat:join', { roomId });
+      newSocket.emit('video:join', { roomId: activeRoom, userName: activeUser.name || 'Student' });
+      newSocket.emit('chat:join', { roomId: activeRoom });
     });
 
     newSocket.on('room:peers', (updatedPeers: RoomPeer[]) => {
@@ -459,7 +468,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('pdf:presentation_state', (data: PdfPresentationState) => {
       setPdfPresentation(data.isActive ? data : null);
-      if (data.isActive && data.presenterId !== currentUser.id) {
+      if (data.isActive && data.presenterId !== userRef.current.id) {
         addToast('PDF Co-Study Live', `${data.presenterName} is presenting "${data.title}" (Page ${data.currentPage})`, 'info');
       }
     });
@@ -470,8 +479,45 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     return () => {
       newSocket.disconnect();
+      socketRef.current = null;
+      setSocket(null);
     };
-  }, [roomId, currentUser.name, addToast]);
+  }, [addToast]);
+
+  // Re-join the rooms whenever the group or the signed-in identity changes
+  useEffect(() => {
+    const activeSocket = socketRef.current;
+    if (!activeSocket?.connected) return;
+
+    const previousRoom = previousRoomIdRef.current;
+    if (previousRoom && previousRoom !== roomId) {
+      activeSocket.emit('room:leave', { roomId: previousRoom, userId: currentUser.id });
+    }
+    previousRoomIdRef.current = roomId;
+
+    if (!roomId) return;
+    activeSocket.emit('room:join', { roomId, user: currentUser });
+    activeSocket.emit('video:join', { roomId, userName: currentUser.name || 'Student' });
+    activeSocket.emit('chat:join', { roomId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, currentUser.id, currentUser.name]);
+
+  // Voice chat must be unlocked again in every new room (password gate stays intact)
+  useEffect(() => {
+    setIsVoiceUnlocked(false);
+    setIsMicMuted(true);
+    setIsSpeaking(false);
+  }, [roomId]);
+
+  // Real WebRTC mesh voice chat (microphone, peer connections, speaking indicator)
+  useVoiceChat({
+    socket,
+    roomId,
+    userName: currentUser.name || 'Student',
+    isVoiceUnlocked,
+    isMicMuted,
+    onSpeakingChange: setIsSpeaking
+  });
 
   const updateStatus = useCallback((status: string) => {
     setCurrentUser(prev => ({ ...prev, status }));
@@ -483,29 +529,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsVoiceModalOpen(true);
       return;
     }
-
-    setIsMicMuted(prev => {
-      const next = !prev;
-      socketRef.current?.emit('voice:state', {
-        roomId,
-        isMuted: next,
-        isSpeaking: !next && isSpeaking,
-        userName: currentUser.name || 'Student'
-      });
-      return next;
-    });
-  }, [isVoiceUnlocked, roomId, isSpeaking, currentUser.name]);
+    // The voice hook applies the mute to the live track and notifies the room
+    setIsMicMuted(prev => !prev);
+  }, [isVoiceUnlocked]);
 
   const unlockVoiceChat = useCallback(() => {
     setIsVoiceUnlocked(true);
     setIsMicMuted(false);
-    socketRef.current?.emit('voice:state', {
-      roomId,
-      isMuted: false,
-      isSpeaking: true,
-      userName: currentUser.name || 'Student'
-    });
-  }, [roomId, currentUser.name]);
+  }, []);
 
   const sendChatMessage = useCallback((
     text: string,
@@ -559,6 +590,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       userName: currentUser.name || 'Student'
     });
   }, [roomId, currentUser.name]);
+
+  const sendVideoRate = useCallback((rate: number) => {
+    socketRef.current?.emit('video:rate', { roomId, rate });
+  }, [roomId]);
 
   const sendWhiteboardElement = useCallback((elem: WhiteboardElement) => {
     setWhiteboardElements(prev => [...prev, elem]);
@@ -776,6 +811,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         sendVideoPlay,
         sendVideoPause,
         sendVideoSeek,
+        sendVideoRate,
         sendWhiteboardElement,
         clearWhiteboard,
         sendWhiteboardCursor,

@@ -206,11 +206,22 @@ export const Header: React.FC<HeaderProps> = ({
   const [showMobileNav, setShowMobileNav] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const ambientMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (navRef.current && !navRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (navRef.current && !navRef.current.contains(target)) {
         setOpenDropdown(null);
+      }
+      // Only close a popover when the click is outside its own wrapper, otherwise
+      // the mousedown would unmount the menu before its item's click can fire.
+      if (!userMenuRef.current || !userMenuRef.current.contains(target)) {
+        setShowUserMenu(false);
+      }
+      if (!ambientMenuRef.current || !ambientMenuRef.current.contains(target)) {
+        setShowAmbientMenu(false);
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -489,7 +500,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Ambient Sound Dropdown */}
-          <div className="relative">
+          <div className="relative" ref={ambientMenuRef}>
             <button
               onClick={() => setShowAmbientMenu(!showAmbientMenu)}
               className={`p-2 rounded-xl border transition-colors ${
@@ -565,7 +576,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* User Account / Profile Menu */}
           {isAuthenticated ? (
-            <div className="relative">
+            <div className="relative" ref={userMenuRef}>
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2 p-1 pl-2 pr-2.5 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/40 transition-colors"

@@ -235,6 +235,7 @@ const MainLayout: React.FC = () => {
       {/* Command Palette (Ctrl+K) */}
       <CommandPalette
         isOpen={isCommandOpen}
+        onOpen={() => setIsCommandOpen(true)}
         onClose={() => setIsCommandOpen(false)}
         onNavigateTab={(tab) => {
           setActiveTab(tab);

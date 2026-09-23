@@ -3,10 +3,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const DEFAULT_URI = 'mongodb+srv://chinmaydhabale007_db_user:fXgxqIongrV3aVwL@cluster0.keboxsk.mongodb.net/studyos?retryWrites=true&w=majority';
-const MONGODB_URI = process.env.MONGODB_URI || DEFAULT_URI;
+const MONGODB_URI = process.env.MONGODB_URI || '';
+
+export function isDatabaseConfigured(): boolean {
+  return Boolean(MONGODB_URI);
+}
 
 export async function connectDatabase(): Promise<boolean> {
+  if (!MONGODB_URI) {
+    console.warn('⚠️ MONGODB_URI is not set. Skipping database connection.');
+    console.log('ℹ️ Running in resilient fallback mode (in-memory persistent cache active).');
+    return false;
+  }
+
   try {
     console.log('🔄 Connecting to MongoDB Atlas (Cluster0)...');
     mongoose.set('strictQuery', false);

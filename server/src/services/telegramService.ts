@@ -1,8 +1,8 @@
 import { TelegramConfigModel } from '../models/TelegramConfig.js';
 import { isDbConnected } from '../db.js';
 
-const DEFAULT_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8901901969:AAGHqZ1H62gFbuaKz6kkEVEuSq3lVxfP3mY';
-const BOT_USERNAME = 'studyosprobot';
+const DEFAULT_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'studyosprobot';
 
 export class TelegramService {
   private botToken: string = DEFAULT_BOT_TOKEN;

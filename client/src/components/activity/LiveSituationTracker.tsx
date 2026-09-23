@@ -56,7 +56,7 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
     tuneInToPeerVideo
   } = useSocket();
 
-  const { addXp, triggerCelebration } = useStudy();
+  const { triggerCelebration } = useStudy();
 
   const [selectedActivity, setSelectedActivity] = useState<string>(RRB_IBPS_ACTIVITIES[0].name);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
@@ -106,26 +106,32 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
   const handleStopActivity = () => {
     if (!isTimerRunning) return;
 
-    const duration = elapsedSeconds;
+    // Compute the true duration at the moment the user stops, not the last tick
+    const duration = startTime ? Math.max(0, Math.floor((Date.now() - startTime) / 1000)) : elapsedSeconds;
     const actName = activeActivityName;
     const cat = activeCategory;
 
     setIsTimerRunning(false);
     setStartTime(null);
 
-    // Notify socket to record session and stop peer timer
+    // Local calendar day so the server can book the session against the user's day
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    // Notify socket to record session and stop peer timer.
+    // The server is the single source of XP for activity sessions, so we do NOT
+    // award XP here — we only fire the celebration.
     socket?.emit('activity:stop', {
       roomId,
       userId: currentUser.id,
       userName: currentUser.name,
       activityName: actName,
       category: cat,
-      durationSeconds: duration
+      durationSeconds: duration,
+      localDate
     });
 
     if (cat === 'study' && duration >= 30) {
-      const earnedXp = Math.max(10, Math.floor(duration / 60) * 5);
-      addXp(earnedXp);
       triggerCelebration();
     }
 

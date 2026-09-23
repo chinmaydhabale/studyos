@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface ITaskDocument extends Document {
   id: string;
+  userId?: string;
   title: string;
   subject: string;
   durationMinutes: number;
@@ -14,6 +15,7 @@ export interface ITaskDocument extends Document {
 
 const TaskSchema = new Schema<ITaskDocument>({
   id: { type: String, required: true, unique: true, index: true },
+  userId: { type: String, default: '', index: true },
   title: { type: String, required: true },
   subject: { type: String, required: true },
   durationMinutes: { type: Number, default: 30 },

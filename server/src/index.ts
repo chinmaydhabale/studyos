@@ -7,12 +7,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import { connectDatabase } from './db.js';
-import { storage } from './services/storageService.js';
+import { storage, localDateKey } from './services/storageService.js';
 import { aiCoach } from './services/aiCoachService.js';
 import { telegramService } from './services/telegramService.js';
 import { setupVideoSyncSocket } from './sockets/videoSyncSocket.js';
 import { setupVoiceAndChatSocket } from './sockets/voiceAndChatSocket.js';
-import { setupStudyRoomSocket } from './sockets/studyRoomSocket.js';
+import { setupStudyRoomSocket, getExpectedVoicePassword } from './sockets/studyRoomSocket.js';
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
 
 dotenv.config();
@@ -31,6 +31,21 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 app.use(express.json());
+
+// Destructive / configuration endpoints must not be reachable anonymously.
+// Set ADMIN_TOKEN in the environment and send it as the x-admin-token header.
+const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken) {
+    return res.status(503).json({
+      error: 'Admin access is disabled: set the ADMIN_TOKEN environment variable on the server to enable this endpoint.'
+    });
+  }
+  if (req.header('x-admin-token') !== adminToken) {
+    return res.status(401).json({ error: 'Unauthorized: a valid x-admin-token header is required.' });
+  }
+  next();
+};
 
 // Initialize Socket.IO
 const io = new Server(server, {
@@ -51,8 +66,8 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// Wipe Database & Reset to Pure Zero
-app.post('/api/reset', async (req, res) => {
+// Wipe Database & Reset to Pure Zero (admin only)
+app.post('/api/reset', requireAdmin, async (req, res) => {
   await storage.wipeAndResetAllCollections();
   res.json({ success: true, message: 'All data wiped. StudyOS is now at pure zero.' });
 });
@@ -171,7 +186,7 @@ app.post('/api/telegram/detect', async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/telegram/config', async (req, res) => {
+app.post('/api/telegram/config', requireAdmin, async (req, res) => {
   const { channelId, channelTitle } = req.body;
   if (!channelId) return res.status(400).json({ error: 'Channel ID required' });
   const result = await telegramService.setChannelConfig(channelId, channelTitle);
@@ -298,13 +313,14 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
 app.get('/api/activity/peer-summary', (req, res) => {
   const userId = req.query.userId as string;
   if (!userId) return res.status(400).json({ error: 'User ID required' });
-  const summary = storage.getUserDailyActivitySummary(userId);
+  const dateKey = (req.query.date as string) || undefined;
+  const summary = storage.getUserDailyActivitySummary(userId, dateKey);
   res.json(summary);
 });
 
 // Activity Session Recording
 app.post('/api/activity/session', (req, res) => {
-  const { userId, userName, activityName, category, durationSeconds } = req.body;
+  const { userId, userName, activityName, category, durationSeconds, localDate } = req.body;
   if (!userId || !activityName || durationSeconds === undefined) {
     return res.status(400).json({ error: 'Missing required session fields' });
   }
@@ -313,7 +329,8 @@ app.post('/api/activity/session', (req, res) => {
     userName || 'Student',
     activityName,
     category || 'study',
-    durationSeconds
+    durationSeconds,
+    typeof localDate === 'string' && localDate.trim() ? localDate.trim() : undefined
   );
   res.json(session);
 });
@@ -322,28 +339,34 @@ app.post('/api/activity/session', (req, res) => {
 app.post('/api/voice/verify-password', async (req, res) => {
   const { roomId, password } = req.body;
   const cleanId = (roomId || '').trim().toUpperCase();
-  const group = await storage.getStudyGroup(cleanId);
-  const expected = group?.voicePassword || 'study123';
-  const isMatch = password === expected;
-  if (isMatch) {
+  const expected = await getExpectedVoicePassword(cleanId);
+  if (!expected) {
+    return res.status(404).json({
+      success: false,
+      message: `No voice password is configured for study group "${cleanId}". Create or join the group first.`
+    });
+  }
+  if (password === expected) {
     res.json({ success: true, message: 'Voice room unlocked.' });
   } else {
     res.status(401).json({ success: false, message: 'Incorrect Voice Room Password' });
   }
 });
 
-// Tasks
+// Tasks (strictly per user)
 app.get('/api/tasks', (req, res) => {
-  res.json(storage.getTasks());
+  const userId = req.query.userId as string | undefined;
+  res.json(storage.getTasks(userId));
 });
 
 app.post('/api/tasks', (req, res) => {
   const newTask = storage.addTask({
     id: `task-${Date.now()}`,
+    userId: req.body.userId || '',
     title: req.body.title || 'Untitled Study Task',
     subject: req.body.subject || 'General',
     durationMinutes: req.body.durationMinutes || 30,
-    targetDate: req.body.targetDate || new Date().toISOString().split('T')[0],
+    targetDate: req.body.targetDate || localDateKey(),
     completed: false,
     isAiGenerated: req.body.isAiGenerated || false,
     scheduledTime: req.body.scheduledTime || '09:00 AM'
@@ -391,7 +414,8 @@ app.get('/api/analytics', (req, res) => {
 // Leaderboards
 app.get('/api/leaderboard', (req, res) => {
   const filter = (req.query.filter as any) || 'Global';
-  res.json(storage.getLeaderboards(filter));
+  const userId = req.query.userId as string | undefined;
+  res.json(storage.getLeaderboards(filter, userId));
 });
 
 // AI Coach Endpoints

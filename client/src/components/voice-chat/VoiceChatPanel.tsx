@@ -40,6 +40,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
     peers,
     currentUser,
     isMicMuted,
+    isSpeaking,
     toggleMic,
     isVoiceUnlocked,
     sendVideoSeek,
@@ -49,10 +50,14 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
   const [inputText, setInputText] = useState('');
   const [includeTimestamp, setIncludeTimestamp] = useState(true);
   const [isAskingAi, setIsAskingAi] = useState(false);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
 
+  // Scroll only the message list, never the surrounding page
   useEffect(() => {
-    chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [chatMessages]);
 
   const handleSendMessage = (asAiDoubt: boolean = false) => {
@@ -131,7 +136,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
             ) : (
               <>
                 <Mic className="w-3.5 h-3.5" />
-                <span>Live</span>
+                <span>{isSpeaking ? 'Speaking' : 'Live'}</span>
               </>
             )}
           </button>
@@ -181,7 +186,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
       </div>
 
       {/* Chat Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+      <div ref={messagesRef} className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {chatMessages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
             <Bot className="w-8 h-8 text-indigo-400/50 mb-2" />
@@ -255,7 +260,6 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
             </div>
           );
         })}
-        <div ref={chatScrollRef} />
       </div>
 
       {/* Chat Input & AI Doubt Solver Integration */}
@@ -307,7 +311,11 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.shiftKey || (e.nativeEvent as any).isComposing) return;
+              e.preventDefault();
+              handleSendMessage();
+            }}
             placeholder={
               isAskingAi
                 ? mode === 'pdf'

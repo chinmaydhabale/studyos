@@ -36,9 +36,34 @@ export interface PdfPresentation {
 
 const activeRoomPeers: Map<string, RoomPeer[]> = new Map();
 const activePdfPresentations: Map<string, PdfPresentation> = new Map();
+// Room ids are always normalised to upper case, so this map must use upper-case keys.
 const ROOM_VOICE_PASSWORDS: Map<string, string> = new Map([
-  ['study-room-alpha', 'study123']
+  ['STUDY-ROOM-ALPHA', 'study123']
 ]);
+
+// Single source of truth for a room's voice passkey: the stored study group first,
+// then the built-in rooms. Never fall back to a shared default password.
+export async function getExpectedVoicePassword(roomId: string): Promise<string | undefined> {
+  const cleanRoomId = (roomId || '').trim().toUpperCase();
+  const group = await storage.getStudyGroup(cleanRoomId);
+  return group?.voicePassword || ROOM_VOICE_PASSWORDS.get(cleanRoomId);
+}
+
+// Voice state lives on the room roster so the presence bar shows live mic status.
+export function updateRoomPeerVoiceState(
+  io: Server,
+  roomId: string,
+  socketId: string,
+  patch: { isMuted?: boolean; isSpeaking?: boolean }
+): void {
+  const peers = activeRoomPeers.get(roomId);
+  if (!peers) return;
+  const peer = peers.find(p => p.socketId === socketId);
+  if (!peer) return;
+  if (patch.isMuted !== undefined) peer.isMuted = patch.isMuted;
+  if (patch.isSpeaking !== undefined) peer.isSpeaking = patch.isSpeaking;
+  io.to(roomId).emit('room:peers', peers);
+}
 
 export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Join Room
@@ -177,6 +202,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     activityName: string;
     category: 'study' | 'break' | 'personal';
     durationSeconds: number;
+    localDate?: string;
   }) => {
     const roomId = data.roomId || 'study-room-alpha';
     const peers = activeRoomPeers.get(roomId) || [];
@@ -188,7 +214,8 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       data.userName,
       data.activityName,
       data.category,
-      data.durationSeconds
+      data.durationSeconds,
+      typeof data.localDate === 'string' && data.localDate.trim() ? data.localDate.trim() : undefined
     );
 
     if (peer) {
@@ -283,8 +310,12 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Voice Password Verification
   socket.on('voice:verify_password', async (data: { roomId: string; password: string }, callback: (res: { success: boolean; message: string }) => void) => {
     const cleanRoomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
-    const group = await storage.getStudyGroup(cleanRoomId);
-    const expected = group?.voicePassword || ROOM_VOICE_PASSWORDS.get(cleanRoomId) || 'study123';
+    const expected = await getExpectedVoicePassword(cleanRoomId);
+
+    if (!expected) {
+      callback({ success: false, message: 'No voice password is configured for this study group.' });
+      return;
+    }
 
     if (data.password === expected) {
       callback({ success: true, message: 'Voice room unlocked! Microphone enabled.' });

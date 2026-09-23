@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Lock, KeyRound, Check, X, Shield, ArrowRight, UserPlus, LogIn, Sparkles } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 
@@ -28,6 +28,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-seed the tab and profile fields when the modal opens or the auth state
+  // changes. Deliberately NOT keyed on `tab`, so a manual tab switch is respected.
+  const wasOpenRef = useRef(false);
+  const prevAuthRef = useRef(isAuthenticated);
+  useEffect(() => {
+    const justOpened = isOpen && !wasOpenRef.current;
+    const authChanged = prevAuthRef.current !== isAuthenticated;
+    wasOpenRef.current = isOpen;
+    prevAuthRef.current = isAuthenticated;
+
+    if (!isOpen) return;
+    if (!justOpened && !authChanged) return;
+
+    setTab(isAuthenticated ? 'login' : 'signup');
+    setError(null);
+    setName(currentUser.name || '');
+    setTargetExam(currentUser.targetExam || 'RRB PO & Clerk');
+    setCity(currentUser.city || '');
+  }, [isOpen, isAuthenticated, currentUser.name, currentUser.targetExam, currentUser.city]);
 
   if (!isOpen) return null;
 

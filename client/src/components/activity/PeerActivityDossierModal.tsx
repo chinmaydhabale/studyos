@@ -53,14 +53,28 @@ export const PeerActivityDossierModal: React.FC<PeerActivityDossierModalProps> =
       return;
     }
 
+    const requestedPeerId = selectedPeerForDossier.userId;
+    let isCurrent = true;
+
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
     setLoadingSummary(true);
-    fetch(`${API_BASE_URL}/api/activity/peer-summary?userId=${encodeURIComponent(selectedPeerForDossier.userId)}`)
+    fetch(`${API_BASE_URL}/api/activity/peer-summary?userId=${encodeURIComponent(requestedPeerId)}&date=${localDate}`)
       .then(res => res.json())
       .then((data: PeerDailySummary) => {
+        // Ignore responses for a peer that is no longer selected
+        if (!isCurrent) return;
         setPeerSummary(data);
       })
       .catch(() => {})
-      .finally(() => setLoadingSummary(false));
+      .finally(() => {
+        if (isCurrent) setLoadingSummary(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
   }, [selectedPeerForDossier]);
 
   if (!selectedPeerForDossier) return null;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   FileText,
   Download,
@@ -23,24 +23,40 @@ export const SharedNotesEditor: React.FC = () => {
 
   const content = sharedNote?.content || '';
 
+  // Mirror the latest note content so async actions (AI summary, templates) append
+  // to the freshest value instead of the one captured at render time.
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     updateSharedNote(e.target.value);
   };
 
-  const handleCopy = () => {
-    navigator.clipboard?.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    addToast('Notes Copied', 'Collaborative notes copied to clipboard.', 'success');
+  const handleCopy = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(contentRef.current);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      addToast('Notes Copied', 'Collaborative notes copied to clipboard.', 'success');
+    } catch (e) {
+      console.error(e);
+      addToast('Copy Failed', 'Could not copy notes to clipboard. Please copy manually.', 'alert');
+    }
   };
 
   const handleDownload = () => {
-    const blob = new Blob([content], { type: 'text/markdown' });
+    const blob = new Blob([contentRef.current], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `StudyOS-Notes-${sharedNote?.title || 'SharedNotes'}.md`;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     addToast('Notes Downloaded', 'Exported notes as Markdown file.', 'success');
   };
 
@@ -53,7 +69,7 @@ export const SharedNotesEditor: React.FC = () => {
     } else if (type === 'table') {
       snippet = '\n\n| Topic | Short Trick / Formula | Exam Notes |\n| :--- | :--- | :--- |\n| 2-Year Diff (CI - SI) | $D = P (R/100)^2$ | Direct IBPS PO Short Trick |\n| 3-Year Diff (CI - SI) | $D = P (R/100)^2 \\times (3 + R/100)$ | High Frequency in Mains |\n| Relative Speed (Opposite) | $S_{rel} = S_1 + S_2$ | Trains & Boats |\n';
     }
-    updateSharedNote(content + snippet);
+    updateSharedNote(contentRef.current + snippet);
   };
 
   const handleAiSummarize = async () => {
@@ -64,21 +80,26 @@ export const SharedNotesEditor: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: 'Quantitative Aptitude & Reasoning Ability Golden Shortcuts' })
       });
+      if (!res.ok) {
+        throw new Error(`AI request failed with status ${res.status}`);
+      }
       const data = await res.json();
-      
+      const firstSection = data?.sections?.[0];
+
       const summaryMarkdown = `\n\n---
 ### 🤖 AI Study Coach Summary & Golden Formulas:
-- **Core Shortcut:** ${data.sections[0]?.notes?.join(' ') || 'Always simplify ratio and percentage fractions (1/8 = 12.5%, 1/7 = 14.28%).'}
-- **Exam Warning:** ${data.sections[0]?.highlight || 'Avoid long algebraic equations in prelims; apply digital root or unit digit elimination.'}
+- **Core Shortcut:** ${firstSection?.notes?.join(' ') || 'Always simplify ratio and percentage fractions (1/8 = 12.5%, 1/7 = 14.28%).'}
+- **Exam Warning:** ${firstSection?.highlight || 'Avoid long algebraic equations in prelims; apply digital root or unit digit elimination.'}
 - **Speed Math Formulas:**
   - Compound Interest: $A = P (1 + R/100)^T$
   - 2-Year CI vs SI Difference: $\\Delta = P (R/100)^2$
   - Work Done: $\\text{Total Work} = \\text{LCM}(\\text{Individual Days})$
 `;
-      updateSharedNote(content + summaryMarkdown);
+      updateSharedNote(contentRef.current + summaryMarkdown);
       addToast('AI Summary Added', 'AI Teacher injected formula synthesis directly into notes!', 'success');
     } catch (e) {
       console.error(e);
+      addToast('AI Summary Failed', 'Could not generate the AI summary. Please try again.', 'alert');
     } finally {
       setIsAiExpanding(false);
     }

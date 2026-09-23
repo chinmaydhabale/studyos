@@ -62,14 +62,26 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Clean up any generated blob URLs when component unmounts or changes
+  // Refs that always mirror the latest values so effects can read them without
+  // re-running (and without capturing stale renders).
+  const localPdfUrlRef = useRef<string | null>(null);
+  const documentsRef = useRef<StudyDocument[]>([]);
+  const activePdfDocRef = useRef<StudyDocument | null>(null);
+  const lastReadingStatusRef = useRef<{ docId: string | null; page: number; roomId: string } | null>(null);
+
+  localPdfUrlRef.current = localPdfUrl;
+  documentsRef.current = documents;
+  activePdfDocRef.current = activePdfDoc;
+
+  // Revoke the final blob URL exactly once, on unmount only.
   useEffect(() => {
     return () => {
-      if (localPdfUrl) {
-        URL.revokeObjectURL(localPdfUrl);
+      if (localPdfUrlRef.current) {
+        URL.revokeObjectURL(localPdfUrlRef.current);
+        localPdfUrlRef.current = null;
       }
     };
-  }, [localPdfUrl]);
+  }, []);
 
   // Fetch documents from Telegram Vault / Sample seeded notes
   const fetchRoomDocuments = async () => {
@@ -80,11 +92,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         : `${API_BASE_URL}/api/telegram/documents`;
       const res = await fetch(url);
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setDocuments(data);
-        if (!activePdfDoc && !localPdfUrl) {
-          openPdfInReader(data[0], 1);
-        }
+      const list: StudyDocument[] = Array.isArray(data) ? data : [];
+      setDocuments(list);
+      // Auto-open the first document only when the user has not already opened
+      // one (read through refs so a stale render can't override their choice).
+      if (list.length > 0 && !activePdfDocRef.current && !localPdfUrlRef.current) {
+        openPdfInReader(list[0], 1);
       }
     } catch (e) {
       console.error('Failed to load PDF documents:', e);
@@ -97,11 +110,13 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     fetchRoomDocuments();
   }, [roomId]);
 
-  // Presenter follower sync
+  // Presenter follower sync — only re-runs when the presentation, the follow
+  // flag or the viewer identity changes. The document list is read through a
+  // ref so unrelated list changes (e.g. a local upload) never force a jump.
   useEffect(() => {
     if (pdfPresentation?.isActive && pdfPresentation.presenterId !== currentUser.id && isFollowingPresenter) {
-      if (activePdfDoc?.id !== pdfPresentation.documentId) {
-        const found = documents.find(d => d.id === pdfPresentation.documentId);
+      if (activePdfDocRef.current?.id !== pdfPresentation.documentId) {
+        const found = documentsRef.current.find(d => d.id === pdfPresentation.documentId);
         if (found) {
           setActivePdfDoc(found);
           setLocalPdfUrl(null);
@@ -109,7 +124,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       }
       setActivePdfPage(pdfPresentation.currentPage || 1);
     }
-  }, [pdfPresentation, isFollowingPresenter, documents]);
+  }, [pdfPresentation, isFollowingPresenter, currentUser.id, setActivePdfDoc, setActivePdfPage]);
 
   // Follow presenter page flips (native viewer navigates via the #page fragment)
   useEffect(() => {
@@ -123,17 +138,25 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     }
   }, [activePdfPage, pdfPresentation, isFollowingPresenter, currentUser.id]);
 
-  // Reset the visible page whenever a different document is opened
+  // Reset the visible page whenever a different document is opened or the
+  // active page changes (deps include activePdfPage so it never reads stale).
   useEffect(() => {
     setDisplayPage(activePdfPage || 1);
-  }, [activePdfDoc?.id]);
+  }, [activePdfDoc?.id, activePdfPage]);
 
-  // Broadcast reading status to peer students
+  // Broadcast reading status to peer students — guarded so it only emits when
+  // the document id, page or room actually changed (no redundant emits/loops).
   useEffect(() => {
-    if (activePdfDoc) {
-      updateMyPdfReadingStatus(activePdfDoc, activePdfPage);
+    if (!activePdfDoc) return;
+    const docId = activePdfDoc.id;
+    const page = activePdfPage || 1;
+    const last = lastReadingStatusRef.current;
+    if (last && last.docId === docId && last.page === page && last.roomId === roomId) {
+      return;
     }
-  }, [activePdfDoc, activePdfPage, updateMyPdfReadingStatus]);
+    lastReadingStatusRef.current = { docId, page, roomId };
+    updateMyPdfReadingStatus(activePdfDoc, page);
+  }, [activePdfDoc, activePdfPage, roomId, updateMyPdfReadingStatus]);
 
   // Fullscreen event listener
   useEffect(() => {
@@ -160,11 +183,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       return;
     }
 
-    if (localPdfUrl) {
-      URL.revokeObjectURL(localPdfUrl);
+    if (localPdfUrlRef.current) {
+      URL.revokeObjectURL(localPdfUrlRef.current);
     }
 
     const objectUrl = URL.createObjectURL(file);
+    localPdfUrlRef.current = objectUrl;
     setLocalPdfUrl(objectUrl);
 
     const localDoc: StudyDocument = {
@@ -475,7 +499,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <button
                 onClick={() => {
                   if (p.currentDocument) {
-                    const fileId = p.currentDocument.fileUrl.split('/stream/')[1] || '';
+                    const fileId = p.currentDocument.fileUrl?.split('/stream/')[1] || '';
                     if (!fileId) {
                       addToast('Not Available', `"${p.currentDocument.title}" is a local file on ${p.name}'s device and can't be opened remotely.`, 'alert');
                       return;
@@ -531,6 +555,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               title={activePdfDoc?.title || 'PDF Document'}
               className="w-full h-full border-0 bg-slate-950"
             />
+          ) : loadingDocs ? (
+            /* Loading State: brief spinner while the vault list is fetched */
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center my-auto">
+              <div className="w-10 h-10 rounded-full border-2 border-indigo-500/30 border-t-indigo-400 animate-spin mb-4" />
+              <p className="text-xs text-slate-400">Loading study materials…</p>
+            </div>
           ) : (
             /* Empty State: Prompt to Open Local PDF or Vault Library */
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center my-auto">
@@ -539,7 +569,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               </div>
               <h3 className="text-base font-extrabold text-white mb-2">No Study PDF Loaded</h3>
               <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
-                Open any textbook or coaching notes from your device, drag & drop a PDF here, or select from the pre-seeded library materials.
+                {documents.length === 0
+                  ? 'This room has no shared PDFs yet. Upload a PDF from your device or drag & drop one here to start reading together.'
+                  : 'Open any textbook or coaching notes from your device, drag & drop a PDF here, or pick one from the vault library.'}
               </p>
               
               <div className="flex flex-wrap items-center justify-center gap-3">

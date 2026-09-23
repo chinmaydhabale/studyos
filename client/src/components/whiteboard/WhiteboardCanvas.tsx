@@ -31,6 +31,7 @@ export const WhiteboardCanvas: React.FC = () => {
   } = useSocket();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('pen');
   const [color, setColor] = useState('#818cf8');
   const [strokeWidth, setStrokeWidth] = useState(2);
@@ -38,7 +39,45 @@ export const WhiteboardCanvas: React.FC = () => {
   const [currentPoints, setCurrentPoints] = useState<{ x: number; y: number }[]>([]);
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Redraw canvas whenever whiteboardElements changes
+  // Latest values for the rAF-throttled cursor emit (avoids stale closures)
+  const cursorRafRef = useRef<number | null>(null);
+  const pendingCursorRef = useRef<{ x: number; y: number } | null>(null);
+  const sendCursorRef = useRef(sendWhiteboardCursor);
+  sendCursorRef.current = sendWhiteboardCursor;
+
+  // Feature-detect roundRect once; fall back to a manual rounded-rect path
+  const supportsRoundRect = typeof CanvasRenderingContext2D !== 'undefined' &&
+    typeof (CanvasRenderingContext2D.prototype as any).roundRect === 'function';
+
+  const drawRoundedRect = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number
+  ) => {
+    const radius = Math.max(0, Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2));
+    ctx.beginPath();
+    if (supportsRoundRect) {
+      (ctx as any).roundRect(x, y, w, h, radius);
+      return;
+    }
+    // Manual rounded-rect fallback for browsers without ctx.roundRect
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  };
+
+  // Redraw the committed layer (grid + all elements) only when the element list,
+  // tool or style changes — never on every pointer move.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -50,7 +89,7 @@ export const WhiteboardCanvas: React.FC = () => {
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Draw dark grid background
     ctx.fillStyle = '#0f172a';
@@ -72,25 +111,94 @@ export const WhiteboardCanvas: React.FC = () => {
       ctx.stroke();
     }
 
-    // Render all elements
+    // Render all committed elements
     whiteboardElements.forEach((el) => {
       renderElement(ctx, el);
     });
+  }, [whiteboardElements, currentTool, color, strokeWidth]);
 
-    // Render current active stroke while drawing
-    if (isDrawing && currentPoints.length > 1) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = strokeWidth;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
-      for (let i = 1; i < currentPoints.length; i++) {
-        ctx.lineTo(currentPoints[i].x, currentPoints[i].y);
-      }
-      ctx.stroke();
+  // Render the in-progress stroke on the stacked overlay canvas, cleared per move
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = overlay.getBoundingClientRect();
+    if (overlay.width !== rect.width * dpr || overlay.height !== rect.height * dpr) {
+      overlay.width = rect.width * dpr;
+      overlay.height = rect.height * dpr;
     }
-  }, [whiteboardElements, isDrawing, currentPoints, color, strokeWidth]);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    if (!isDrawing || currentPoints.length < 1) return;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = strokeWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (currentTool === 'pen') {
+      if (currentPoints.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(currentPoints[0].x, currentPoints[0].y);
+        for (let i = 1; i < currentPoints.length; i++) {
+          ctx.lineTo(currentPoints[i].x, currentPoints[i].y);
+        }
+        ctx.stroke();
+      }
+    } else if (startPos && currentPoints.length > 1) {
+      // Live preview for shapes / lines / arrows
+      const end = currentPoints[currentPoints.length - 1];
+      if (currentTool === 'rect') {
+        ctx.strokeRect(
+          Math.min(startPos.x, end.x),
+          Math.min(startPos.y, end.y),
+          Math.abs(end.x - startPos.x),
+          Math.abs(end.y - startPos.y)
+        );
+      } else if (currentTool === 'circle') {
+        const size = Math.max(Math.abs(end.x - startPos.x), Math.abs(end.y - startPos.y));
+        ctx.beginPath();
+        ctx.arc(Math.min(startPos.x, end.x), Math.min(startPos.y, end.y), size / 2, 0, 2 * Math.PI);
+        ctx.stroke();
+      } else if (currentTool === 'line' || currentTool === 'arrow') {
+        ctx.beginPath();
+        ctx.moveTo(startPos.x, startPos.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        if (currentTool === 'arrow') {
+          const angle = Math.atan2(end.y - startPos.y, end.x - startPos.x);
+          const headLen = 12;
+          ctx.beginPath();
+          ctx.moveTo(end.x, end.y);
+          ctx.lineTo(end.x - headLen * Math.cos(angle - Math.PI / 6), end.y - headLen * Math.sin(angle - Math.PI / 6));
+          ctx.moveTo(end.x, end.y);
+          ctx.lineTo(end.x - headLen * Math.cos(angle + Math.PI / 6), end.y - headLen * Math.sin(angle + Math.PI / 6));
+          ctx.stroke();
+        }
+      }
+    }
+  }, [currentPoints, isDrawing, startPos, currentTool, color, strokeWidth]);
+
+  // Throttle cursor broadcasts to one per animation frame
+  const queueCursorEmit = (x: number, y: number) => {
+    pendingCursorRef.current = { x, y };
+    if (cursorRafRef.current !== null) return;
+    cursorRafRef.current = requestAnimationFrame(() => {
+      cursorRafRef.current = null;
+      const pending = pendingCursorRef.current;
+      if (pending) sendCursorRef.current(pending.x, pending.y);
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (cursorRafRef.current !== null) cancelAnimationFrame(cursorRafRef.current);
+    };
+  }, []);
 
   const renderElement = (ctx: CanvasRenderingContext2D, el: WhiteboardElement) => {
     ctx.save();
@@ -201,10 +309,9 @@ export const WhiteboardCanvas: React.FC = () => {
 
       case 'mindmap':
         if (el.x !== undefined && el.y !== undefined && el.width && el.height) {
-          // Pill rounded node
-          ctx.beginPath();
+          // Pill rounded node (feature-detected with a manual fallback)
           const r = el.height / 2;
-          ctx.roundRect(el.x, el.y, el.width, el.height, r);
+          drawRoundedRect(ctx, el.x, el.y, el.width, el.height, r);
           ctx.fillStyle = 'rgba(6, 182, 212, 0.2)';
           ctx.fill();
           ctx.strokeStyle = '#06b6d4';
@@ -401,7 +508,7 @@ export const WhiteboardCanvas: React.FC = () => {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const pos = getCanvasCoords(e);
-    sendWhiteboardCursor(pos.x, pos.y);
+    queueCursorEmit(pos.x, pos.y);
 
     if (!isDrawing) return;
     setCurrentPoints((prev) => [...prev, pos]);
@@ -415,6 +522,14 @@ export const WhiteboardCanvas: React.FC = () => {
     const endPos = getCanvasCoords(e);
     setIsDrawing(false);
     commitDrawnShape(endPos);
+  };
+
+  // Leaving the canvas cancels the in-progress stroke instead of committing a
+  // half-drawn shape.
+  const handleMouseLeave = () => {
+    setIsDrawing(false);
+    setCurrentPoints([]);
+    setStartPos(null);
   };
 
   // Touch Event Handlers for Tablets / Mobile
@@ -437,7 +552,7 @@ export const WhiteboardCanvas: React.FC = () => {
 
   const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const pos = getTouchCoords(e);
-    sendWhiteboardCursor(pos.x, pos.y);
+    queueCursorEmit(pos.x, pos.y);
 
     if (!isDrawing) return;
     setCurrentPoints((prev) => [...prev, pos]);
@@ -448,7 +563,14 @@ export const WhiteboardCanvas: React.FC = () => {
       setIsDrawing(false);
       return;
     }
-    const endPos = currentPoints[currentPoints.length - 1] || startPos;
+    // Use the touch event's own final coordinates — state can be one move behind.
+    const touch = e.changedTouches[0] || e.touches[0];
+    const canvas = canvasRef.current;
+    let endPos = currentPoints[currentPoints.length - 1] || startPos;
+    if (touch && canvas) {
+      const rect = canvas.getBoundingClientRect();
+      endPos = { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+    }
     setIsDrawing(false);
     commitDrawnShape(endPos);
   };
@@ -582,11 +704,17 @@ export const WhiteboardCanvas: React.FC = () => {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           className="w-full h-full cursor-crosshair block touch-none"
+        />
+
+        {/* Stacked overlay canvas for the in-progress stroke (cleared per move) */}
+        <canvas
+          ref={overlayRef}
+          className="absolute inset-0 w-full h-full pointer-events-none block touch-none"
         />
 
         {/* Live Multi-User Overlay Legend */}
