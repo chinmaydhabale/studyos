@@ -352,14 +352,18 @@ app.post('/api/tasks', (req, res) => {
 });
 
 app.post('/api/tasks/:id/toggle', (req, res) => {
-  const updated = storage.toggleTask(req.params.id);
+  const updated = storage.toggleTask(req.params.id, {
+    userId: req.body?.userId,
+    userName: req.body?.userName
+  });
   if (!updated) return res.status(404).json({ error: 'Task not found' });
   res.json(updated);
 });
 
 // Calendar History
 app.get('/api/calendar', (req, res) => {
-  res.json(storage.getCalendarHistory());
+  const userId = req.query.userId as string;
+  res.json(storage.getCalendarHistory(userId));
 });
 
 // Flashcards

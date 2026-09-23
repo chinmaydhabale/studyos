@@ -610,7 +610,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         currentDocument: doc ? {
           id: doc.id,
           title: doc.title,
-          fileUrl: `${API_BASE_URL}/api/telegram/stream/${doc.telegramFileId}`,
+          fileUrl: doc.telegramFileId
+            ? `${API_BASE_URL}/api/telegram/stream/${doc.telegramFileId}`
+            : '', // Local files have no streamable URL — peers cannot open them remotely
           currentPage: page
         } : null
       });
@@ -645,6 +647,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Tune in to peer's PDF
   const tuneInToPeerPdf = useCallback((peer: RoomPeer) => {
     if (!peer.currentDocument) return;
+    const fileId = peer.currentDocument.fileUrl.split('/stream/')[1] || '';
+    if (!fileId) {
+      addToast('Not Available', `"${peer.currentDocument.title}" is a local file on ${peer.name}'s device and can't be opened remotely.`, 'alert');
+      return;
+    }
     const docItem: StudyDocument = {
       id: peer.currentDocument.id,
       title: peer.currentDocument.title,
@@ -652,7 +659,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       subject: 'Study Material',
       fileSize: 0,
       mimeType: 'application/pdf',
-      telegramFileId: peer.currentDocument.fileUrl.split('/stream/')[1] || '',
+      telegramFileId: fileId,
       telegramMessageId: 0,
       uploaderId: peer.userId,
       uploaderName: peer.name,

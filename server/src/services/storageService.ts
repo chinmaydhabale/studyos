@@ -279,12 +279,22 @@ export class StorageService {
     }
 
     if (!dbUser) {
-      // Check in memory fallback
-      const inMemoryUser = this.getUserByUsername(cleanUsername);
+      // Check in memory fallback — credentials must still be verified!
+      const inMemoryUser = this.getUserByUsername(cleanUsername) as UserProfile & { passwordHash?: string; salt?: string };
       if (!inMemoryUser) {
         throw new Error('Invalid username or password.');
       }
-      return { user: inMemoryUser, token: `token_${inMemoryUser.id}_${Date.now()}` };
+      if (!inMemoryUser.passwordHash || !inMemoryUser.salt) {
+        // No credentials stored for this account — reject instead of logging anyone in.
+        throw new Error('Invalid username or password.');
+      }
+      const inputHash = crypto.pbkdf2Sync(password, inMemoryUser.salt, 100000, 64, 'sha512').toString('hex');
+      if (inputHash !== inMemoryUser.passwordHash) {
+        throw new Error('Invalid username or password.');
+      }
+      const { passwordHash, salt, ...safeUser } = inMemoryUser;
+      this.users.set((safeUser as any).id, safeUser as any);
+      return { user: safeUser as UserProfile, token: `token_${(safeUser as any).id}_${Date.now()}` };
     }
 
     // Verify hash
@@ -533,9 +543,9 @@ export class StorageService {
         user.level = Math.floor(user.xp / 400) + 1;
         if (user.streak === 0) user.streak = 1;
 
-        // Update Today's real calendar entry
+        // Update Today's real calendar entry (per user)
         const todayDate = new Date().toISOString().split('T')[0];
-        let todayRecord = this.calendarHistory.find(r => r.date === todayDate && (r.userId === userId || !r.userId));
+        let todayRecord = this.calendarHistory.find(r => r.date === todayDate && r.userId === userId);
         if (!todayRecord) {
           todayRecord = {
             date: todayDate,
@@ -544,7 +554,8 @@ export class StorageService {
             subjects: [],
             tasksDone: 0,
             tasksPlanned: 1,
-            status: 'moderate'
+            status: 'moderate',
+            userId
           };
           this.calendarHistory.push(todayRecord);
         }
@@ -558,7 +569,7 @@ export class StorageService {
 
         if (isDbConnected()) {
           CalendarRecordModel.findOneAndUpdate(
-            { date: todayDate },
+            { date: todayDate, userId },
             { $set: todayRecord },
             { upsert: true }
           ).catch(() => {});
@@ -726,17 +737,26 @@ export class StorageService {
     return task;
   }
 
-  public toggleTask(id: string): StudyTask | undefined {
+  public toggleTask(id: string, completedBy?: { userId?: string; userName?: string }): StudyTask | undefined {
     const task = this.tasks.find(t => t.id === id);
     if (task) {
       task.completed = !task.completed;
       if (task.completed) {
-        // Award 50 XP
-        this.users.forEach(u => {
-          u.xp += 50;
-          u.coins += 10;
-          u.tasksCompleted += 1;
-        });
+        // Award 50 XP only to the user who completed the task
+        const userId = completedBy?.userId || 'guest';
+        const user = this.users.get(userId);
+        if (user) {
+          user.xp += 50;
+          user.coins += 10;
+          user.tasksCompleted += 1;
+          user.level = Math.floor(user.xp / 400) + 1;
+          if (isDbConnected()) {
+            UserModel.findOneAndUpdate(
+              { id: userId },
+              { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
+            ).catch(() => {});
+          }
+        }
       }
       if (isDbConnected()) {
         TaskModel.findOneAndUpdate({ id }, { $set: { completed: task.completed } }).catch(() => {});
@@ -745,7 +765,8 @@ export class StorageService {
     return task;
   }
 
-  public getCalendarHistory(): CalendarDayRecord[] {
+  public getCalendarHistory(userId?: string): CalendarDayRecord[] {
+    if (userId) return this.calendarHistory.filter(r => r.userId === userId);
     return this.calendarHistory;
   }
 

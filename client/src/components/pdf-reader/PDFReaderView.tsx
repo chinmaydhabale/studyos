@@ -12,7 +12,9 @@ import {
   Minimize2,
   Radio,
   Users,
-  FileText
+  FileText,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { StudyDocument } from '../../types.js';
@@ -34,6 +36,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     chatMessages,
     setActivePdfDoc,
     setActivePdfPage,
+    sendPdfPageChange,
     updateMyPdfReadingStatus,
     startPdfPresentation,
     stopPdfPresentation,
@@ -54,6 +57,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
   const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
+  const [displayPage, setDisplayPage] = useState<number>(1);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,6 +111,23 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     }
   }, [pdfPresentation, isFollowingPresenter, documents]);
 
+  // Follow presenter page flips (native viewer navigates via the #page fragment)
+  useEffect(() => {
+    if (
+      pdfPresentation?.isActive &&
+      pdfPresentation.presenterId !== currentUser.id &&
+      isFollowingPresenter &&
+      activePdfPage
+    ) {
+      setDisplayPage(activePdfPage);
+    }
+  }, [activePdfPage, pdfPresentation, isFollowingPresenter, currentUser.id]);
+
+  // Reset the visible page whenever a different document is opened
+  useEffect(() => {
+    setDisplayPage(activePdfPage || 1);
+  }, [activePdfDoc?.id]);
+
   // Broadcast reading status to peer students
   useEffect(() => {
     if (activePdfDoc) {
@@ -126,13 +147,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {
-        setIsFullscreen(!isFullscreen);
-      });
-      setIsFullscreen(true);
+      containerRef.current.requestFullscreen().catch(() => {});
     } else {
       document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
     }
   };
 
@@ -178,6 +195,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     if (pdfPresentation?.presenterId === currentUser.id) {
       stopPdfPresentation();
     } else {
+      if (!activePdfDoc.telegramFileId) {
+        addToast('Cannot Present', 'Only vault documents can be presented. Local files stay on your device.', 'alert');
+        return;
+      }
       startPdfPresentation(activePdfDoc, activePdfPage);
     }
   };
@@ -199,8 +220,15 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const streamUrl = useMemo(() => {
     if (localPdfUrl) return localPdfUrl;
     if (!activePdfDoc?.telegramFileId) return '';
-    return `${API_BASE_URL}/api/telegram/stream/${activePdfDoc.telegramFileId}#toolbar=1&navpanes=0&view=FitH`;
-  }, [localPdfUrl, activePdfDoc?.telegramFileId]);
+    return `${API_BASE_URL}/api/telegram/stream/${activePdfDoc.telegramFileId}#toolbar=1&navpanes=0&view=FitH&page=${displayPage}`;
+  }, [localPdfUrl, activePdfDoc?.telegramFileId, displayPage]);
+
+  // Explicit page navigation — broadcasts to the room when this user is presenting
+  const goToPage = (page: number) => {
+    if (!Number.isFinite(page) || page < 1) return;
+    setDisplayPage(page);
+    sendPdfPageChange(page);
+  };
 
   const filteredDocs = documents.filter(d =>
     d.title.toLowerCase().includes(searchDocQuery.toLowerCase()) ||
@@ -238,6 +266,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           if (e.target.files?.[0]) {
             handleLocalPdfUpload(e.target.files[0]);
           }
+          e.target.value = '';
         }}
       />
 
@@ -281,6 +310,41 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               </span>
             )}
           </div>
+
+          {/* Page Navigation (syncs to the room while presenting) */}
+          {streamUrl && (
+            <div
+              className="hidden sm:flex items-center gap-0.5 ml-2 bg-slate-950 border border-white/10 rounded-xl px-1 py-0.5 shrink-0"
+              title={pdfPresentation?.presenterId === currentUser.id ? 'Page — synced to all viewers' : 'Page number'}
+            >
+              <button
+                onClick={() => goToPage(displayPage - 1)}
+                disabled={displayPage <= 1}
+                className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                title="Previous Page"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <input
+                type="number"
+                min={1}
+                value={displayPage}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(v)) goToPage(v);
+                }}
+                className="w-10 bg-transparent text-center text-xs font-bold text-white focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                title="Page Number"
+              />
+              <button
+                onClick={() => goToPage(displayPage + 1)}
+                className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                title="Next Page"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
         </div>
 
@@ -411,6 +475,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <button
                 onClick={() => {
                   if (p.currentDocument) {
+                    const fileId = p.currentDocument.fileUrl.split('/stream/')[1] || '';
+                    if (!fileId) {
+                      addToast('Not Available', `"${p.currentDocument.title}" is a local file on ${p.name}'s device and can't be opened remotely.`, 'alert');
+                      return;
+                    }
                     setLocalPdfUrl(null);
                     openPdfInReader({
                       id: p.currentDocument.id,
@@ -419,7 +488,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                       subject: 'Study Notes',
                       fileSize: 0,
                       mimeType: 'application/pdf',
-                      telegramFileId: p.currentDocument.fileUrl.split('/stream/')[1] || '',
+                      telegramFileId: fileId,
                       telegramMessageId: 0,
                       uploaderId: p.userId,
                       uploaderName: p.name,

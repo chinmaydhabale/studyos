@@ -14,13 +14,13 @@ import { useSocket } from '../../context/SocketContext.js';
 import { API_BASE_URL } from '../../config.js';
 
 export const StudyCalendarView: React.FC = () => {
-  const { addToast } = useSocket();
+  const { addToast, currentUser } = useSocket();
   const [history, setHistory] = useState<CalendarDayRecord[]>([]);
   const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDayRecord | null>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/calendar`)
+    fetch(`${API_BASE_URL}/api/calendar?userId=${encodeURIComponent(currentUser.id)}`)
       .then((res) => res.json())
       .then((data) => {
         setHistory(data);
@@ -32,11 +32,15 @@ export const StudyCalendarView: React.FC = () => {
     fetch(`${API_BASE_URL}/api/tasks`)
       .then((res) => res.json())
       .then((data) => setTasks(data));
-  }, []);
+  }, [currentUser.id]);
 
   const handleToggleTask = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/tasks/${id}/toggle`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/tasks/${id}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name })
+      });
       const updated = await res.json();
       setTasks(prev => prev.map(t => t.id === id ? updated : t));
       addToast('Task Status Updated', `Task marked as ${updated.completed ? 'completed (+50 XP)' : 'pending'}.`, 'success');

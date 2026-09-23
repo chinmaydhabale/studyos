@@ -13,15 +13,17 @@ export interface ICalendarRecordDocument extends Document {
 }
 
 const CalendarRecordSchema = new Schema<ICalendarRecordDocument>({
-  date: { type: String, required: true, unique: true, index: true },
+  date: { type: String, required: true, index: true },
   hoursStudied: { type: Number, default: 0 },
   deepFocusHours: { type: Number, default: 0 },
   subjects: { type: [String], default: [] },
   tasksDone: { type: Number, default: 0 },
   tasksPlanned: { type: Number, default: 2 },
   status: { type: String, enum: ['strong', 'moderate', 'weak', 'missed'], default: 'moderate' },
-  userId: { type: String, default: 'user_self' },
+  userId: { type: String, default: 'user_self', index: true },
   updatedAt: { type: Date, default: Date.now }
 });
+
+CalendarRecordSchema.index({ date: 1, userId: 1 }, { unique: true });
 
 export const CalendarRecordModel = mongoose.model<ICalendarRecordDocument>('CalendarRecord', CalendarRecordSchema);
