@@ -14,7 +14,10 @@ import {
   Users,
   FileText,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Cloud,
+  CloudOff,
+  Loader2
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { StudyDocument } from '../../types.js';
@@ -27,6 +30,7 @@ interface PDFReaderViewProps {
 
 export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) => {
   const {
+    socket,
     roomId,
     currentUser,
     peers,
@@ -52,6 +56,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [searchDocQuery, setSearchDocQuery] = useState<string>('');
   const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null);
 
+  // Cloud sync & peer Read Along states
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'uploading' | 'synced' | 'error'>('idle');
+  const [localPdfDocId, setLocalPdfDocId] = useState<string | null>(null);
+  const [readAlongPeerId, setReadAlongPeerId] = useState<string | null>(null);
+
   // Layout & UI states
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -65,13 +74,17 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Refs that always mirror the latest values so effects can read them without
   // re-running (and without capturing stale renders).
   const localPdfUrlRef = useRef<string | null>(null);
+  const localPdfDocIdRef = useRef<string | null>(null);
   const documentsRef = useRef<StudyDocument[]>([]);
   const activePdfDocRef = useRef<StudyDocument | null>(null);
+  const displayPageRef = useRef<number>(1);
   const lastReadingStatusRef = useRef<{ docId: string | null; page: number; roomId: string } | null>(null);
 
   localPdfUrlRef.current = localPdfUrl;
+  localPdfDocIdRef.current = localPdfDocId;
   documentsRef.current = documents;
   activePdfDocRef.current = activePdfDoc;
+  displayPageRef.current = displayPage;
 
   // Revoke the final blob URL exactly once, on unmount only.
   useEffect(() => {
@@ -110,6 +123,23 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     fetchRoomDocuments();
   }, [roomId]);
 
+  // Real-time listener for documents added to the vault by room peers or auto-upload
+  useEffect(() => {
+    if (!socket) return;
+    const handleDocumentAdded = (newDoc: StudyDocument) => {
+      setDocuments(prev => {
+        if (prev.some(d => d.id === newDoc.id || (d.telegramFileId && d.telegramFileId === newDoc.telegramFileId))) {
+          return prev;
+        }
+        return [newDoc, ...prev];
+      });
+    };
+    socket.on('vault:document-added', handleDocumentAdded);
+    return () => {
+      socket.off('vault:document-added', handleDocumentAdded);
+    };
+  }, [socket]);
+
   // Presenter follower sync — only re-runs when the presentation, the follow
   // flag or the viewer identity changes. The document list is read through a
   // ref so unrelated list changes (e.g. a local upload) never force a jump.
@@ -120,6 +150,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         if (found) {
           setActivePdfDoc(found);
           setLocalPdfUrl(null);
+          setLocalPdfDocId(null);
+          setReadAlongPeerId(null);
         }
       }
       setActivePdfPage(pdfPresentation.currentPage || 1);
@@ -137,6 +169,22 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       setDisplayPage(activePdfPage);
     }
   }, [activePdfPage, pdfPresentation, isFollowingPresenter, currentUser.id]);
+
+  // Follow peer's page when Read Along is active
+  const readAlongPeer = useMemo(() => {
+    if (!readAlongPeerId) return null;
+    return peers.find(p => p.userId === readAlongPeerId) || null;
+  }, [peers, readAlongPeerId]);
+
+  useEffect(() => {
+    if (!readAlongPeer || !readAlongPeer.currentDocument) return;
+
+    // Follow page turns of the peer
+    const peerPage = readAlongPeer.currentDocument.currentPage || 1;
+    if (peerPage !== displayPage) {
+      setDisplayPage(peerPage);
+    }
+  }, [readAlongPeer?.currentDocument?.currentPage, displayPage]);
 
   // Reset the visible page whenever a different document is opened or the
   // active page changes (deps include activePdfPage so it never reads stale).
@@ -176,9 +224,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     }
   };
 
-  // Local File Upload / Drag-and-Drop Handler
-  const handleLocalPdfUpload = (file: File) => {
-    if (!file || file.type !== 'application/pdf') {
+  // Local File Upload / Drag-and-Drop Handler with automatic Telegram Cloud Sync
+  const handleLocalPdfUpload = async (file: File) => {
+    if (!file || (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf'))) {
       addToast('Invalid File', 'Please select a valid .pdf document.', 'alert');
       return;
     }
@@ -191,26 +239,76 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     localPdfUrlRef.current = objectUrl;
     setLocalPdfUrl(objectUrl);
 
+    const tempId = `local-pdf-${Date.now()}`;
+    const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ');
+    const targetRoomId = (roomId || 'RRB-7949').toUpperCase();
+
     const localDoc: StudyDocument = {
-      id: `local-pdf-${Date.now()}`,
-      title: file.name.replace(/\.pdf$/i, ''),
+      id: tempId,
+      title: cleanTitle,
       fileName: file.name,
-      subject: 'Local Notes',
+      subject: 'Quantitative Aptitude',
       fileSize: file.size,
       mimeType: 'application/pdf',
       telegramFileId: '',
       telegramMessageId: 0,
       uploaderId: currentUser.id,
-      uploaderName: currentUser.name || 'You',
+      uploaderName: currentUser.name || currentUser.username || 'You',
       uploadedAt: new Date().toISOString(),
       downloadCount: 1,
-      description: 'Opened directly from local device',
-      roomId: roomId || 'STUDY-ALPHA'
+      description: 'Auto-syncing to Telegram channel...',
+      roomId: targetRoomId
     };
 
+    setLocalPdfDocId(tempId);
     setDocuments(prev => [localDoc, ...prev]);
     openPdfInReader(localDoc, 1);
-    addToast('PDF Loaded', `Opened "${file.name}" with native continuous scrolling!`, 'success');
+    setDisplayPage(1);
+    setSyncStatus('uploading');
+
+    addToast('PDF Opened', `Opened "${file.name}". Syncing to Telegram channel in background so study partners can Read Along...`, 'info');
+
+    // Asynchronous background upload to Telegram channel
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', cleanTitle);
+      formData.append('subject', 'Quantitative Aptitude');
+      formData.append('roomId', targetRoomId);
+      formData.append('uploaderId', currentUser.id);
+      formData.append('uploaderName', currentUser.name || currentUser.username || 'Student');
+      formData.append('description', 'Uploaded via PDF Reader for peer Read Along');
+
+      const res = await fetch(`${API_BASE_URL}/api/telegram/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.document) {
+        throw new Error(data.error || 'Failed to upload to Telegram');
+      }
+
+      const uploadedDoc: StudyDocument = data.document;
+
+      // Replace temporary local document in the list with the permanent cloud document
+      setDocuments(prev => prev.map(d => (d.id === tempId ? uploadedDoc : d)));
+
+      // If user is still reading this document, link local blob to cloud doc ID
+      if (activePdfDocRef.current?.id === tempId) {
+        setLocalPdfDocId(uploadedDoc.id);
+        setActivePdfDoc(uploadedDoc);
+        // Immediately broadcast new telegramFileId to room so peers can Read Along!
+        updateMyPdfReadingStatus(uploadedDoc, displayPageRef.current || 1);
+      }
+
+      setSyncStatus('synced');
+      addToast('Cloud Synced!', `"${file.name}" uploaded to Telegram channel. Room peers can now Read Along!`, 'success');
+    } catch (err: any) {
+      console.error('Failed to auto-upload PDF to Telegram:', err);
+      setSyncStatus('error');
+      addToast('Cloud Sync Failed', `Could not upload to Telegram: ${err.message || 'Network error'}. PDF remains readable locally.`, 'alert');
+    }
   };
 
   // Co-Study Presentation toggle
@@ -220,7 +318,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       stopPdfPresentation();
     } else {
       if (!activePdfDoc.telegramFileId) {
-        addToast('Cannot Present', 'Only vault documents can be presented. Local files stay on your device.', 'alert');
+        if (syncStatus === 'uploading') {
+          addToast('Uploading...', 'Please wait a moment for the PDF to sync to Telegram cloud before presenting.', 'info');
+        } else {
+          addToast('Cannot Present', 'Only cloud-synced documents can be presented. Local files stay on your device.', 'alert');
+        }
         return;
       }
       startPdfPresentation(activePdfDoc, activePdfPage);
@@ -237,21 +339,25 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const peersReadingPdf = peers.filter(p => p.userId !== currentUser.id && p.currentDocument);
 
   // Native streaming URL:
-  // Using #toolbar=1&navpanes=0&view=FitH ensures:
-  // 1. Native continuous vertical scrolling through all pages with mouse wheel/trackpad.
-  // 2. Fits width cleanly so textbook text is large and crisp.
-  // 3. Built-in search (Ctrl+F), page navigation, and zoom controls.
+  // 1. For local uploads, uses the fast local blob URL for the uploader without reloading iframe.
+  // 2. For remote / peer reading, uses the Telegram inline stream URL with FitH and page number.
   const streamUrl = useMemo(() => {
-    if (localPdfUrl) return localPdfUrl;
+    if (localPdfUrl && localPdfDocId && activePdfDoc?.id === localPdfDocId) {
+      return localPdfUrl;
+    }
     if (!activePdfDoc?.telegramFileId) return '';
     return `${API_BASE_URL}/api/telegram/stream/${activePdfDoc.telegramFileId}#toolbar=1&navpanes=0&view=FitH&page=${displayPage}`;
-  }, [localPdfUrl, activePdfDoc?.telegramFileId, displayPage]);
+  }, [localPdfUrl, localPdfDocId, activePdfDoc?.id, activePdfDoc?.telegramFileId, displayPage]);
 
   // Explicit page navigation — broadcasts to the room when this user is presenting
   const goToPage = (page: number) => {
     if (!Number.isFinite(page) || page < 1) return;
     setDisplayPage(page);
     sendPdfPageChange(page);
+    if (readAlongPeerId) {
+      setReadAlongPeerId(null);
+      addToast('Independent Reading', 'Navigated manually — exited follow mode.', 'info');
+    }
   };
 
   const filteredDocs = documents.filter(d =>
@@ -331,6 +437,25 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
             {activePdfDoc?.subject && (
               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30 shrink-0 hidden sm:inline-block">
                 {activePdfDoc.subject}
+              </span>
+            )}
+            {/* Cloud Sync Status Indicator */}
+            {syncStatus === 'uploading' && activePdfDoc?.id === localPdfDocId && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0 animate-pulse" title="Uploading to Telegram channel so peers can Read Along with you...">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                <span className="hidden sm:inline">Syncing to Cloud...</span>
+              </span>
+            )}
+            {activePdfDoc?.telegramFileId && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0" title="Saved in Telegram channel. Peers can Read Along!">
+                <Cloud className="w-2.5 h-2.5" />
+                <span className="hidden md:inline">Cloud Synced</span>
+              </span>
+            )}
+            {syncStatus === 'error' && activePdfDoc?.id === localPdfDocId && !activePdfDoc?.telegramFileId && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0" title="Cloud upload failed. Only visible locally on your device.">
+                <CloudOff className="w-2.5 h-2.5" />
+                <span className="hidden sm:inline">Local Only</span>
               </span>
             )}
           </div>
@@ -471,6 +596,30 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         </div>
       )}
 
+      {/* 2b. READ ALONG ACTIVE FOLLOWER BANNER */}
+      {readAlongPeer && (
+        <div className="bg-sky-950/90 border-b border-sky-500/30 px-3 py-1 flex items-center justify-between text-xs shadow-md shrink-0">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
+            <span className="text-white font-medium text-[11px] truncate">
+              Reading along with <strong className="text-sky-300">{readAlongPeer.name}</strong> • Synchronized to Page <strong className="text-sky-300">{displayPage}</strong>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setReadAlongPeerId(null);
+                addToast('Read Along Ended', 'You are now reading independently.', 'info');
+              }}
+              className="px-2.5 py-0.5 rounded-lg text-[10px] font-bold bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 transition-all"
+            >
+              Stop Following
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 3. PEER LIVE READING BAR */}
       {peersReadingPdf.length > 0 && (
         <div className="bg-slate-950/90 border-b border-white/10 px-3 py-1 flex items-center gap-2 overflow-x-auto text-xs shrink-0">
@@ -499,13 +648,21 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <button
                 onClick={() => {
                   if (p.currentDocument) {
-                    const fileId = p.currentDocument.fileUrl?.split('/stream/')[1] || '';
+                    const fileId = p.currentDocument.fileUrl?.split('/stream/')[1]?.split(/[?#]/)[0] || '';
                     if (!fileId) {
-                      addToast('Not Available', `"${p.currentDocument.title}" is a local file on ${p.name}'s device and can't be opened remotely.`, 'alert');
+                      addToast('Syncing to Cloud', `"${p.currentDocument.title}" is currently syncing to Telegram. Please wait a few seconds!`, 'alert');
+                      return;
+                    }
+                    if (readAlongPeerId === p.userId) {
+                      setReadAlongPeerId(null);
+                      addToast('Stopped Following', `No longer reading along with ${p.name}`, 'info');
                       return;
                     }
                     setLocalPdfUrl(null);
-                    openPdfInReader({
+                    setLocalPdfDocId(null);
+                    setReadAlongPeerId(p.userId);
+                    const existingDoc = documents.find(d => d.id === p.currentDocument?.id || (fileId && d.telegramFileId === fileId));
+                    const docToOpen: StudyDocument = existingDoc || {
                       id: p.currentDocument.id,
                       title: p.currentDocument.title,
                       fileName: `${p.currentDocument.title}.pdf`,
@@ -518,15 +675,20 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                       uploaderName: p.name,
                       uploadedAt: new Date().toISOString(),
                       downloadCount: 0,
-                      roomId
-                    }, p.currentDocument.currentPage);
-                    addToast('Read Along Started!', `Opened "${p.currentDocument.title}" with ${p.name}`, 'success');
+                      roomId: (roomId || 'RRB-7949').toUpperCase()
+                    };
+                    openPdfInReader(docToOpen, p.currentDocument.currentPage || 1);
+                    addToast('Read Along Started!', `Reading "${p.currentDocument.title}" with ${p.name} on Page ${p.currentDocument.currentPage || 1}`, 'success');
                   }
                 }}
-                className="px-1.5 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-[9px] font-semibold transition-colors"
+                className={`px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors ${
+                  readAlongPeerId === p.userId
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-sky-500/20 hover:bg-sky-500/30 text-sky-300'
+                }`}
                 title={`Read along with ${p.name}`}
               >
-                Read Along
+                {readAlongPeerId === p.userId ? '✓ Following' : 'Read Along'}
               </button>
             </div>
           ))}
@@ -685,6 +847,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                     key={doc.id}
                     onClick={() => {
                       setLocalPdfUrl(null);
+                      setLocalPdfDocId(null);
+                      setReadAlongPeerId(null);
                       openPdfInReader(doc, 1);
                       setIsLibraryOpen(false);
                       addToast('Loaded Document', `Now reading "${doc.title}"`, 'info');

@@ -682,9 +682,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Tune in to peer's PDF
   const tuneInToPeerPdf = useCallback((peer: RoomPeer) => {
     if (!peer.currentDocument) return;
-    const fileId = peer.currentDocument.fileUrl.split('/stream/')[1] || '';
+    const fileId = peer.currentDocument.fileUrl.split('/stream/')[1]?.split(/[?#]/)[0] || '';
     if (!fileId) {
-      addToast('Not Available', `"${peer.currentDocument.title}" is a local file on ${peer.name}'s device and can't be opened remotely.`, 'alert');
+      addToast('Syncing or Local Only', `"${peer.currentDocument.title}" is currently syncing to Telegram or is only available locally on ${peer.name}'s device.`, 'alert');
       return;
     }
     const docItem: StudyDocument = {
