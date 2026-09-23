@@ -86,6 +86,8 @@ export interface ChatMessage {
   userAvatar: string;
   text: string;
   videoTimestamp?: number;
+  pdfPage?: number;
+  pdfDocTitle?: string;
   isAiDoubt?: boolean;
   aiResponse?: string;
   createdAt: string;

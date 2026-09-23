@@ -8,17 +8,31 @@ import {
   MessageSquare,
   Bot,
   Lock,
-  Unlock
+  Unlock,
+  PanelRightClose,
+  BookOpen
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 
 interface VoiceChatPanelProps {
   currentVideoTime?: number;
   onSeekVideo?: (delta: number) => void;
+  mode?: 'video' | 'pdf' | 'general';
+  activePdfTitle?: string;
+  activePdfPage?: number;
+  onJumpPdfPage?: (page: number) => void;
+  onClose?: () => void;
+  title?: string;
 }
 
 export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
-  currentVideoTime = 0
+  currentVideoTime = 0,
+  mode = 'video',
+  activePdfTitle,
+  activePdfPage,
+  onJumpPdfPage,
+  onClose,
+  title
 }) => {
   const {
     chatMessages,
@@ -28,7 +42,6 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
     isMicMuted,
     toggleMic,
     isVoiceUnlocked,
-    setIsVoiceModalOpen,
     sendVideoSeek,
     addToast
   } = useSocket();
@@ -45,14 +58,29 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
   const handleSendMessage = (asAiDoubt: boolean = false) => {
     if (!inputText.trim()) return;
 
-    sendChatMessage(
-      inputText,
-      includeTimestamp ? Math.floor(currentVideoTime) : undefined,
-      asAiDoubt || isAskingAi
-    );
+    if (mode === 'pdf') {
+      sendChatMessage(
+        inputText,
+        undefined,
+        asAiDoubt || isAskingAi,
+        includeTimestamp && activePdfPage ? { pdfPage: activePdfPage, pdfDocTitle: activePdfTitle } : undefined
+      );
+    } else {
+      sendChatMessage(
+        inputText,
+        includeTimestamp ? Math.floor(currentVideoTime) : undefined,
+        asAiDoubt || isAskingAi
+      );
+    }
 
     if (asAiDoubt || isAskingAi) {
-      addToast('Doubt Sent to AI Teacher', 'AI Teacher is analyzing this lecture timestamp...', 'info');
+      addToast(
+        'Doubt Sent to AI Teacher',
+        mode === 'pdf'
+          ? `AI Teacher is analyzing Page ${activePdfPage || 1}...`
+          : 'AI Teacher is analyzing this lecture timestamp...',
+        'info'
+      );
     }
 
     setInputText('');
@@ -66,48 +94,63 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
+    <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl h-full">
       
       {/* Top Bar: Peer Voice Presence & Security Gate */}
-      <div className="p-3 border-b border-white/10 bg-slate-950/60 flex items-center justify-between">
+      <div className="p-3 border-b border-white/10 bg-slate-950/60 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-4 h-4 text-indigo-400" />
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Live Discussion & Doubts</h3>
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider truncate max-w-[140px] sm:max-w-none">
+            {title || (mode === 'pdf' ? 'PDF Discussion & Doubts' : 'Live Discussion & Doubts')}
+          </h3>
         </div>
         
-        {/* Voice Lock / Unlock Button */}
-        <button
-          onClick={toggleMic}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-            !isVoiceUnlocked
-              ? 'bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25'
-              : isMicMuted
-              ? 'bg-rose-500/15 border-rose-500/30 text-rose-300 hover:bg-rose-500/25'
-              : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 animate-pulse'
-          }`}
-          title={!isVoiceUnlocked ? 'Voice chat locked by default. Click to enter password' : 'Toggle Mic'}
-        >
-          {!isVoiceUnlocked ? (
-            <>
-              <Lock className="w-3.5 h-3.5" />
-              <span>Voice Locked (PW)</span>
-            </>
-          ) : isMicMuted ? (
-            <>
-              <MicOff className="w-3.5 h-3.5" />
-              <span>Mic Muted</span>
-            </>
-          ) : (
-            <>
-              <Mic className="w-3.5 h-3.5" />
-              <span>Voice Live</span>
-            </>
+        <div className="flex items-center gap-1.5">
+          {/* Voice Lock / Unlock Button */}
+          <button
+            onClick={toggleMic}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all ${
+              !isVoiceUnlocked
+                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25'
+                : isMicMuted
+                ? 'bg-rose-500/15 border-rose-500/30 text-rose-300 hover:bg-rose-500/25'
+                : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 animate-pulse'
+            }`}
+            title={!isVoiceUnlocked ? 'Voice chat locked by default. Click to enter password' : 'Toggle Mic'}
+          >
+            {!isVoiceUnlocked ? (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Voice Locked</span>
+              </>
+            ) : isMicMuted ? (
+              <>
+                <MicOff className="w-3.5 h-3.5" />
+                <span>Muted</span>
+              </>
+            ) : (
+              <>
+                <Mic className="w-3.5 h-3.5" />
+                <span>Live</span>
+              </>
+            )}
+          </button>
+
+          {/* Close / Collapse Button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              title="Hide Chat (Full Screen Reading)"
+            >
+              <PanelRightClose className="w-4 h-4" />
+            </button>
           )}
-        </button>
+        </div>
       </div>
 
       {/* Active Study Buddies Presence Bar with Live Situations */}
-      <div className="px-3 py-2 bg-slate-950/40 border-b border-white/5 flex items-center gap-3 overflow-x-auto">
+      <div className="px-3 py-2 bg-slate-950/40 border-b border-white/5 flex items-center gap-3 overflow-x-auto shrink-0">
         <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">In Room:</span>
         {peers.map((peer) => (
           <div key={peer.userId} className="flex items-center gap-1.5 shrink-0">
@@ -138,13 +181,15 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
       </div>
 
       {/* Chat Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {chatMessages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
             <Bot className="w-8 h-8 text-indigo-400/50 mb-2" />
             <p className="text-xs font-medium text-slate-300">Start the group discussion!</p>
             <p className="text-[11px] text-slate-500 mt-1">
-              Voice chat is paused by default. Unlock with password or type doubts freely!
+              {mode === 'pdf'
+                ? 'Discuss formulas, questions, or ask the AI Teacher directly about any page.'
+                : 'Voice chat is paused by default. Unlock with password or type doubts freely!'}
             </p>
           </div>
         )}
@@ -181,6 +226,18 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
                     <span>{formatTimestamp(msg.videoTimestamp)}</span>
                   </button>
                 )}
+
+                {/* Clickable PDF Page Chip */}
+                {msg.pdfPage !== undefined && (
+                  <button
+                    onClick={() => onJumpPdfPage?.(msg.pdfPage!)}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 text-[10px] font-mono font-bold border border-cyan-500/30 transition-colors"
+                    title={`Click to jump PDF to Page ${msg.pdfPage}`}
+                  >
+                    <BookOpen className="w-2.5 h-2.5" />
+                    <span>P. {msg.pdfPage}</span>
+                  </button>
+                )}
               </div>
 
               {/* Message Bubble */}
@@ -202,18 +259,34 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
       </div>
 
       {/* Chat Input & AI Doubt Solver Integration */}
-      <div className="p-2.5 bg-slate-950 border-t border-white/10 flex flex-col gap-2">
+      <div className="p-2.5 bg-slate-950 border-t border-white/10 flex flex-col gap-2 shrink-0">
         
         <div className="flex items-center justify-between text-[11px]">
-          <label className="flex items-center gap-1.5 text-slate-400 hover:text-white cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={includeTimestamp}
-              onChange={(e) => setIncludeTimestamp(e.target.checked)}
-              className="rounded bg-slate-800 border-white/10 text-indigo-600 focus:ring-0"
-            />
-            <span>Attach Timestamp (<span className="text-cyan-400 font-mono">{formatTimestamp(currentVideoTime)}</span>)</span>
-          </label>
+          {mode === 'pdf' ? (
+            activePdfPage ? (
+              <label className="flex items-center gap-1.5 text-slate-400 hover:text-white cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeTimestamp}
+                  onChange={(e) => setIncludeTimestamp(e.target.checked)}
+                  className="rounded bg-slate-800 border-white/10 text-cyan-600 focus:ring-0"
+                />
+                <span>Attach Page (<span className="text-cyan-400 font-mono font-bold">P. {activePdfPage}</span>)</span>
+              </label>
+            ) : (
+              <span className="text-slate-500">Live Peer Discussion</span>
+            )
+          ) : (
+            <label className="flex items-center gap-1.5 text-slate-400 hover:text-white cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeTimestamp}
+                onChange={(e) => setIncludeTimestamp(e.target.checked)}
+                className="rounded bg-slate-800 border-white/10 text-indigo-600 focus:ring-0"
+              />
+              <span>Attach Timestamp (<span className="text-cyan-400 font-mono">{formatTimestamp(currentVideoTime)}</span>)</span>
+            </label>
+          )}
 
           <button
             type="button"
@@ -225,7 +298,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
             }`}
           >
             <Sparkles className="w-3 h-3 text-cyan-400" />
-            <span>Ask AI Teacher</span>
+            <span>{mode === 'pdf' && activePdfPage ? `Ask AI (P.${activePdfPage})` : 'Ask AI Teacher'}</span>
           </button>
         </div>
 
@@ -237,7 +310,11 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
             placeholder={
               isAskingAi
-                ? "Ask AI doubt about this video moment..."
+                ? mode === 'pdf'
+                  ? `Ask AI doubt about Page ${activePdfPage || ''}...`
+                  : "Ask AI doubt about this video moment..."
+                : mode === 'pdf'
+                ? "Type doubt or question (use /ai for teacher)..."
                 : "Type message or doubt (use /ai to ask coach)..."
             }
             className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"

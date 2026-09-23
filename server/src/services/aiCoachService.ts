@@ -114,7 +114,7 @@ export class AICoachService {
   /**
    * Explain doubt with step-by-step logic
    */
-  public explainDoubt(question: string, context?: { videoTimestamp?: number; subject?: string }): {
+  public explainDoubt(question: string, context?: { videoTimestamp?: number; subject?: string; pdfPage?: number; pdfTitle?: string }): {
     explanation: string;
     steps: string[];
     keyFormula?: string;

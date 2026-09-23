@@ -19,7 +19,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     socket.emit('chat:history', history);
   });
 
-  // User sends a chat message (can include video timestamp)
+  // User sends a chat message (can include video timestamp or PDF page reference)
   socket.on('chat:send', async (data: {
     roomId: string;
     userId: string;
@@ -27,6 +27,8 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     userAvatar: string;
     text: string;
     videoTimestamp?: number;
+    pdfPage?: number;
+    pdfDocTitle?: string;
     isAiDoubt?: boolean;
   }) => {
     const roomId = data.roomId || 'study-room-alpha';
@@ -38,6 +40,8 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       userAvatar: data.userAvatar,
       text: data.text,
       videoTimestamp: data.videoTimestamp,
+      pdfPage: data.pdfPage,
+      pdfDocTitle: data.pdfDocTitle,
       isAiDoubt: data.isAiDoubt || data.text.startsWith('/ai'),
       createdAt: new Date().toISOString()
     };
@@ -49,7 +53,17 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     // If it's a doubt for AI
     if (newMsg.isAiDoubt) {
       const query = data.text.replace(/^\/ai\s*/i, '');
-      const doubtResult = aiCoach.explainDoubt(query, { videoTimestamp: data.videoTimestamp });
+      const doubtResult = aiCoach.explainDoubt(query, {
+        videoTimestamp: data.videoTimestamp,
+        pdfPage: data.pdfPage,
+        pdfTitle: data.pdfDocTitle
+      });
+
+      const contextHeader = data.pdfPage
+        ? `📖 *Context: ${data.pdfDocTitle || 'Study PDF'} (Page ${data.pdfPage})*\n\n`
+        : data.videoTimestamp !== undefined
+        ? `⏱️ *Context: Lecture Timestamp ${Math.floor(data.videoTimestamp / 60)}:${(data.videoTimestamp % 60).toString().padStart(2, '0')}*\n\n`
+        : '';
       
       const aiReply: ChatMessage = {
         id: `ai-msg-${Date.now()}`,
@@ -57,8 +71,10 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
         userId: 'ai_coach',
         userName: 'StudyOS AI Teacher 🤖',
         userAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=StudyCoach&backgroundColor=4f46e5',
-        text: `**Doubt Solution:**\n${doubtResult.explanation}\n\n${doubtResult.steps.join('\n')}\n\n💡 *Tip: ${doubtResult.practiceTip}*`,
+        text: `${contextHeader}**Doubt Solution:**\n${doubtResult.explanation}\n\n${doubtResult.steps.join('\n')}\n\n💡 *Tip: ${doubtResult.practiceTip}*`,
         videoTimestamp: data.videoTimestamp,
+        pdfPage: data.pdfPage,
+        pdfDocTitle: data.pdfDocTitle,
         isAiDoubt: true,
         createdAt: new Date().toISOString()
       };

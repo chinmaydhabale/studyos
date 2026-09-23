@@ -7,24 +7,24 @@ import {
   ZoomOut,
   RotateCcw,
   Maximize2,
-  Share2,
+  Minimize2,
   Users,
   Radio,
   FileText,
-  Upload,
-  Download,
-  HelpCircle,
   FolderLock,
-  Eye,
-  CheckCircle2,
   Search,
   Sparkles,
   ExternalLink,
-  X
+  MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
+  X,
+  Maximize
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { StudyDocument } from '../../types.js';
 import { API_BASE_URL } from '../../config.js';
+import { VoiceChatPanel } from '../voice-chat/VoiceChatPanel.js';
 
 interface PDFReaderViewProps {
   onAskAiDoubt?: (prompt: string) => void;
@@ -38,6 +38,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     activePdfDoc,
     activePdfPage,
     pdfPresentation,
+    chatMessages,
     setActivePdfDoc,
     setActivePdfPage,
     updateMyPdfReadingStatus,
@@ -53,11 +54,19 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [loadingDocs, setLoadingDocs] = useState<boolean>(true);
   const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(false);
   const [zoom, setZoom] = useState<number>(100);
+  const [viewMode, setViewMode] = useState<'fit-width' | 'fit-page' | 'custom'>('fit-width');
   const [isSoloMode, setIsSoloMode] = useState<boolean>(true);
   const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
   const [pageInput, setPageInput] = useState<string>(String(activePdfPage || 1));
   const [searchDocQuery, setSearchDocQuery] = useState<string>('');
+  
+  // Chatbox visibility toggle (Hide / Unhide)
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  
+  // Fullscreen reading mode
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
+  const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Fetch all documents from Telegram Vault
@@ -95,7 +104,6 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Follow presenter if in presentation mode and following is active
   useEffect(() => {
     if (pdfPresentation?.isActive && pdfPresentation.presenterId !== currentUser.id && isFollowingPresenter) {
-      // If presenter switched document
       if (activePdfDoc?.id !== pdfPresentation.documentId) {
         const found = documents.find(d => d.id === pdfPresentation.documentId);
         if (found) {
@@ -112,6 +120,28 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       updateMyPdfReadingStatus(activePdfDoc, activePdfPage);
     }
   }, [activePdfDoc, activePdfPage, updateMyPdfReadingStatus]);
+
+  // Toggle true browser fullscreen
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {
+        setIsFullscreen(!isFullscreen);
+      });
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1) return;
@@ -151,8 +181,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Filter peers who are currently reading a PDF
   const peersReadingPdf = peers.filter(p => p.userId !== currentUser.id && p.currentDocument);
 
+  // Build stream URL with Fit Width (FitH) and Page parameters
+  const viewParam = viewMode === 'fit-width' ? 'FitH' : viewMode === 'fit-page' ? 'Fit' : '';
+  const zoomParam = viewMode === 'custom' ? `&zoom=${zoom}` : '';
   const streamUrl = activePdfDoc?.telegramFileId
-    ? `${API_BASE_URL}/api/telegram/stream/${activePdfDoc.telegramFileId}#page=${activePdfPage}&zoom=${zoom}`
+    ? `${API_BASE_URL}/api/telegram/stream/${activePdfDoc.telegramFileId}#page=${activePdfPage}&view=${viewParam}${zoomParam}`
     : '';
 
   const filteredDocs = documents.filter(d =>
@@ -162,10 +195,15 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   );
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4.2rem)] bg-[#090d16] text-slate-100 overflow-hidden">
+    <div
+      ref={containerRef}
+      className={`flex-1 flex flex-col bg-[#090d16] text-slate-100 overflow-hidden ${
+        isFullscreen ? 'fixed inset-0 z-50 w-screen h-screen' : 'h-[calc(100vh-4.2rem)]'
+      }`}
+    >
       
       {/* 1. TOP CONTROL BAR */}
-      <div className="bg-slate-900/95 border-b border-white/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xl shrink-0">
+      <div className="bg-slate-900/95 border-b border-white/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xl shrink-0 z-10">
         
         {/* Left: Document Title & Library Switcher */}
         <div className="flex items-center gap-2.5 min-w-0">
@@ -193,7 +231,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           </div>
         </div>
 
-        {/* Center: Page Controls & Zoom */}
+        {/* Center: Page Controls & Fit Width / Zoom Modes */}
         <div className="flex items-center gap-2">
           
           {/* Previous Page */}
@@ -228,27 +266,64 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
           <div className="w-px h-4 bg-white/10 mx-1 hidden sm:block" />
 
-          {/* Zoom In / Out */}
-          <div className="hidden sm:flex items-center gap-1 bg-slate-950 p-0.5 rounded-xl border border-white/10">
+          {/* Fit Width / Fit Page Quick Switcher */}
+          <div className="hidden sm:flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/10 text-xs">
             <button
-              onClick={() => setZoom(Math.max(50, zoom - 15))}
+              onClick={() => setViewMode('fit-width')}
+              className={`px-2.5 py-1 rounded-lg font-semibold text-[11px] transition-all ${
+                viewMode === 'fit-width'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Fit to Width: Expands PDF horizontally to fill full reader"
+            >
+              Fit Width
+            </button>
+            <button
+              onClick={() => setViewMode('fit-page')}
+              className={`px-2 py-1 rounded-lg font-semibold text-[11px] transition-all ${
+                viewMode === 'fit-page'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Fit to Page: View full page height"
+            >
+              Fit Page
+            </button>
+          </div>
+
+          {/* Zoom In / Out Controls */}
+          <div className="hidden md:flex items-center gap-1 bg-slate-950 p-0.5 rounded-xl border border-white/10">
+            <button
+              onClick={() => {
+                setViewMode('custom');
+                setZoom(Math.max(50, zoom - 15));
+              }}
               className="p-1.5 text-slate-400 hover:text-white transition-colors"
               title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span className="text-[10px] font-mono text-slate-400 px-1 font-semibold">{zoom}%</span>
+            <span className="text-[10px] font-mono text-slate-400 px-1 font-semibold">
+              {viewMode === 'fit-width' ? 'Auto Width' : `${zoom}%`}
+            </span>
             <button
-              onClick={() => setZoom(Math.min(200, zoom + 15))}
+              onClick={() => {
+                setViewMode('custom');
+                setZoom(Math.min(200, zoom + 15));
+              }}
               className="p-1.5 text-slate-400 hover:text-white transition-colors"
               title="Zoom In"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
             <button
-              onClick={() => setZoom(100)}
+              onClick={() => {
+                setViewMode('fit-width');
+                setZoom(100);
+              }}
               className="p-1.5 text-slate-400 hover:text-white transition-colors"
-              title="Reset Zoom"
+              title="Reset to Fit Width"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
@@ -256,7 +331,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
         </div>
 
-        {/* Right: Solo vs Co-Study Mode & AI Teacher Button */}
+        {/* Right: Fullscreen, Chatbox Toggle & Co-Study presentation */}
         <div className="flex items-center gap-2">
           
           {/* Ask AI Doubt Button */}
@@ -267,10 +342,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
             title="Ask AI Teacher doubt about this page"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Ask AI About Page</span>
+            <span className="hidden xl:inline">Ask AI About Page</span>
           </button>
 
-          {/* Solo vs Co-Study Presentation Toggle */}
+          {/* Toggle Presentation Mode */}
           <button
             onClick={handleTogglePresentation}
             disabled={!activePdfDoc}
@@ -282,10 +357,49 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
             title={pdfPresentation?.presenterId === currentUser.id ? 'Stop Group Presentation' : 'Present to Group & Sync Pages'}
           >
             <Radio className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline">
+            <span className="hidden lg:inline">
               {pdfPresentation?.presenterId === currentUser.id ? 'Stop Presenting' : 'Present to Group'}
             </span>
           </button>
+
+          {/* Chatbox Hide / Unhide Toggle Button */}
+          <button
+            onClick={() => setIsChatOpen(!isChatOpen)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isChatOpen
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/25'
+                : 'bg-slate-950 border-white/10 text-slate-300 hover:text-white hover:border-white/20'
+            }`}
+            title={isChatOpen ? 'Hide Chat (Maximize PDF Screen)' : 'Unhide Chat Panel'}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isChatOpen ? 'Hide Chat' : 'Show Chat'}</span>
+            {!isChatOpen && chatMessages.length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            )}
+          </button>
+
+          {/* Fullscreen Mode Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 rounded-xl bg-slate-950 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+            title={isFullscreen ? 'Exit Full Screen' : 'Full Screen Reading Mode'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4 text-cyan-300" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
+          {/* Direct Tab / Open in Browser button */}
+          {streamUrl && (
+            <a
+              href={streamUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded-xl bg-slate-950 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition-colors hidden sm:block"
+              title="Open Raw PDF in New Tab"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </a>
+          )}
 
         </div>
 
@@ -293,7 +407,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
       {/* 2. PRESENTATION FOLLOWER BANNER (IF SOMEONE IN ROOM IS PRESENTING) */}
       {pdfPresentation?.isActive && pdfPresentation.presenterId !== currentUser.id && (
-        <div className="bg-gradient-to-r from-indigo-900/90 via-slate-900 to-cyan-900/90 border-b border-cyan-500/30 px-4 py-2 flex items-center justify-between text-xs shadow-md">
+        <div className="bg-gradient-to-r from-indigo-900/90 via-slate-900 to-cyan-900/90 border-b border-cyan-500/30 px-4 py-2 flex items-center justify-between text-xs shadow-md shrink-0">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
             <span className="text-white font-semibold">
@@ -324,7 +438,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
       {/* 3. PEER LIVE READING BAR ("WHO IS READING WHAT RIGHT NOW") */}
       {peersReadingPdf.length > 0 && (
-        <div className="bg-slate-950/90 border-b border-white/10 px-4 py-2 flex items-center gap-3 overflow-x-auto text-xs shrink-0">
+        <div className="bg-slate-950/90 border-b border-white/10 px-4 py-1.5 flex items-center gap-3 overflow-x-auto text-xs shrink-0">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 shrink-0 flex items-center gap-1">
             <Users className="w-3.5 h-3.5 text-indigo-400" />
             <span>Peers Reading:</span>
@@ -379,42 +493,78 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         </div>
       )}
 
-      {/* 4. MAIN PDF CANVAS & VIEWER */}
-      <div className="flex-1 relative flex overflow-hidden bg-slate-950">
+      {/* 4. MAIN WORKSPACE: PDF VIEWER (FULL EXPANDED) + INTEGRATED LIVE CHATBOX */}
+      <div className="flex-1 relative flex flex-col lg:flex-row overflow-hidden bg-slate-950">
         
-        {/* PDF Viewer Frame */}
-        {activePdfDoc ? (
-          <div className="flex-1 w-full h-full relative">
-            <iframe
-              ref={iframeRef}
-              src={streamUrl}
-              title={activePdfDoc.title}
-              className="w-full h-full border-0 bg-slate-950"
-            />
-          </div>
-        ) : (
-          /* Empty State - No document loaded */
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-16 h-16 rounded-3xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400">
-              <BookOpen className="w-8 h-8" />
+        {/* PDF Viewer Frame (Auto expands to 100% full width when chat is hidden) */}
+        <div className={`flex-1 relative h-full flex flex-col overflow-hidden transition-all duration-300 ${
+          isChatOpen ? '' : 'w-full'
+        }`}>
+          {activePdfDoc ? (
+            <div className="w-full h-full relative flex-1 bg-slate-950">
+              <iframe
+                ref={iframeRef}
+                src={streamUrl}
+                title={activePdfDoc.title}
+                className="w-full h-full border-0 bg-slate-950"
+              />
             </div>
-            <h3 className="text-base font-extrabold text-white mb-1">No Study PDF Selected</h3>
-            <p className="text-xs text-slate-400 max-w-sm mb-4">
-              Open the document library to choose from Telegram Vault materials or upload your own notes.
-            </p>
+          ) : (
+            /* Empty State - No document loaded */
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <div className="w-16 h-16 rounded-3xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400">
+                <BookOpen className="w-8 h-8" />
+              </div>
+              <h3 className="text-base font-extrabold text-white mb-1">No Study PDF Selected</h3>
+              <p className="text-xs text-slate-400 max-w-sm mb-4">
+                Open the document library to choose from Telegram Vault materials or upload your own notes.
+              </p>
+              <button
+                onClick={() => setIsLibraryOpen(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/25 transition-all"
+              >
+                <FolderLock className="w-4 h-4" />
+                <span>Browse Telegram Vault Library</span>
+              </button>
+            </div>
+          )}
+
+          {/* Floating Summon Chat Button (Visible only when chatbox is hidden) */}
+          {!isChatOpen && (
             <button
-              onClick={() => setIsLibraryOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/25 transition-all"
+              onClick={() => setIsChatOpen(true)}
+              className="absolute bottom-5 right-5 z-20 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-2xl shadow-indigo-600/50 border border-indigo-400/30 hover:scale-105 active:scale-95 transition-all"
+              title="Open Live Chat & Doubts"
             >
-              <FolderLock className="w-4 h-4" />
-              <span>Browse Telegram Vault Library</span>
+              <MessageSquare className="w-4 h-4 text-cyan-300" />
+              <span>Live Discussion</span>
+              {chatMessages.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-cyan-400 text-slate-950 text-[10px] font-extrabold">
+                  {chatMessages.length}
+                </span>
+              )}
             </button>
+          )}
+
+        </div>
+
+        {/* 5. SIDE-BY-SIDE LIVE VOICE & DOUBTS CHATBOX (COLLAPSIBLE / UNHIDEABLE) */}
+        {isChatOpen && (
+          <div className="w-full lg:w-96 shrink-0 h-80 lg:h-full p-2.5 border-t lg:border-t-0 lg:border-l border-white/10 bg-slate-950/80 backdrop-blur-md flex flex-col z-20 animate-in slide-in-from-right duration-200">
+            <VoiceChatPanel
+              mode="pdf"
+              activePdfTitle={activePdfDoc?.title}
+              activePdfPage={activePdfPage}
+              onJumpPdfPage={(page) => handlePageChange(page)}
+              onClose={() => setIsChatOpen(false)}
+              title="PDF Doubts & Discussion"
+            />
           </div>
         )}
 
-        {/* 5. SLIDE-OUT DOCUMENT LIBRARY DRAWER */}
+        {/* 6. SLIDE-OUT DOCUMENT LIBRARY DRAWER */}
         {isLibraryOpen && (
-          <div className="absolute top-0 right-0 bottom-0 w-80 sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right duration-200">
+          <div className="absolute top-0 right-0 bottom-0 w-80 sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-40 flex flex-col animate-in slide-in-from-right duration-200">
             
             <div className="p-3.5 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
               <div className="flex items-center gap-2">

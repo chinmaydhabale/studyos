@@ -51,6 +51,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing'>('synced');
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
 
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -302,6 +303,20 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
                 </button>
               ))}
             </div>
+
+            {/* Toggle Chatbox Hide / Show */}
+            <button
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                isChatOpen
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/25'
+                  : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white hover:border-white/20'
+              }`}
+              title={isChatOpen ? 'Hide Chat (Full Screen Video)' : 'Show Chat'}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{isChatOpen ? 'Hide Chat' : 'Show Chat'}</span>
+            </button>
           </div>
 
         </div>
@@ -444,9 +459,27 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       </div>
 
       {/* Right: Real-time Live Voice & In-Lecture Doubt Chat Panel */}
-      <div className="w-full lg:w-96 flex flex-col h-full">
-        <VoiceChatPanel currentVideoTime={currentTime} onSeekVideo={handleSeekDelta} />
-      </div>
+      {isChatOpen && (
+        <div className="w-full lg:w-96 flex flex-col h-full animate-in slide-in-from-right duration-200">
+          <VoiceChatPanel
+            currentVideoTime={currentTime}
+            onSeekVideo={handleSeekDelta}
+            onClose={() => setIsChatOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Floating Summon Chat Button when collapsed */}
+      {!isChatOpen && (
+        <button
+          onClick={() => setIsChatOpen(true)}
+          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-2xl shadow-indigo-600/50 border border-indigo-400/30 hover:scale-105 active:scale-95 transition-all"
+          title="Open Live Chat & Doubts"
+        >
+          <MessageSquare className="w-4 h-4 text-cyan-300" />
+          <span>Live Discussion</span>
+        </button>
+      )}
 
     </div>
   );

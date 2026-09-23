@@ -61,7 +61,12 @@ interface SocketContextType {
   updateUserProfile: (profile: Partial<UserProfile>) => void;
   toggleMic: () => void;
   unlockVoiceChat: () => void;
-  sendChatMessage: (text: string, videoTimestamp?: number, isAiDoubt?: boolean) => void;
+  sendChatMessage: (
+    text: string,
+    videoTimestamp?: number,
+    isAiDoubt?: boolean,
+    extraMeta?: { pdfPage?: number; pdfDocTitle?: string }
+  ) => void;
   sendVideoChange: (videoUrl: string, videoId: string) => void;
   sendVideoPlay: (currentTime: number) => void;
   sendVideoPause: (currentTime: number) => void;
@@ -502,7 +507,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [roomId, currentUser.name]);
 
-  const sendChatMessage = useCallback((text: string, videoTimestamp?: number, isAiDoubt?: boolean) => {
+  const sendChatMessage = useCallback((
+    text: string,
+    videoTimestamp?: number,
+    isAiDoubt?: boolean,
+    extraMeta?: { pdfPage?: number; pdfDocTitle?: string }
+  ) => {
     if (!text.trim()) return;
     socketRef.current?.emit('chat:send', {
       roomId,
@@ -511,6 +521,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       userAvatar: currentUser.avatar,
       text,
       videoTimestamp,
+      pdfPage: extraMeta?.pdfPage,
+      pdfDocTitle: extraMeta?.pdfDocTitle,
       isAiDoubt
     });
   }, [roomId, currentUser]);
