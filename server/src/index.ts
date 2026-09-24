@@ -510,6 +510,19 @@ app.post('/api/ai/summarize-lecture', async (req, res) => {
   }
 });
 
+// PDF reader assistant — the page text is extracted client-side so locally
+// opened (never uploaded) PDFs work the same as cloud ones.
+app.post('/api/ai/pdf-assist', async (req, res) => {
+  const { mode, docTitle, page, pageText, selectedText, question, userId } = req.body || {};
+  try {
+    const result = await aiCoach.assistWithPdf({ mode, docTitle, page, pageText, selectedText, question, userId });
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] pdf-assist failed:', err);
+    res.status(500).json({ error: 'AI coach could not read that page right now' });
+  }
+});
+
 // In production, serve the compiled client from client/dist if present
 const clientDistPath = fs.existsSync(path.resolve(process.cwd(), 'client/dist'))
   ? path.resolve(process.cwd(), 'client/dist')

@@ -44,6 +44,23 @@ export interface LectureSummary {
   source: AISource;
 }
 
+/** What the PDF reader asked the AI to do. */
+export type PdfAssistMode = 'page' | 'selection' | 'question';
+
+export interface PdfAssistResult {
+  mode: PdfAssistMode;
+  heading: string;
+  explanation: string;
+  keyPoints: string[];
+  formula?: string;
+  followUp?: string;
+  source: AISource;
+}
+
+// Keeps prompts (and therefore cost/latency) bounded on large or dense pages.
+const MAX_PAGE_CHARS = 6000;
+const MAX_SELECTION_CHARS = 1500;
+
 const EXAM_COACH_PERSONA =
   'You are StudyOS AI Coach, a patient expert tutor for Indian competitive exams ' +
   '(RRB PO, IBPS PO, SBI PO, SSC CGL). Explain with exam-oriented precision, use SI units, ' +
@@ -774,6 +791,141 @@ export class AICoachService {
         'Why does a reversible adiabatic process have constant entropy?',
         'How is work represented visually on a P-V indicator diagram?'
       ]
+    };
+  }
+  // ---------------------------------------------------------------------------
+  // 7. PDF reader assistant — explain a page, explain a selection, answer a question
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Answers questions about a PDF page using only the text the reader extracted
+   * from that page. The page text is supplied by the client, which means local
+   * (never-uploaded) PDFs work exactly the same as cloud ones.
+   */
+  public async assistWithPdf(input: {
+    mode?: PdfAssistMode;
+    docTitle?: string;
+    page?: number;
+    pageText?: string;
+    selectedText?: string;
+    question?: string;
+    userId?: string;
+  }): Promise<PdfAssistResult> {
+    const page = this.clampInt(input.page, 1, 100000, 1);
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Study PDF';
+    const selectedText = this.cleanString(input.selectedText, MAX_SELECTION_CHARS);
+    const question = this.cleanString(input.question, 500);
+    const pageText = (input.pageText || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_CHARS);
+
+    // Scanned / image-only pages have no text layer, so say so plainly rather
+    // than inventing an explanation.
+    if (!pageText) {
+      return {
+        mode: input.mode || 'page',
+        heading: `Page ${page} has no selectable text`,
+        explanation:
+          'This page looks like a scanned image, so there is no text layer for the AI to read. ' +
+          'Try selecting text on a page that contains real text.',
+        keyPoints: [],
+        source: 'fallback'
+      };
+    }
+
+    // A question wins over a selection, and a selection wins over the whole page.
+    const mode: PdfAssistMode =
+      input.mode === 'question' && question ? 'question' : selectedText ? 'selection' : input.mode === 'question' ? 'page' : input.mode || 'page';
+
+    const focus =
+      mode === 'question'
+        ? `Question: "${question}"`
+        : mode === 'selection'
+        ? `Selected passage the student did not understand:\n"${selectedText}"`
+        : `The student wants page ${page} explained end to end.`;
+
+    const task =
+      mode === 'question'
+        ? 'Answer the question using the page text as the source of truth. If the page text does not contain the answer, say so explicitly in the explanation, then give the standard exam answer and mark it as outside the page.'
+        : mode === 'selection'
+        ? 'Explain the selected passage in plain language: what it means, any term or symbol that needs defining, and why it matters for the exam.'
+        : 'Explain what this page is about, then list the points a student must remember from it.';
+
+    const result = await gemini.generateJson<{
+      heading?: string;
+      explanation?: string;
+      keyPoints?: string[];
+      formula?: string;
+      followUp?: string;
+    }>({
+      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are embedded inside a PDF reader. The page text below is the only source of truth about the document. Never claim the document says something it does not. Respond with JSON only.`,
+      prompt:
+        `Learner context:\n${this.buildLearnerContext(input.userId)}\n\n` +
+        `Document: "${docTitle}" — page ${page}\n` +
+        `${focus}\n\n` +
+        `--- PAGE TEXT START ---\n${pageText}\n--- PAGE TEXT END ---\n\n` +
+        `${task}\n\n` +
+        'Return a short heading, a 2-4 sentence explanation, 2-5 key points, the single most relevant ' +
+        'formula in LaTeX if the page has one (otherwise an empty string), and one follow-up question ' +
+        'the student should ask themselves.',
+      schema: {
+        type: 'OBJECT',
+        properties: {
+          heading: { type: 'STRING' },
+          explanation: { type: 'STRING' },
+          keyPoints: { type: 'ARRAY', items: { type: 'STRING' } },
+          formula: { type: 'STRING', description: 'LaTeX, or empty string when not applicable' },
+          followUp: { type: 'STRING' }
+        },
+        required: ['heading', 'explanation', 'keyPoints']
+      },
+      temperature: 0.5
+    });
+
+    if (result) {
+      const explanation = this.cleanString(result.explanation, 1600);
+      const keyPoints = this.cleanStringArray(result.keyPoints, 6, 500);
+      if (explanation) {
+        return {
+          mode,
+          heading: this.cleanString(result.heading, 200) || `${docTitle} — page ${page}`,
+          explanation,
+          keyPoints,
+          formula: this.cleanString(result.formula, 300),
+          followUp: this.cleanString(result.followUp, 300),
+          source: 'gemini'
+        };
+      }
+    }
+
+    return { ...this.fallbackPdfAssist(mode, page, docTitle, pageText, selectedText, question), source: 'fallback' };
+  }
+
+  /** Offline path: hand back the page text itself, clearly labelled as not AI-written. */
+  private fallbackPdfAssist(
+    mode: PdfAssistMode,
+    page: number,
+    docTitle: string,
+    pageText: string,
+    selectedText: string | undefined,
+    question: string | undefined
+  ): Omit<PdfAssistResult, 'source'> {
+    const focus = selectedText || pageText;
+    const sentences = focus
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 40)
+      .slice(0, 4);
+
+    const explanation =
+      'The AI service is not configured on this server, so this is the text extracted from the page ' +
+      'rather than a generated explanation. Set GEMINI_API_KEY to get full AI explanations.' +
+      (question ? `\n\nYour question: "${question}"` : '');
+
+    return {
+      mode,
+      heading: question ? `Page ${page} — your question` : `Page ${page} of ${docTitle}`,
+      explanation,
+      keyPoints: sentences.length ? sentences : [focus.slice(0, 300)],
+      followUp: 'Try the AI Coach hub for a full conceptual breakdown.'
     };
   }
 }

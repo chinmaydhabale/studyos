@@ -61,3 +61,43 @@
 .font-handwritten {
   font-family: 'Caveat', cursive;
 }
+
+/* ---------------------------------------------------------------------------
+   pdf.js text layer
+   Spans are positioned by pdf.js over the rendered canvas and made transparent
+   so only the canvas is visible. Kept local (instead of importing the whole
+   pdf_viewer.css) to avoid pulling in the built-in viewer's global styles.
+   --------------------------------------------------------------------------- */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  text-align: initial;
+  line-height: 1;
+  z-index: 1;
+}
+
+.pdf-text-layer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer span[role='img'] {
+  user-select: none;
+  cursor: default;
+}
+
+.pdf-text-layer ::selection {
+  background: rgba(99, 102, 241, 0.45);
+}
+
+/* The reader shell disables selection app-wide; the PDF page must opt back in
+   so the text layer can actually be highlighted. */
+.pdf-text-layer,
+.pdf-text-layer * {
+  user-select: text;
+  -webkit-user-select: text;
+}
