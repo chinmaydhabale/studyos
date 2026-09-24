@@ -183,7 +183,8 @@ app.get('/api/telegram/status', (req, res) => {
 });
 
 app.post('/api/telegram/detect', async (req, res) => {
-  const result = await telegramService.detectChannelFromUpdates();
+  const { roomId } = req.body || {};
+  const result = await telegramService.detectChannelFromUpdates(roomId);
   res.json(result);
 });
 
@@ -429,50 +430,84 @@ app.get('/api/leaderboard', (req, res) => {
   res.json(storage.getLeaderboards(filter, userId));
 });
 
-// AI Coach Endpoints
-app.post('/api/ai/schedule-prompt', (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-  const result = aiCoach.parseSchedulePrompt(prompt);
-
-  io.emit('notification:toast', {
-    title: 'AI Coach Schedule Updated',
-    message: result.message,
-    type: 'success'
-  });
-
-  res.json(result);
+// AI Coach Endpoints (Gemini-backed, with deterministic offline fallbacks)
+app.get('/api/ai/status', (_req, res) => {
+  res.json(aiCoach.getStatus());
 });
 
-app.post('/api/ai/doubt', (req, res) => {
+app.post('/api/ai/schedule-prompt', async (req, res) => {
+  const { prompt, userId } = req.body;
+  if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+  try {
+    const result = await aiCoach.parseSchedulePrompt(prompt, userId);
+
+    io.emit('notification:toast', {
+      title: 'AI Coach Schedule Updated',
+      message: result.message,
+      type: 'success'
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] schedule-prompt failed:', err);
+    res.status(500).json({ error: 'AI coach could not schedule that right now' });
+  }
+});
+
+app.post('/api/ai/doubt', async (req, res) => {
   const { question, context } = req.body;
   if (!question) return res.status(400).json({ error: 'Question is required' });
-  const solution = aiCoach.explainDoubt(question, context);
-  res.json(solution);
+  try {
+    const solution = await aiCoach.explainDoubt(question, context);
+    res.json(solution);
+  } catch (err) {
+    console.error('[ai] doubt failed:', err);
+    res.status(500).json({ error: 'AI coach could not answer that right now' });
+  }
 });
 
-app.post('/api/ai/quiz', (req, res) => {
-  const { topic } = req.body;
-  const quiz = aiCoach.generateQuiz(topic || 'Quantitative Aptitude');
-  res.json(quiz);
+app.post('/api/ai/quiz', async (req, res) => {
+  const { topic, count } = req.body;
+  try {
+    const quiz = await aiCoach.generateQuiz(topic || 'Quantitative Aptitude', count);
+    res.json(quiz);
+  } catch (err) {
+    console.error('[ai] quiz failed:', err);
+    res.status(500).json({ error: 'AI coach could not build a quiz right now' });
+  }
 });
 
-app.post('/api/ai/flashcards', (req, res) => {
-  const { topic } = req.body;
-  const cards = aiCoach.generateFlashcards(topic || 'Quantitative Formulas');
-  res.json(cards);
+app.post('/api/ai/flashcards', async (req, res) => {
+  const { topic, count } = req.body;
+  try {
+    const cards = await aiCoach.generateFlashcards(topic || 'Quantitative Formulas', count);
+    res.json(cards);
+  } catch (err) {
+    console.error('[ai] flashcards failed:', err);
+    res.status(500).json({ error: 'AI coach could not build flashcards right now' });
+  }
 });
 
-app.post('/api/ai/handwritten-notes', (req, res) => {
-  const { topic } = req.body;
-  const notes = aiCoach.generateHandwrittenNotes(topic || 'Quantitative Aptitude & Reasoning');
-  res.json(notes);
+app.post('/api/ai/handwritten-notes', async (req, res) => {
+  const { topic, userId } = req.body;
+  try {
+    const notes = await aiCoach.generateHandwrittenNotes(topic || 'Quantitative Aptitude & Reasoning', userId);
+    res.json(notes);
+  } catch (err) {
+    console.error('[ai] handwritten-notes failed:', err);
+    res.status(500).json({ error: 'AI coach could not generate notes right now' });
+  }
 });
 
-app.post('/api/ai/summarize-lecture', (req, res) => {
-  const { videoUrl, title } = req.body;
-  const summary = aiCoach.summarizeLecture(videoUrl, title);
-  res.json(summary);
+app.post('/api/ai/summarize-lecture', async (req, res) => {
+  const { videoUrl, title, userId } = req.body;
+  try {
+    const summary = await aiCoach.summarizeLecture(videoUrl, title, userId);
+    res.json(summary);
+  } catch (err) {
+    console.error('[ai] summarize-lecture failed:', err);
+    res.status(500).json({ error: 'AI coach could not summarise that right now' });
+  }
 });
 
 // In production, serve the compiled client from client/dist if present

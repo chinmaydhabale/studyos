@@ -82,7 +82,7 @@ export class TelegramService {
   }
 
   // Scan Telegram getUpdates to automatically capture channel ID from forward/post
-  public async detectChannelFromUpdates(): Promise<{ success: boolean; channelId?: string; channelTitle?: string; message: string }> {
+  public async detectChannelFromUpdates(roomId?: string): Promise<{ success: boolean; channelId?: string; channelTitle?: string; message: string }> {
     try {
       const token = this.getBotToken();
       if (!token) {
@@ -179,8 +179,9 @@ export class TelegramService {
       // Save to database permanently
       await this.setChannelConfig(detectedId, detectedTitle);
 
-      // Automatically sync existing PDF documents from the channel
-      await this.syncDocumentsFromUpdates().catch(() => {});
+      // Automatically sync existing PDF documents from the channel into the
+      // room that triggered the detection, so they are not stranded elsewhere.
+      await this.syncDocumentsFromUpdates(roomId).catch(() => {});
 
       return {
         success: true,
@@ -260,6 +261,7 @@ export class TelegramService {
         return { success: false, syncedCount: 0, message: 'Bot token not set' };
       }
 
+      const targetRoomId = (roomId || 'RRB-7949').trim().toUpperCase();
       const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?allowed_updates=["message","edited_message","channel_post","edited_channel_post"]`);
       const data = (await res.json()) as any;
       if (!data.ok) {
@@ -275,12 +277,14 @@ export class TelegramService {
 
         const doc = post.document;
         if (doc && (doc.mime_type === 'application/pdf' || (doc.file_name && doc.file_name.toLowerCase().endsWith('.pdf')))) {
-          const existingDocs = await storage.getStudyDocuments();
+          // Dedupe inside the destination room only — a document already
+          // imported elsewhere must still be importable into this room.
+          const existingDocs = await storage.getStudyDocuments(targetRoomId);
           const alreadyExists = existingDocs.some(d => d.telegramFileId === doc.file_id || d.fileName === doc.file_name);
           if (!alreadyExists) {
             const cleanTitle = (doc.file_name || 'Study Notes').replace(/\.pdf$/i, '').replace(/_/g, ' ');
             await storage.saveStudyDocument({
-              roomId: (roomId || 'RRB-7949').toUpperCase(),
+              roomId: targetRoomId,
               title: cleanTitle,
               subject: cleanTitle.toLowerCase().includes('reason') ? 'Reasoning Ability' : cleanTitle.toLowerCase().includes('english') ? 'English Language' : 'Quantitative Aptitude',
               fileName: doc.file_name || 'Document.pdf',

@@ -131,6 +131,17 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         if (prev.some(d => d.id === newDoc.id || (d.telegramFileId && d.telegramFileId === newDoc.telegramFileId))) {
           return prev;
         }
+        // This broadcast can beat the upload response for our own local upload.
+        // Swap the pending local entry in place instead of prepending, so the
+        // same PDF never shows up twice in the library.
+        const pendingIndex = prev.findIndex(
+          d => !d.telegramFileId && (d.fileName === newDoc.fileName || d.title === newDoc.title)
+        );
+        if (pendingIndex !== -1) {
+          const next = [...prev];
+          next[pendingIndex] = newDoc;
+          return next;
+        }
         return [newDoc, ...prev];
       });
     };

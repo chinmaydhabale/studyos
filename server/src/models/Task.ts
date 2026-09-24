@@ -10,6 +10,7 @@ export interface ITaskDocument extends Document {
   completed: boolean;
   isAiGenerated: boolean;
   scheduledTime?: string;
+  rewardedUserId?: string;
   createdAt: Date;
 }
 
@@ -23,6 +24,7 @@ const TaskSchema = new Schema<ITaskDocument>({
   completed: { type: Boolean, default: false },
   isAiGenerated: { type: Boolean, default: false },
   scheduledTime: { type: String, default: '09:00 AM' },
+  rewardedUserId: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
 

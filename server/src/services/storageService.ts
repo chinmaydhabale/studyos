@@ -621,8 +621,10 @@ export class StorageService {
     subjectBreakdown: Record<string, number>;
   } {
     const todayDate = dateKey || localDateKey();
+    // startedAt is stored as a UTC ISO string, so it must be converted back to
+    // the local calendar day before comparing with the local date key.
     const userSessions = this.activitySessions.filter(s =>
-      s.userId === userId && s.startedAt && s.startedAt.startsWith(todayDate)
+      s.userId === userId && s.startedAt && localDateKey(new Date(s.startedAt)) === todayDate
     );
 
     let todayStudySeconds = 0;
@@ -764,34 +766,51 @@ export class StorageService {
     const wasCompleted = task.completed;
     task.completed = !wasCompleted;
 
-    // Reward only on the pending -> completed transition, and take it back on undo,
-    // otherwise the same task could be toggled forever to mint infinite XP.
     const userId = completedBy?.userId;
     const user = userId ? this.users.get(userId) : undefined;
-    if (user) {
-      if (task.completed) {
+
+    // Reward only on the pending -> completed transition, and always revoke from
+    // the user who actually received the reward. Combined with the ownership
+    // check this means nobody can farm XP by toggling someone else's task.
+    if (task.completed) {
+      const isOwner = !task.userId || task.userId === userId;
+      if (user && isOwner && !task.rewardedUserId) {
         user.xp += 50;
         user.coins += 10;
         user.tasksCompleted += 1;
-      } else {
-        user.xp = Math.max(0, user.xp - 50);
-        user.coins = Math.max(0, user.coins - 10);
-        user.tasksCompleted = Math.max(0, user.tasksCompleted - 1);
+        user.level = Math.floor(user.xp / 400) + 1;
+        task.rewardedUserId = userId;
+        this.persistUserStats(user.id);
       }
-      user.level = Math.floor(user.xp / 400) + 1;
-      if (isDbConnected()) {
-        UserModel.findOneAndUpdate(
-          { id: userId },
-          { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
-        ).catch(() => {});
+    } else if (task.rewardedUserId) {
+      const recipient = this.users.get(task.rewardedUserId);
+      if (recipient) {
+        recipient.xp = Math.max(0, recipient.xp - 50);
+        recipient.coins = Math.max(0, recipient.coins - 10);
+        recipient.tasksCompleted = Math.max(0, recipient.tasksCompleted - 1);
+        recipient.level = Math.floor(recipient.xp / 400) + 1;
+        this.persistUserStats(recipient.id);
       }
+      task.rewardedUserId = undefined;
     }
 
     if (isDbConnected()) {
-      TaskModel.findOneAndUpdate({ id }, { $set: { completed: task.completed } }).catch(() => {});
+      TaskModel.findOneAndUpdate(
+        { id },
+        { $set: { completed: task.completed, rewardedUserId: task.rewardedUserId || '' } }
+      ).catch(() => {});
     }
 
     return task;
+  }
+
+  private persistUserStats(userId: string): void {
+    const user = this.users.get(userId);
+    if (!user || !isDbConnected()) return;
+    UserModel.findOneAndUpdate(
+      { id: userId },
+      { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
+    ).catch(() => {});
   }
 
   public getCalendarHistory(userId?: string): CalendarDayRecord[] {

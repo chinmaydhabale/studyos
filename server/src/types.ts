@@ -101,6 +101,9 @@ export interface StudyTask {
   completed: boolean;
   isAiGenerated: boolean;
   scheduledTime?: string;
+  // Who actually received the completion reward — the XP is always taken back
+  // from this user on undo, so toggling can never mint XP for anyone else.
+  rewardedUserId?: string;
 }
 
 export interface CalendarDayRecord {

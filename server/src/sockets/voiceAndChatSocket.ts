@@ -80,10 +80,11 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     // If it's a doubt for AI
     if (newMsg.isAiDoubt) {
       const query = data.text.replace(/^\/ai\s*/i, '');
-      const doubtResult = aiCoach.explainDoubt(query, {
+      const doubtResult = await aiCoach.explainDoubt(query, {
         videoTimestamp: data.videoTimestamp,
         pdfPage: data.pdfPage,
-        pdfTitle: data.pdfDocTitle
+        pdfTitle: data.pdfDocTitle,
+        userId: data.userId
       });
 
       const contextHeader = data.pdfPage
@@ -91,7 +92,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
         : data.videoTimestamp !== undefined
         ? `⏱️ *Context: Lecture Timestamp ${Math.floor(data.videoTimestamp / 60)}:${(data.videoTimestamp % 60).toString().padStart(2, '0')}*\n\n`
         : '';
-      
+
       const aiReply: ChatMessage = {
         id: `ai-msg-${Date.now()}`,
         roomId,
@@ -106,10 +107,8 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
         createdAt: new Date().toISOString()
       };
 
-      setTimeout(() => {
-        storage.addChatMessage(roomId, aiReply);
-        io.to(`chat_${roomId}`).emit('chat:message', aiReply);
-      }, 600);
+      storage.addChatMessage(roomId, aiReply);
+      io.to(`chat_${roomId}`).emit('chat:message', aiReply);
     }
   });
 

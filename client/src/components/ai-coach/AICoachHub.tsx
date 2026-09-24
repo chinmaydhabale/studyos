@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Sparkles,
   Send,
@@ -16,7 +16,8 @@ import {
   Award,
   Zap,
   Printer,
-  ChevronRight
+  ChevronRight,
+  Cpu
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
@@ -28,19 +29,28 @@ interface AICoachHubProps {
   onNavigateToCalendar?: () => void;
 }
 
+interface AIStatus {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  defaultModel: string;
+}
+
 export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNavigateToCalendar }) => {
-  const { addToast } = useSocket();
+  const { addToast, currentUser } = useSocket();
   const { addXp, triggerCelebration } = useStudy();
 
   const [activeSubTab, setActiveSubTab] = useState<'planner' | 'doubts' | 'handwritten' | 'quiz' | 'flashcards' | 'summarize'>('planner');
   const [promptInput, setPromptInput] = useState(initialPrompt || 'Tomorrow should include 30 minutes of Current Affairs.');
   const [isLoading, setIsLoading] = useState(false);
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
 
   // Planner States
   const [plannerResult, setPlannerResult] = useState<{
     message: string;
     task: any;
     suggestedSchedule: Array<{ time: string; activity: string; duration: string }>;
+    source?: 'gemini' | 'fallback';
   } | null>(null);
 
   // Doubt Solver States
@@ -50,11 +60,18 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     steps: string[];
     keyFormula?: string;
     practiceTip: string;
+    source?: 'gemini' | 'fallback';
   } | null>(null);
 
   // Handwritten Notes States
   const [handwrittenTopic, setHandwrittenTopic] = useState('Thermodynamics & Carnot Cycle');
   const [handwrittenData, setHandwrittenData] = useState<any>(null);
+
+  // Quiz topic input
+  const [quizTopic, setQuizTopic] = useState('Indian Economy & Thermodynamics');
+
+  // Flashcard topic input
+  const [flashcardTopic, setFlashcardTopic] = useState('Quantitative Aptitude Formulas');
 
   // Flashcards States
   const [flashcards, setFlashcards] = useState<Flashcard[]>([
@@ -100,6 +117,22 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const [selectedAnswers, setSelectedAnswers] = useState<{ [qId: string]: number }>({});
   const [showQuizResults, setShowQuizResults] = useState(false);
 
+  // Report which backend is actually answering: live Gemini or offline templates.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/api/ai/status`)
+      .then(res => res.json())
+      .then((data: AIStatus) => {
+        if (!cancelled) setAiStatus(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAiStatus({ enabled: false, provider: 'gemini', model: 'unavailable', defaultModel: '' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Handler: Parse NLP Schedule Prompt
   const handleRunSchedulePrompt = async (textToRun?: string) => {
     const text = textToRun || promptInput;
@@ -110,7 +143,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/schedule-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text })
+        body: JSON.stringify({ prompt: text, userId: currentUser.id })
       });
       const data = await res.json();
       setPlannerResult(data);
@@ -132,7 +165,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/doubt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: doubtQuestion })
+        body: JSON.stringify({ question: doubtQuestion, context: { userId: currentUser.id } })
       });
       const data = await res.json();
       setDoubtSolution(data);
@@ -151,7 +184,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/handwritten-notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: handwrittenTopic })
+        body: JSON.stringify({ topic: handwrittenTopic, userId: currentUser.id })
       });
       const data = await res.json();
       setHandwrittenData(data);
@@ -162,6 +195,63 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       setIsLoading(false);
     }
   };
+
+  // Handler: Generate a fresh AI quiz for the chosen topic
+  const handleGenerateQuiz = async () => {
+    if (!quizTopic.trim()) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/quiz`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: quizTopic, count: 3 })
+      });
+      const data: QuizQuestion[] = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('AI returned no questions');
+      }
+      setQuizList(data);
+      setSelectedAnswers({});
+      setShowQuizResults(false);
+      addToast('Quiz Generated', `${data.length} AI questions on ${quizTopic}.`, 'success');
+    } catch (e) {
+      console.error(e);
+      addToast('Quiz Failed', 'Could not generate a quiz right now.', 'alert');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler: Generate AI flashcards for the chosen topic
+  const handleGenerateFlashcards = async () => {
+    if (!flashcardTopic.trim()) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/flashcards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: flashcardTopic, count: 6 })
+      });
+      const data: Flashcard[] = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('AI returned no cards');
+      }
+      setFlashcards(data);
+      setCurrentCardIndex(0);
+      setIsFlipped(false);
+      addToast('Flashcards Generated', `${data.length} AI cards on ${flashcardTopic}.`, 'success');
+    } catch (e) {
+      console.error(e);
+      addToast('Flashcards Failed', 'Could not generate flashcards right now.', 'alert');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const quizScore = quizList.reduce(
+    (score, q) => (selectedAnswers[q.id] === q.correctAnswer ? score + 1 : score),
+    0
+  );
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)]">
@@ -176,8 +266,26 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
             <div>
               <h1 className="text-base font-extrabold text-white flex items-center gap-2">
                 <span>Personal AI Study Coach & Teacher</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Always Online
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1 ${
+                    aiStatus?.enabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+                  }`}
+                  title={
+                    aiStatus?.enabled
+                      ? 'Responses are generated live by Gemini'
+                      : 'GEMINI_API_KEY is not configured, so built-in offline templates are used'
+                  }
+                >
+                  <Cpu className="w-3 h-3" />
+                  <span>
+                    {aiStatus === null
+                      ? 'Checking AI...'
+                      : aiStatus.enabled
+                      ? `Gemini · ${aiStatus.model}`
+                      : 'Offline templates'}
+                  </span>
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
@@ -426,64 +534,51 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
 
             {/* Ruled Notebook Page Simulator */}
             <div className="ruled-paper p-8 rounded-2xl border border-stone-300 max-w-4xl mx-auto shadow-2xl min-h-[500px] text-slate-900 font-handwritten text-xl select-none">
-              
+
               {/* Header */}
               <div className="border-b-2 border-red-300/80 pb-3 mb-6 flex items-center justify-between pl-10">
                 <div>
                   <h2 className="text-3xl font-bold text-indigo-900">
-                    {handwrittenData?.title || 'Thermodynamics & Carnot Cycle — Master Study Sheet'}
+                    {handwrittenData?.title || `${handwrittenTopic} — Master Study Sheet`}
                   </h2>
                   <p className="text-base text-stone-600 font-sans mt-0.5">
-                    Subject: Physics / Mechanical Engineering • Date: {new Date().toLocaleDateString()}
+                    Topic: {handwrittenTopic} • Date: {handwrittenData?.date || new Date().toLocaleDateString()}
                   </p>
                 </div>
                 <div className="text-right font-sans text-xs text-stone-500">
-                  <p>Student: <strong>Chinmay</strong></p>
-                  <p>Room: study-room-alpha</p>
+                  <p>Student: <strong>{handwrittenData?.studentName || currentUser.name || 'Student'}</strong></p>
+                  <p>{handwrittenData?.source === 'gemini' ? 'Generated by Gemini' : 'Offline template sheet'}</p>
                 </div>
               </div>
 
               {/* Sections */}
               <div className="space-y-6 pl-10 leading-loose">
-                <div>
-                  <h3 className="text-2xl font-bold text-red-700 underline decoration-wavy">
-                    1. Fundamental Principles
-                  </h3>
-                  <p className="mt-1">
-                    • <strong>First Law:</strong> Total energy is conserved. Heat input equals internal energy change plus work done: <span className="bg-yellow-200 px-2 py-0.5 rounded font-mono text-lg">ΔU = Q - W</span>.
-                  </p>
-                  <p>
-                    • <strong>Second Law:</strong> Natural processes lead to an increase in total entropy of an isolated system: <span className="font-mono text-lg">ΔS_univ ≥ 0</span>.
-                  </p>
-                  <p className="mt-2 text-stone-800 italic bg-amber-100 p-2 rounded border-l-4 border-amber-500">
-                    ★ Crucial Exam Note: Always use absolute temperature (Kelvin = °C + 273.15) in Carnot efficiency calculations!
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-2xl font-bold text-red-700 underline decoration-wavy">
-                    2. Golden Formulas for Revision
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                    <div className="p-3 bg-stone-100 rounded-lg border border-stone-300 font-mono text-base text-slate-900">
-                      <p className="font-bold font-handwritten text-lg text-indigo-900">Carnot Engine Efficiency:</p>
-                      <p className="text-xl">η = 1 - (T_cold / T_hot)</p>
+                {handwrittenData?.sections?.length ? (
+                  handwrittenData.sections.map((section: any, idx: number) => (
+                    <div key={idx}>
+                      <h3 className="text-2xl font-bold text-red-700 underline decoration-wavy">
+                        {section.heading}
+                      </h3>
+                      {section.notes?.map((note: string, noteIdx: number) => (
+                        <p key={noteIdx} className="mt-1">• {note}</p>
+                      ))}
+                      {section.highlight && (
+                        <p className="mt-2 text-stone-800 italic bg-amber-100 p-2 rounded border-l-4 border-amber-500">
+                          {section.highlight}
+                        </p>
+                      )}
+                      {section.sketch && (
+                        <p className="mt-2 p-3 bg-stone-100 rounded-lg border border-stone-300 font-mono text-base text-slate-900">
+                          ✎ Sketch: {section.sketch}
+                        </p>
+                      )}
                     </div>
-                    <div className="p-3 bg-stone-100 rounded-lg border border-stone-300 font-mono text-base text-slate-900">
-                      <p className="font-bold font-handwritten text-lg text-indigo-900">Reversible Work Done:</p>
-                      <p className="text-xl">W = ∫ P · dV</p>
-                    </div>
+                  ))
+                ) : (
+                  <div className="text-stone-500 font-sans text-base">
+                    Enter a topic above and hit <strong>Generate Notebook Sheet</strong> to build a revision sheet.
                   </div>
-                </div>
-
-                <div>
-                  <h3 className="text-2xl font-bold text-red-700 underline decoration-wavy">
-                    3. Rapid Practice & Doubts Checklist
-                  </h3>
-                  <p>✓ Solved 3 numericals on Carnot efficiency with Aarav.</p>
-                  <p>✓ Clarified sign convention (+Q into gas, +W by gas expanding).</p>
-                  <p>✓ Current Affairs slot scheduled for tomorrow at 9:00 AM.</p>
-                </div>
+                )}
               </div>
 
             </div>
@@ -494,11 +589,30 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         {/* SUBTAB 4: Spaced Repetition Flashcards */}
         {activeSubTab === 'flashcards' && (
           <div className="max-w-xl mx-auto space-y-4 pt-4">
-            
+
+            {/* AI card generation */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={flashcardTopic}
+                onChange={(e) => setFlashcardTopic(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleGenerateFlashcards()}
+                placeholder="Topic for AI flashcards, e.g. Indian Polity Articles"
+                className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
+              />
+              <button
+                onClick={handleGenerateFlashcards}
+                disabled={isLoading}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all"
+              >
+                {isLoading ? 'Generating...' : 'Generate with AI'}
+              </button>
+            </div>
+
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span>Card {currentCardIndex + 1} of {flashcards.length}</span>
               <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 font-mono">
-                {flashcards[currentCardIndex].subject}
+                {flashcards[currentCardIndex]?.subject}
               </span>
             </div>
 
@@ -512,7 +626,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               </span>
 
               <p className="text-base sm:text-lg font-semibold text-white px-4 leading-relaxed">
-                {isFlipped ? flashcards[currentCardIndex].back : flashcards[currentCardIndex].front}
+                {isFlipped ? flashcards[currentCardIndex]?.back : flashcards[currentCardIndex]?.front}
               </p>
 
               <span className="absolute bottom-4 text-xs text-slate-500">
@@ -566,14 +680,37 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         {activeSubTab === 'quiz' && (
           <div className="max-w-2xl mx-auto space-y-4 pt-2">
             
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Daily Mastery Quiz</h3>
-                <p className="text-[11px] text-slate-400">Current Affairs & Thermodynamics Diagnostic</p>
+            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Daily Mastery Quiz</h3>
+                  <p className="text-[11px] text-slate-400">
+                    {quizList.length} question{quizList.length === 1 ? '' : 's'} on {quizList[0]?.topic || 'your syllabus'}
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 font-mono text-xs font-semibold">
+                  +100 XP Upon Completion
+                </span>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 font-mono text-xs font-semibold">
-                +100 XP Upon Completion
-              </span>
+
+              {/* Generate a fresh AI quiz */}
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={quizTopic}
+                  onChange={(e) => setQuizTopic(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleGenerateQuiz()}
+                  placeholder="Topic for AI questions, e.g. Union Budget 2026"
+                  className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
+                />
+                <button
+                  onClick={handleGenerateQuiz}
+                  disabled={isLoading}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all"
+                >
+                  {isLoading ? 'Generating...' : 'Generate Quiz with AI'}
+                </button>
+              </div>
             </div>
 
             {quizList.map((q, idx) => (
@@ -622,9 +759,14 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               <button
                 onClick={() => {
                   setShowQuizResults(true);
+                  const percent = Math.round((quizScore / Math.max(1, quizList.length)) * 100);
                   addXp(100);
-                  triggerCelebration();
-                  addToast('Quiz Completed!', 'You scored 100% on today\'s diagnostic. +100 XP awarded!', 'success');
+                  if (percent >= 80) triggerCelebration();
+                  addToast(
+                    'Quiz Completed!',
+                    `You scored ${quizScore}/${quizList.length} (${percent}%). +100 XP awarded!`,
+                    percent >= 80 ? 'success' : 'info'
+                  );
                 }}
                 disabled={Object.keys(selectedAnswers).length < quizList.length}
                 className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all"
@@ -632,15 +774,26 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                 Submit Answers & Evaluate
               </button>
             ) : (
-              <button
-                onClick={() => {
-                  setShowQuizResults(false);
-                  setSelectedAnswers({});
-                }}
-                className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors"
-              >
-                Try Another Diagnostic Quiz
-              </button>
+              <>
+                <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 text-center">
+                  <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Your Score</p>
+                  <p className="text-2xl font-extrabold text-white mt-1">
+                    {quizScore} / {quizList.length}
+                    <span className="text-sm text-indigo-300 ml-2">
+                      ({Math.round((quizScore / Math.max(1, quizList.length)) * 100)}%)
+                    </span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowQuizResults(false);
+                    setSelectedAnswers({});
+                  }}
+                  className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors"
+                >
+                  Try Another Diagnostic Quiz
+                </button>
+              </>
             )}
 
           </div>

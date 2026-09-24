@@ -31,6 +31,17 @@ export const AnalyticsDashboard: React.FC = () => {
 
   const todayHoursFormatted = ((totalFocusSecondsToday || 0) / 3600).toFixed(1);
 
+  // Real totals only — the API returns zeros for a brand-new account, so no
+  // placeholder values may be substituted here.
+  const weeklyHours = summary?.weeklyHours ?? 0;
+  const monthlyHours = summary?.monthlyHours ?? 0;
+  const deepFocusHours = summary?.deepFocusHours ?? 0;
+  const tasksCompleted = summary?.tasksCompleted ?? 0;
+  const tasksMissed = summary?.tasksMissed ?? 0;
+  const breakFrequency = summary?.breakFrequencyAvgMinutes ?? 0;
+  const subjectDistribution: any[] = summary?.subjectDistribution || [];
+  const distributedHours = subjectDistribution.reduce((sum, s) => sum + (s?.hours || 0), 0);
+
   return (
     <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)] overflow-y-auto space-y-4">
       
@@ -55,12 +66,12 @@ export const AnalyticsDashboard: React.FC = () => {
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: "Today's Study Hours", value: `${todayHoursFormatted} hrs`, sub: 'Target: 5.0 hrs', icon: Clock, color: 'text-indigo-400 border-indigo-500/20' },
-          { label: 'Weekly Study Hours', value: `${summary?.weeklyHours || 32.5} hrs`, sub: '+14% vs last week', icon: TrendingUp, color: 'text-cyan-400 border-cyan-500/20' },
-          { label: 'Monthly Progress', value: `${summary?.monthlyHours || 104.5} hrs`, sub: '87% of goal', icon: Award, color: 'text-emerald-400 border-emerald-500/20' },
-          { label: 'Deep Focus Hours', value: `${summary?.deepFocusHours || 26.2} hrs`, sub: '80% focus ratio', icon: Zap, color: 'text-amber-400 border-amber-500/20' },
-          { label: 'Break Frequency', value: `Every 52 min`, sub: `${breakCountToday} breaks today`, icon: Coffee, color: 'text-pink-400 border-pink-500/20' },
-          { label: 'Tasks Completed', value: `${summary?.tasksCompleted || 48} Done`, sub: `${summary?.tasksMissed || 3} Missed`, icon: CheckCircle, color: 'text-purple-400 border-purple-500/20' }
+          { label: "Today's Study Hours", value: `${todayHoursFormatted} hrs`, sub: 'Focus timer today', icon: Clock, color: 'text-indigo-400 border-indigo-500/20' },
+          { label: 'Weekly Study Hours', value: `${weeklyHours} hrs`, sub: 'Total recorded study time', icon: TrendingUp, color: 'text-cyan-400 border-cyan-500/20' },
+          { label: 'Monthly Progress', value: `${monthlyHours} hrs`, sub: 'Total recorded study time', icon: Award, color: 'text-emerald-400 border-emerald-500/20' },
+          { label: 'Deep Focus Hours', value: `${deepFocusHours} hrs`, sub: 'Estimated deep-focus share', icon: Zap, color: 'text-amber-400 border-amber-500/20' },
+          { label: 'Break Frequency', value: breakFrequency > 0 ? `Every ${breakFrequency} min` : 'No data yet', sub: `${breakCountToday} breaks today`, icon: Coffee, color: 'text-pink-400 border-pink-500/20' },
+          { label: 'Tasks Completed', value: `${tasksCompleted} Done`, sub: `${tasksMissed} Missed`, icon: CheckCircle, color: 'text-purple-400 border-purple-500/20' }
         ].map((kpi, idx) => {
           const Icon = kpi.icon;
           return (
@@ -88,12 +99,12 @@ export const AnalyticsDashboard: React.FC = () => {
               <PieIcon className="w-4 h-4 text-indigo-400" />
               <span>Subject Time Distribution</span>
             </h3>
-            <span className="text-xs text-slate-400">Total: 104.5 hrs</span>
+            <span className="text-xs text-slate-400">Total: {distributedHours.toFixed(1)} hrs</span>
           </div>
 
           {/* Custom Horizontal Visual Distribution Bar */}
           <div className="w-full h-4 rounded-full overflow-hidden flex bg-slate-950 p-0.5 border border-white/10">
-            {summary?.subjectDistribution?.map((s: any, idx: number) => (
+            {subjectDistribution.map((s: any, idx: number) => (
               <div
                 key={idx}
                 style={{ width: `${s.percentage}%`, backgroundColor: s.color }}
@@ -105,7 +116,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
           {/* Subject Legend Rows */}
           <div className="grid grid-cols-2 gap-3 pt-2">
-            {summary?.subjectDistribution?.map((s: any, idx: number) => (
+            {subjectDistribution.map((s: any, idx: number) => (
               <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
@@ -141,7 +152,6 @@ export const AnalyticsDashboard: React.FC = () => {
                 <span className="text-[10px] uppercase font-bold text-emerald-400">Strongest Topic</span>
                 <p className="text-xs font-semibold text-white mt-0.5">{summary?.strongestTopic}</p>
               </div>
-              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-[10px] font-mono">94% Acc</span>
             </div>
 
             <div className="p-3 rounded-xl bg-slate-950 border border-white/5 flex items-center justify-between">
@@ -149,17 +159,16 @@ export const AnalyticsDashboard: React.FC = () => {
                 <span className="text-[10px] uppercase font-bold text-rose-400">Weakest Topic (Needs Revision)</span>
                 <p className="text-xs font-semibold text-white mt-0.5">{summary?.weakestTopic}</p>
               </div>
-              <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 text-[10px] font-mono">62% Acc</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
               <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5">
                 <span className="text-[10px] text-slate-500 block">Longest Session</span>
-                <strong className="text-white">{summary?.longestSessionMinutes} minutes</strong>
+                <strong className="text-white">{summary?.longestSessionMinutes ?? 0} minutes</strong>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5">
                 <span className="text-[10px] text-slate-500 block">Average Session</span>
-                <strong className="text-white">{summary?.averageSessionMinutes} minutes</strong>
+                <strong className="text-white">{summary?.averageSessionMinutes ?? 0} minutes</strong>
               </div>
             </div>
           </div>

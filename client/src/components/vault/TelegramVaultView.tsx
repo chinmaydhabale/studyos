@@ -114,7 +114,11 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
   const handleDetectChannel = async () => {
     setDetectingChannel(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/telegram/detect`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/telegram/detect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId })
+      });
       const data = await res.json();
       if (data.success) {
         addToast('Channel Detected!', data.message, 'success');
