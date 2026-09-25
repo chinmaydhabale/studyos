@@ -113,7 +113,14 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const clearPdfSelection = useCallback(() => {
     setSelectedText('');
     setSelectionAnchor(null);
-    window.getSelection()?.removeAllRanges();
+    const activeEl = document.activeElement;
+    const isFormElement =
+      activeEl instanceof HTMLInputElement ||
+      activeEl instanceof HTMLTextAreaElement ||
+      activeEl?.getAttribute('contenteditable') === 'true';
+    if (!isFormElement) {
+      window.getSelection()?.removeAllRanges();
+    }
   }, []);
 
   const handlePageRendered = useCallback(
@@ -570,7 +577,13 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Capture a text selection made inside a page's text layer.
   const handleTextSelection = (event: React.MouseEvent<HTMLDivElement>) => {
     const eventTarget = event.target instanceof Element ? event.target : null;
-    if (eventTarget?.closest('[data-pdf-ai-panel], [data-preserve-pdf-selection]')) return;
+    if (
+      eventTarget?.closest(
+        'input, textarea, select, button, [contenteditable="true"], [data-pdf-ai-panel], [data-preserve-pdf-selection], [data-chat-panel]'
+      )
+    ) {
+      return;
+    }
     if (!eventTarget?.closest('.pdf-text-layer')) {
       clearPdfSelection();
       return;
@@ -591,9 +604,14 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       return;
     }
 
-    const rect = selection!.getRangeAt(0).getBoundingClientRect();
-    setSelectedText(text.slice(0, 1500));
-    setSelectionAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+    try {
+      const range = selection!.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      setSelectedText(text.slice(0, 1500));
+      setSelectionAnchor({ x: rect.left + rect.width / 2, y: rect.top });
+    } catch {
+      clearPdfSelection();
+    }
   };
 
   const handleExplainSelection = () => {
@@ -626,8 +644,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   return (
     <div
       ref={containerRef}
-      onMouseUp={handleTextSelection}
-      className={`flex-1 min-h-0 w-full h-full flex flex-col bg-[#070b14] text-slate-100 overflow-hidden select-none ${
+      className={`flex-1 min-h-0 w-full h-full flex flex-col bg-[#070b14] text-slate-100 overflow-hidden ${
         isFullscreen ? 'fixed inset-0 z-50 w-screen h-screen' : ''
       }`}
       onDragOver={(e) => {
@@ -1030,6 +1047,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <div
                 ref={scrollRef}
                 onScroll={handlePagesScroll}
+                onMouseUp={handleTextSelection}
                 className="flex-1 min-h-0 overflow-y-auto relative bg-slate-900/50 px-2 py-2"
               >
                 {pdfDoc ? (
@@ -1150,7 +1168,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         {isAiOpen && (
           <div
             data-pdf-ai-panel
-            className="w-80 lg:w-96 shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200"
+            data-preserve-pdf-selection
+            className="w-80 lg:w-96 shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text"
           >
             <PDFAiPanel
               docTitle={activePdfDoc?.title || 'Study PDF'}
@@ -1168,7 +1187,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
         {/* Right: Side-by-Side Live Voice & Doubts Chatbox (Collapsible) */}
         {isChatOpen && !isAiOpen && (
-          <div className="w-80 lg:w-96 shrink-0 h-full p-2 border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+          <div
+            data-chat-panel
+            data-preserve-pdf-selection
+            className="w-80 lg:w-96 shrink-0 h-full p-2 border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text"
+          >
             <VoiceChatPanel
               mode="pdf"
               activePdfTitle={activePdfDoc?.title}
@@ -1181,7 +1204,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
         {/* 5. SLIDE-OUT VAULT DOCUMENT LIBRARY DRAWER */}
         {isLibraryOpen && (
-          <div className="absolute top-0 right-0 bottom-0 w-80 sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-40 flex flex-col animate-in slide-in-from-right duration-200">
+          <div
+            data-preserve-pdf-selection
+            className="absolute top-0 right-0 bottom-0 w-80 sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-40 flex flex-col animate-in slide-in-from-right duration-200 select-text"
+          >
             
             <div className="p-3 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
               <div className="flex items-center gap-2">

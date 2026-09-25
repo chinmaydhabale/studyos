@@ -99,7 +99,11 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl h-full">
+    <div
+      data-chat-panel
+      data-preserve-pdf-selection
+      className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl h-full select-text"
+    >
       
       {/* Top Bar: Peer Voice Presence & Security Gate */}
       <div className="p-3 border-b border-white/10 bg-slate-950/60 flex items-center justify-between shrink-0">
@@ -306,15 +310,22 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSendMessage();
+          }}
+          className="flex items-center gap-2"
+        >
           <input
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.shiftKey || (e.nativeEvent as any).isComposing) return;
-              e.preventDefault();
-              handleSendMessage();
+              if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as any).isComposing) {
+                e.preventDefault();
+                handleSendMessage();
+              }
             }}
             placeholder={
               isAskingAi
@@ -325,17 +336,17 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
                 ? "Type doubt or question (use /ai for teacher)..."
                 : "Type message or doubt (use /ai to ask coach)..."
             }
-            className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors select-text"
           />
 
           <button
-            onClick={() => handleSendMessage()}
+            type="submit"
             disabled={!inputText.trim()}
-            className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-all shadow-md shadow-indigo-500/20"
+            className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-all shadow-md shadow-indigo-500/20 shrink-0"
           >
             <Send className="w-4 h-4" />
           </button>
-        </div>
+        </form>
 
       </div>
 

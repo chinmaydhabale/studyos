@@ -302,7 +302,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
             }}
             rows={2}
             placeholder="Ask about this page... (Enter to send)"
-            className="flex-1 resize-none px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-[11px] text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-400"
+            className="flex-1 resize-none px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-[11px] text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-400 select-text"
           />
           <button
             onClick={handleAsk}
