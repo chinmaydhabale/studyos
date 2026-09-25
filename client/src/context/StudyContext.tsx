@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
+import { useSocket } from './SocketContext.js';
 
 export type AmbientSoundType = 'none' | 'lofi' | 'rain' | 'library' | 'whitenoise';
 
@@ -21,7 +22,7 @@ interface StudyContextType {
   setAmbientSound: (sound: AmbientSoundType) => void;
   setAmbientVolume: (vol: number) => void;
 
-  // Gamification & Rewards (Zero-Start)
+  // Gamification & Rewards
   xp: number;
   level: number;
   coins: number;
@@ -42,18 +43,30 @@ const modeDurations = {
 } as const;
 
 export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { currentUser, updateUserProfile } = useSocket();
+
   // Focus Timer States (25m focus, 5m short break, 15m long break)
   const [timerMode, setTimerModeState] = useState<'focus' | 'short_break' | 'long_break'>('focus');
   const [timeLeft, setTimeLeft] = useState(modeDurations.focus);
   const [isRunning, setIsRunning] = useState(false);
-  const [totalFocusSecondsToday, setTotalFocusSecondsToday] = useState(0); // Starts at 0
-  const [breakCountToday, setBreakCountToday] = useState(0); // Starts at 0
+  const [totalFocusSecondsToday, setTotalFocusSecondsToday] = useState(0);
+  const [breakCountToday, setBreakCountToday] = useState(0);
 
-  // Gamification States (Starts at pure 0)
-  const [xp, setXp] = useState(0);
-  const [coins, setCoins] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [badges, setBadges] = useState<string[]>([]);
+  // Gamification States - synchronized with currentUser
+  const [xp, setXp] = useState(currentUser?.xp ?? 0);
+  const [coins, setCoins] = useState(currentUser?.coins ?? 0);
+  const [streak, setStreak] = useState(currentUser?.streak ?? 0);
+  const [badges, setBadges] = useState<string[]>(currentUser?.badges ?? []);
+
+  // When currentUser updates from server / login / database, keep StudyContext in sync
+  useEffect(() => {
+    if (currentUser) {
+      setXp(currentUser.xp ?? 0);
+      setCoins(currentUser.coins ?? 0);
+      setStreak(currentUser.streak ?? 0);
+      setBadges(currentUser.badges ?? []);
+    }
+  }, [currentUser?.id, currentUser?.xp, currentUser?.coins, currentUser?.streak]);
 
   // Level is derived from XP so it can never drift out of sync
   const level = useMemo(() => Math.floor(xp / XP_PER_LEVEL) + 1, [xp]);
@@ -75,14 +88,28 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, []);
 
-  // State updaters stay pure — XP/coins/streak are plain increments, and the
-  // level-up celebration is handled in an effect below (never inside an updater).
+  // State updaters stay pure — XP/coins/streak are updated locally and synced to currentUser profile.
   const addXp = useCallback((amount: number, _reason?: string) => {
     if (!Number.isFinite(amount) || amount <= 0) return;
-    setXp(prev => prev + amount);
-    setCoins(prev => prev + Math.floor(amount / 5));
-    setStreak(s => (s === 0 ? 1 : s));
-  }, []);
+    const earnedCoins = Math.floor(amount / 5);
+    setXp(prevXp => {
+      const nextXp = prevXp + amount;
+      setCoins(prevCoins => {
+        const nextCoins = prevCoins + earnedCoins;
+        setStreak(prevStreak => {
+          const nextStreak = prevStreak === 0 ? 1 : prevStreak;
+          updateUserProfile({
+            xp: nextXp,
+            coins: nextCoins,
+            streak: nextStreak
+          });
+          return nextStreak;
+        });
+        return nextCoins;
+      });
+      return nextXp;
+    });
+  }, [updateUserProfile]);
 
   useEffect(() => {
     if (level > celebratedLevelRef.current) {

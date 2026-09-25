@@ -289,8 +289,11 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
           {peers.map((peer) => {
             const isMe = peer.userId === currentUser.id;
             const currentAct = isMe && isTimerRunning ? activeActivityName : (peer.currentActivity || peer.status || 'Idle 💤');
-            const isStudying = currentAct.includes('Quant') || currentAct.includes('Reasoning') || currentAct.includes('English') || currentAct.includes('Awareness');
-            const isBreak = currentAct.includes('Break') || currentAct.includes('Rest');
+            const currentCategory = isMe && isTimerRunning
+              ? activeCategory
+              : (peer.activityCategory || (currentAct.includes('Break') || currentAct.includes('Rest') ? 'break' : currentAct === 'Idle 💤' || currentAct === 'Ready to Study' ? 'personal' : 'study'));
+            const isStudying = currentCategory === 'study' && currentAct !== 'Idle 💤' && currentAct !== 'Ready to Study';
+            const isBreak = currentCategory === 'break' || currentAct.includes('Break') || currentAct.includes('Rest');
             const hasDoc = peer.currentDocument && peer.currentDocument.title;
             const hasVideo = peer.currentVideo && peer.currentVideo.title;
             const todayStudyMins = peer.todayStudySeconds ? Math.floor(peer.todayStudySeconds / 60) : 0;

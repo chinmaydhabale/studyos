@@ -306,12 +306,24 @@ export class AICoachService {
   }
 
   private addMinutesToTime(timeStr: string, minutes: number): string {
-    // Basic helper for display e.g. "09:00 AM" + 30m -> "09:30 AM"
-    const [time, modifier] = timeStr.split(' ');
-    const [h, m] = time.split(':').map(Number);
-    let totalM = (h % 12) * 60 + m + minutes;
-    if (modifier === 'PM' && h !== 12) totalM += 12 * 60;
-    const newH24 = Math.floor(totalM / 60) % 24;
+    // Robust 12-hour clock helper e.g. "12:00 PM" + 30m -> "12:30 PM", "11:45 PM" + 30m -> "12:15 AM"
+    if (!timeStr || typeof timeStr !== 'string') return '09:00 AM';
+    const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})(?:\s*([AP]M))?$/i);
+    if (!match) return timeStr;
+
+    const h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    const modifier = (match[3] || 'AM').toUpperCase();
+
+    // Convert 12-hour format to 24-hour hours:
+    // 12 AM -> 0, 1 AM -> 1, ..., 11 AM -> 11, 12 PM -> 12, 1 PM -> 13, ..., 11 PM -> 23
+    const hours24 = (h % 12) + (modifier === 'PM' ? 12 : 0);
+    let totalM = hours24 * 60 + m + minutes;
+
+    // Handle wrapping across day boundary
+    totalM = ((totalM % 1440) + 1440) % 1440;
+
+    const newH24 = Math.floor(totalM / 60);
     const newM = totalM % 60;
     const newMod = newH24 >= 12 ? 'PM' : 'AM';
     const finalH = newH24 % 12 || 12;

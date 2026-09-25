@@ -350,7 +350,7 @@ app.post('/api/activity/session', (req, res) => {
 // Verify Voice Room Password
 app.post('/api/voice/verify-password', async (req, res) => {
   const { roomId, password } = req.body;
-  const cleanId = (roomId || '').trim().toUpperCase();
+  const cleanId = (roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
   const expected = await getExpectedVoicePassword(cleanId);
   if (!expected) {
     return res.status(404).json({
@@ -546,6 +546,6 @@ server.listen(PORT, async () => {
   const connected = await connectDatabase();
   if (connected) {
     await storage.syncWithDatabase();
-    await telegramService.init();
   }
+  await telegramService.init();
 });

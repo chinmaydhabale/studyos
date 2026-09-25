@@ -58,7 +58,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     pdfDocTitle?: string;
     isAiDoubt?: boolean;
   }) => {
-    const roomId = data.roomId || DEFAULT_ROOM;
+    const roomId = cleanRoomId(data.roomId);
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       roomId,

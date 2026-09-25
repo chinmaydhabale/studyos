@@ -879,16 +879,37 @@ export class StorageService {
       ? this.activitySessions.filter(s => s.userId === targetUser.id && s.category === 'study')
       : this.activitySessions.filter(s => s.category === 'study');
 
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const weekStart = now.getTime() - 7 * 24 * 60 * 60 * 1000;
+    const monthStart = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+
     const subjectMap = new Map<string, number>();
     let totalSeconds = 0;
+    let todaySeconds = 0;
+    let weeklySeconds = 0;
+    let monthlySeconds = 0;
 
     sessions.forEach(s => {
       totalSeconds += s.durationSeconds;
+      const sessionTime = new Date(s.startedAt || s.endedAt || Date.now()).getTime();
+      if (sessionTime >= todayStart) {
+        todaySeconds += s.durationSeconds;
+      }
+      if (sessionTime >= weekStart) {
+        weeklySeconds += s.durationSeconds;
+      }
+      if (sessionTime >= monthStart) {
+        monthlySeconds += s.durationSeconds;
+      }
       const current = subjectMap.get(s.activityName) || 0;
       subjectMap.set(s.activityName, current + s.durationSeconds / 3600);
     });
 
     const totalHours = +(totalSeconds / 3600).toFixed(2);
+    const todayHours = +(todaySeconds / 3600).toFixed(2);
+    const weeklyHours = +(weeklySeconds / 3600).toFixed(2);
+    const monthlyHours = +(monthlySeconds / 3600).toFixed(2);
     const quantHours = +(subjectMap.get('📐 Quantitative Aptitude (Quant)') || 0).toFixed(1);
     const reasoningHours = +(subjectMap.get('🧩 Reasoning Ability (Puzzles)') || 0).toFixed(1);
     const gaHours = +(subjectMap.get('🌍 General Awareness & Current Affairs') || 0).toFixed(1);
@@ -902,9 +923,9 @@ export class StorageService {
     }));
 
     return {
-      todayHours: totalHours,
-      weeklyHours: totalHours,
-      monthlyHours: totalHours,
+      todayHours,
+      weeklyHours,
+      monthlyHours,
       deepFocusHours: +(totalHours * 0.85).toFixed(2),
       breakFrequencyAvgMinutes: 0,
       longestSessionMinutes: sessions.length > 0 ? Math.round(Math.max(...sessions.map(s => s.durationSeconds)) / 60) : 0,

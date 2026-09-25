@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Calendar as CalendarIcon,
   Flame,
@@ -18,6 +18,50 @@ export const StudyCalendarView: React.FC = () => {
   const [history, setHistory] = useState<CalendarDayRecord[]>([]);
   const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDayRecord | null>(null);
+
+  // Generate 120-day timeline matrix ending today so matrix always shows full contribution grid
+  const timelineDays = useMemo(() => {
+    const historyMap = new Map<string, CalendarDayRecord>();
+    history.forEach(r => historyMap.set(r.date, r));
+
+    const days: CalendarDayRecord[] = [];
+    const now = new Date();
+
+    for (let i = 119; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      
+      const existing = historyMap.get(dateStr);
+      if (existing) {
+        days.push(existing);
+      } else {
+        days.push({
+          date: dateStr,
+          userId: currentUser.id,
+          hoursStudied: 0,
+          deepFocusHours: 0,
+          subjects: [],
+          tasksDone: 0,
+          tasksPlanned: 0,
+          status: 'missed'
+        });
+      }
+    }
+    return days;
+  }, [history, currentUser.id]);
+
+  const activeStreak = currentUser.streak || (selectedDay && selectedDay.hoursStudied > 0 ? 1 : 0);
+  const consistencyRate = useMemo(() => {
+    if (history.length === 0) return 100;
+    const completedDays = history.filter(h => h.status === 'strong' || h.status === 'moderate' || h.hoursStudied >= 3).length;
+    return Math.round((completedDays / Math.max(history.length, 1)) * 100);
+  }, [history]);
+  const avgHours = useMemo(() => {
+    if (history.length === 0) return 0;
+    const total = history.reduce((sum, h) => sum + h.hoursStudied, 0);
+    return +(total / history.length).toFixed(1);
+  }, [history]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/calendar?userId=${encodeURIComponent(currentUser.id)}`)
@@ -116,11 +160,11 @@ export const StudyCalendarView: React.FC = () => {
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-center gap-1.5 text-amber-400 font-bold">
             <Flame className="w-4 h-4 fill-amber-400" />
-            <span>🔥 7-Day Active Streak</span>
+            <span>🔥 {activeStreak}-Day Active Streak</span>
           </div>
           <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
             <CheckCircle className="w-4 h-4" />
-            <span>88% Consistency Rate</span>
+            <span>{consistencyRate}% Consistency Rate</span>
           </div>
         </div>
       </div>
@@ -146,7 +190,7 @@ export const StudyCalendarView: React.FC = () => {
         {/* Heatmap Grid */}
         <div className="overflow-x-auto pb-2">
           <div className="grid grid-flow-col grid-rows-7 gap-1.5 min-w-[700px]">
-            {history.map((record) => {
+            {timelineDays.map((record) => {
               const isSelected = selectedDay?.date === record.date;
               return (
                 <button
@@ -164,7 +208,7 @@ export const StudyCalendarView: React.FC = () => {
 
         <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-white/5">
           <span>Click any square to inspect that day's session details & subjects</span>
-          <span>120 Days Tracked • Average 4.6 hrs/day</span>
+          <span>120 Days Tracked • Average {avgHours} hrs/day</span>
         </div>
       </div>
 

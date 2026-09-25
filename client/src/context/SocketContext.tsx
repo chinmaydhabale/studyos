@@ -132,14 +132,14 @@ const getStoredRoom = (): string => {
     if (roomFromUrl && roomFromUrl.trim()) {
       return roomFromUrl.trim().toUpperCase();
     }
-    return localStorage.getItem('studyos_current_room_v1') || '';
+    return localStorage.getItem('studyos_current_room_v1') || 'STUDY-ROOM-ALPHA';
   } catch (e) {
-    return '';
+    return 'STUDY-ROOM-ALPHA';
   }
 };
 
 const defaultVideo: VideoSyncState = {
-  roomId: '',
+  roomId: 'STUDY-ROOM-ALPHA',
   videoUrl: 'https://www.youtube.com/watch?v=k7YS_P_t3uA',
   videoId: 'k7YS_P_t3uA',
   isPlaying: false,

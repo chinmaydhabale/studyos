@@ -144,7 +144,7 @@ export function generateSamplePdf(title: string, subject: string): Buffer {
     streamText += `BT\n`;
     streamText += `/F1 10 Tf\n`;
     streamText += `50 720 Td\n`;
-    streamText += `(StudyOS Virtual Classroom • ${subject} Revision Notes • Page ${pData.page} of ${pagesData.length}) Tj\n`;
+    streamText += `(StudyOS Virtual Classroom | ${subject} Revision Notes | Page ${pData.page} of ${pagesData.length}) Tj\n`;
     streamText += `ET\n`;
 
     // Horizontal line

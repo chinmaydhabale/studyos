@@ -246,10 +246,51 @@ export const SharedNotesEditor: React.FC = () => {
               <span className="text-[10px] text-emerald-400">Synchronized View</span>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-5 text-slate-200 text-xs md:text-sm leading-relaxed space-y-3 prose prose-invert max-w-none">
-              <div className="whitespace-pre-wrap font-sans">
-                {content}
-              </div>
+            <div className="flex-1 overflow-y-auto p-5 text-slate-200 text-xs md:text-sm leading-relaxed space-y-1">
+              {content.trim() ? (
+                content.split('\n').map((line, idx) => {
+                  if (line.startsWith('### ')) {
+                    return <h3 key={idx} className="text-sm font-bold text-indigo-300 mt-3 mb-1">{line.slice(4)}</h3>;
+                  }
+                  if (line.startsWith('## ')) {
+                    return <h2 key={idx} className="text-base font-bold text-cyan-300 mt-4 mb-1.5">{line.slice(3)}</h2>;
+                  }
+                  if (line.startsWith('# ')) {
+                    return <h1 key={idx} className="text-lg font-extrabold text-white mt-4 mb-2">{line.slice(2)}</h1>;
+                  }
+                  if (line.startsWith('---')) {
+                    return <hr key={idx} className="border-white/10 my-3" />;
+                  }
+                  if (line.startsWith('$$') && line.endsWith('$$') && line.length > 4) {
+                    return (
+                      <div key={idx} className="my-2 p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-500/30 text-center font-mono text-cyan-300 text-xs">
+                        {line.slice(2, -2)}
+                      </div>
+                    );
+                  }
+                  if (line.startsWith('- ') || line.startsWith('* ')) {
+                    return (
+                      <div key={idx} className="flex items-start gap-2 ml-2 my-0.5 text-slate-300">
+                        <span className="text-indigo-400 mt-1">•</span>
+                        <span>{line.slice(2)}</span>
+                      </div>
+                    );
+                  }
+                  if (line.startsWith('|') && line.endsWith('|')) {
+                    return (
+                      <div key={idx} className="font-mono text-xs text-amber-200 bg-slate-950/60 p-1.5 px-3 rounded border border-white/5 my-0.5 overflow-x-auto">
+                        {line}
+                      </div>
+                    );
+                  }
+                  if (!line.trim()) {
+                    return <div key={idx} className="h-1.5" />;
+                  }
+                  return <p key={idx} className="text-slate-300 my-0.5">{line}</p>;
+                })
+              ) : (
+                <p className="text-slate-500 italic">No notes content yet. Type in the editor to see formatted preview.</p>
+              )}
             </div>
           </div>
         )}

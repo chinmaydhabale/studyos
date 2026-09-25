@@ -168,7 +168,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
       {/* Footer */}
       <div className="p-3 border-t border-white/10 bg-slate-950/60 text-center">
         <p className="text-[11px] text-slate-500">
-          Intelligent AI alerts active • Syncing with StudyOS Engine
+          Intelligent AI alerts active | Syncing with StudyOS Engine
         </p>
       </div>
 

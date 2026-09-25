@@ -1,10 +1,16 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
 
+const DEFAULT_ROOM = 'study-room-alpha';
+
+function cleanRoomId(roomId?: string): string {
+  return (roomId || DEFAULT_ROOM).trim().toUpperCase();
+}
+
 export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client joins video room
   socket.on('video:join', (data: { roomId: string; userName: string }) => {
-    const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+    const roomId = cleanRoomId(data.roomId);
     const oldVideoRoom = (socket as any).currentVideoRoom;
     if (oldVideoRoom && oldVideoRoom !== `video_${roomId}`) {
       socket.leave(oldVideoRoom);
@@ -19,7 +25,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
   // Client changes video URL (e.g. pastes a YouTube class link)
   socket.on('video:change_url', (data: { roomId: string; videoUrl: string; videoId: string; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const updated = storage.updateVideoState(roomId, {
       videoUrl: data.videoUrl,
       videoId: data.videoId,
@@ -38,7 +44,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
   // Client plays video
   socket.on('video:play', (data: { roomId: string; currentTime: number; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const updated = storage.updateVideoState(roomId, {
       isPlaying: true,
       currentTime: data.currentTime,
@@ -54,7 +60,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
   // Client pauses video
   socket.on('video:pause', (data: { roomId: string; currentTime: number; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const updated = storage.updateVideoState(roomId, {
       isPlaying: false,
       currentTime: data.currentTime,
@@ -69,7 +75,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
   // Client seeks forward or backward
   socket.on('video:seek', (data: { roomId: string; seekToTime: number; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const updated = storage.updateVideoState(roomId, {
       currentTime: data.seekToTime,
       updatedBy: data.userName
@@ -83,14 +89,14 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
   // Client changes playback rate
   socket.on('video:rate', (data: { roomId: string; rate: number }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     storage.updateVideoState(roomId, { playbackRate: data.rate });
     socket.to(`video_${roomId}`).emit('video:rate', { rate: data.rate });
   });
 
   // Heartbeat / Periodic drift check sync request
   socket.on('video:sync_request', (data: { roomId: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const currentState = storage.getVideoState(roomId);
     socket.emit('video:sync_response', currentState);
   });

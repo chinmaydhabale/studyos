@@ -117,6 +117,53 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const [selectedAnswers, setSelectedAnswers] = useState<{ [qId: string]: number }>({});
   const [showQuizResults, setShowQuizResults] = useState(false);
 
+  // Lecture Summarizer States
+  const [summaryUrl, setSummaryUrl] = useState('https://www.youtube.com/watch?v=k7YS_P_t3uA');
+  const [summaryTitle, setSummaryTitle] = useState('Quantitative Aptitude Masterclass');
+  const [lectureSummary, setLectureSummary] = useState<{
+    title?: string;
+    channel?: string;
+    duration?: string;
+    summary?: string;
+    chapters?: Array<{ timestamp?: string; title?: string; takeaway?: string }>;
+    quickQuiz?: string[];
+    source?: 'gemini' | 'fallback';
+  } | null>(null);
+
+  // Sync initialPrompt changes (e.g. from SyncTheater "Ask AI at timestamp")
+  useEffect(() => {
+    if (initialPrompt && initialPrompt.trim()) {
+      setPromptInput(initialPrompt);
+      setDoubtQuestion(initialPrompt);
+      setActiveSubTab('doubts');
+    }
+  }, [initialPrompt]);
+
+  const handleSummarizeLecture = async () => {
+    if (!summaryUrl.trim()) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/summarize-lecture`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: summaryUrl.trim(),
+          title: summaryTitle.trim() || undefined,
+          userId: currentUser.id
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setLectureSummary(data);
+      addToast('Lecture Summarized!', 'AI generated chapter breakdown and key takeaways.', 'success');
+      addXp(30, 'Lecture Summarization');
+    } catch (e: any) {
+      addToast('Summarization Failed', e?.message || 'Could not summarize lecture.', 'alert');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Report which backend is actually answering: live Gemini or offline templates.
   useEffect(() => {
     let cancelled = false;
@@ -300,6 +347,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               { id: 'planner', label: '📅 AI Schedule Planner', icon: Calendar },
               { id: 'doubts', label: '💡 Doubt Solver', icon: HelpCircle },
               { id: 'handwritten', label: '✍️ Handwritten Notes', icon: FileText },
+              { id: 'summarize', label: '🎬 Summarize Lecture', icon: Video },
               { id: 'flashcards', label: '🎴 Flashcards (SM-2)', icon: Layers },
               { id: 'quiz', label: '🎯 Quiz & Mock Test', icon: FileQuestion }
             ].map((tab) => {
@@ -794,6 +842,116 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                   Try Another Diagnostic Quiz
                 </button>
               </>
+            )}
+
+          </div>
+        )}
+
+        {/* SUBTAB 6: AI Lecture Summarizer */}
+        {activeSubTab === 'summarize' && (
+          <div className="space-y-4">
+            
+            {/* Input Card */}
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">
+                YouTube Video URL to Summarize:
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                <input
+                  type="text"
+                  value={summaryUrl}
+                  onChange={(e) => setSummaryUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/80 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
+                />
+              </div>
+
+              <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">
+                Lecture Title or Subject (Optional):
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={summaryTitle}
+                  onChange={(e) => setSummaryTitle(e.target.value)}
+                  placeholder="e.g. RRB PO Quantitative Aptitude Speed Math"
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/80 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
+                />
+                <button
+                  onClick={handleSummarizeLecture}
+                  disabled={isLoading}
+                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all"
+                >
+                  <Sparkles className="w-4 h-4 text-cyan-200" />
+                  <span>{isLoading ? 'Synthesizing Lecture...' : 'Summarize Lecture'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Result */}
+            {lectureSummary && (
+              <div className="p-5 rounded-2xl bg-slate-900/90 border border-white/10 shadow-xl space-y-4 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      {lectureSummary.title || 'Lecture Summary & Outline'}
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      {lectureSummary.channel ? `Channel: ${lectureSummary.channel} • ` : ''}
+                      {lectureSummary.duration ? `Duration: ${lectureSummary.duration} • ` : ''}
+                      Generated by StudyOS AI Teacher
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                    {lectureSummary.source === 'gemini' ? '⚡ Live Gemini' : 'Offline Engine'}
+                  </span>
+                </div>
+
+                {lectureSummary.summary && (
+                  <div className="p-4 rounded-xl bg-indigo-950/20 border border-indigo-500/20 text-xs text-slate-200 leading-relaxed">
+                    <p className="font-semibold text-indigo-300 mb-1">Executive Summary:</p>
+                    <p>{lectureSummary.summary}</p>
+                  </div>
+                )}
+
+                {lectureSummary.chapters && lectureSummary.chapters.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Chapter Breakdown & Key Takeaways:
+                    </h4>
+                    <div className="space-y-2">
+                      {lectureSummary.chapters.map((chap, idx) => (
+                        <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-start gap-3">
+                          {chap.timestamp && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 whitespace-nowrap mt-0.5">
+                              {chap.timestamp}
+                            </span>
+                          )}
+                          <div className="flex-1">
+                            <h5 className="text-xs font-bold text-white">{chap.title}</h5>
+                            {chap.takeaway && (
+                              <p className="text-xs text-slate-400 mt-1">{chap.takeaway}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {lectureSummary.quickQuiz && lectureSummary.quickQuiz.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-white/5">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                      Quick Self-Check Questions:
+                    </h4>
+                    <ul className="space-y-1.5 list-disc list-inside text-xs text-slate-300">
+                      {lectureSummary.quickQuiz.map((q, idx) => (
+                        <li key={idx} className="leading-relaxed">{q}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
 
           </div>

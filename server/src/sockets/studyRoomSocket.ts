@@ -36,10 +36,15 @@ export interface PdfPresentation {
 
 const activeRoomPeers: Map<string, RoomPeer[]> = new Map();
 const activePdfPresentations: Map<string, PdfPresentation> = new Map();
-// Room ids are always normalised to upper case, so this map must use upper-case keys.
 const ROOM_VOICE_PASSWORDS: Map<string, string> = new Map([
   ['STUDY-ROOM-ALPHA', 'study123']
 ]);
+
+const DEFAULT_ROOM = 'STUDY-ROOM-ALPHA';
+
+function cleanRoomId(roomId?: string): string {
+  return (roomId || DEFAULT_ROOM).trim().toUpperCase();
+}
 
 // Single source of truth for a room's voice passkey: the stored study group first,
 // then the built-in rooms. Never fall back to a shared default password.
@@ -173,7 +178,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     activityName: string;
     category: 'study' | 'break' | 'personal';
   }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const peers = activeRoomPeers.get(roomId) || [];
     const peer = peers.find(p => p.userId === data.userId || p.socketId === socket.id);
 
@@ -204,7 +209,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     durationSeconds: number;
     localDate?: string;
   }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const peers = activeRoomPeers.get(roomId) || [];
     const peer = peers.find(p => p.userId === data.userId || p.socketId === socket.id);
 
@@ -326,19 +331,19 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
 
   // Whiteboard
   socket.on('wb:element', (data: { roomId: string; element: WhiteboardElement }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     storage.saveWhiteboardElement(roomId, data.element);
     socket.to(roomId).emit('wb:element', data.element);
   });
 
   socket.on('wb:clear', (data: { roomId: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     storage.clearWhiteboard(roomId);
     socket.to(roomId).emit('wb:clear');
   });
 
   socket.on('wb:cursor', (data: { roomId: string; x: number; y: number; userName: string; color: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     socket.to(roomId).emit('wb:cursor', {
       socketId: socket.id,
       ...data
@@ -347,7 +352,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
 
   // Notes
   socket.on('notes:update', (data: { roomId: string; content: string; userName: string }) => {
-    const roomId = data.roomId || 'study-room-alpha';
+    const roomId = cleanRoomId(data.roomId);
     const updated = storage.updateNote(roomId, data.content, data.userName);
     socket.to(roomId).emit('notes:update', updated);
   });
