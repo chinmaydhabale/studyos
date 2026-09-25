@@ -831,13 +831,13 @@ export class AICoachService {
       };
     }
 
-    // A question wins over a selection, and a selection wins over the whole page.
+    // A typed question chooses the task, but any selected passage still gives it context.
     const mode: PdfAssistMode =
       input.mode === 'question' && question ? 'question' : selectedText ? 'selection' : input.mode === 'question' ? 'page' : input.mode || 'page';
 
     const focus =
       mode === 'question'
-        ? `Question: "${question}"`
+        ? `Question: "${question}"${selectedText ? `\nSelected passage the question refers to:\n"${selectedText}"` : ''}`
         : mode === 'selection'
         ? `Selected passage the student did not understand:\n"${selectedText}"`
         : `The student wants page ${page} explained end to end.`;

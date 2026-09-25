@@ -79,6 +79,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
   const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
   const [displayPage, setDisplayPage] = useState<number>(1);
+  const previousDisplayPageRef = useRef(displayPage);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,7 +89,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [numPages, setNumPages] = useState<number>(0);
   const [pdfScale, setPdfScale] = useState<number>(1.3);
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const [basePageSize, setBasePageSize] = useState<{ width: number; height: number } | null>(null);
+  const [pageSizes, setPageSizes] = useState<Record<number, { width: number; height: number }>>({});
 
   // AI assistant state
   const [isAiOpen, setIsAiOpen] = useState<boolean>(false);
@@ -101,12 +102,30 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const pendingScrollPageRef = useRef<number | null>(null);
   const loadedPdfSourceRef = useRef<string | null>(null);
   const lastScrolledDocumentIdRef = useRef<string | null>(null);
+  const previousPdfScaleRef = useRef(pdfScale);
 
   const requestPageScroll = useCallback((page: number) => {
     if (!Number.isFinite(page) || page < 1) return;
     pendingScrollPageRef.current = page;
     setDisplayPage(page);
   }, []);
+
+  const clearPdfSelection = useCallback(() => {
+    setSelectedText('');
+    setSelectionAnchor(null);
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const handlePageRendered = useCallback(
+    (pageNumber: number, _element: HTMLDivElement, size: { width: number; height: number }) => {
+      setPageSizes(prev => {
+        const current = prev[pageNumber];
+        if (current?.width === size.width && current?.height === size.height) return prev;
+        return { ...prev, [pageNumber]: size };
+      });
+    },
+    []
+  );
 
   // Refs that always mirror the latest values so effects can read them without
   // re-running (and without capturing stale renders).
@@ -240,8 +259,15 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     const documentId = activePdfDoc?.id ?? null;
     if (lastScrolledDocumentIdRef.current === documentId) return;
     lastScrolledDocumentIdRef.current = documentId;
+    clearPdfSelection();
     if (documentId) requestPageScroll(activePdfPage || 1);
-  }, [activePdfDoc?.id, activePdfPage, requestPageScroll]);
+  }, [activePdfDoc?.id, activePdfPage, clearPdfSelection, requestPageScroll]);
+
+  useEffect(() => {
+    if (previousDisplayPageRef.current === displayPage) return;
+    previousDisplayPageRef.current = displayPage;
+    clearPdfSelection();
+  }, [displayPage, clearPdfSelection]);
 
   // Broadcast reading status to peer students — guarded so it only emits when
   // the document id, page or room actually changed (no redundant emits/loops).
@@ -403,8 +429,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Explicit page navigation — broadcasts to the room when this user is presenting
   const goToPage = (page: number) => {
     if (!Number.isFinite(page) || page < 1) return;
-    requestPageScroll(page);
-    sendPdfPageChange(page);
+    const targetPage = numPages > 0 ? Math.min(page, numPages) : page;
+    requestPageScroll(targetPage);
+    sendPdfPageChange(targetPage);
     if (readAlongPeerId) {
       setReadAlongPeerId(null);
       addToast('Independent Reading', 'Navigated manually — exited follow mode.', 'info');
@@ -417,10 +444,10 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Load the PDF with pdf.js — this is what gives each page a selectable text layer.
   useEffect(() => {
     loadedPdfSourceRef.current = null;
+    setPageSizes({});
     if (!pdfSourceUrl) {
       setPdfDoc(null);
       setNumPages(0);
-      setBasePageSize(null);
       return;
     }
 
@@ -467,7 +494,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       .then(page => {
         if (cancelled) return;
         const viewport = page.getViewport({ scale: pdfScale });
-        setBasePageSize({ width: viewport.width, height: viewport.height });
+        setPageSizes(prev => ({ ...prev, 1: { width: viewport.width, height: viewport.height } }));
       })
       .catch(() => {
         /* keep the default size */
@@ -476,6 +503,31 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       cancelled = true;
     };
   }, [pdfDoc, pdfScale]);
+
+  // Every PDF page scales linearly, so update cached measurements immediately
+  // while the currently visible pages rerender at the new zoom level.
+  useEffect(() => {
+    const previousScale = previousPdfScaleRef.current;
+    previousPdfScaleRef.current = pdfScale;
+    if (previousScale === pdfScale) return;
+
+    const ratio = pdfScale / previousScale;
+    setPageSizes(prev => {
+      const next: Record<number, { width: number; height: number }> = {};
+      Object.entries(prev).forEach(([pageNumber, size]) => {
+        next[Number(pageNumber)] = { width: size.width * ratio, height: size.height * ratio };
+      });
+      return next;
+    });
+  }, [pdfScale]);
+
+  // Navigation can happen before loading finishes or arrive from a peer.
+  // Clamp it once the page count is known so the reader and room stay in range.
+  useEffect(() => {
+    if (numPages === 0 || displayPage <= numPages) return;
+    requestPageScroll(numPages);
+    sendPdfPageChange(numPages);
+  }, [numPages, displayPage, requestPageScroll, sendPdfPageChange]);
 
   // Scroll after the requested PDF has loaded; an old document may still be
   // mounted briefly while a document switch is in flight.
@@ -516,19 +568,26 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   };
 
   // Capture a text selection made inside a page's text layer.
-  const handleTextSelection = () => {
+  const handleTextSelection = (event: React.MouseEvent<HTMLDivElement>) => {
+    const eventTarget = event.target instanceof Element ? event.target : null;
+    if (eventTarget?.closest('[data-pdf-ai-panel], [data-preserve-pdf-selection]')) return;
+    if (!eventTarget?.closest('.pdf-text-layer')) {
+      clearPdfSelection();
+      return;
+    }
+
     const selection = window.getSelection();
     const text = selection?.toString().replace(/\s+/g, ' ').trim() || '';
 
     if (!text || text.length < 3) {
-      setSelectionAnchor(null);
+      clearPdfSelection();
       return;
     }
 
     const node = selection?.anchorNode;
     const anchorEl = node instanceof Element ? node : node?.parentElement || null;
     if (!anchorEl?.closest('.pdf-text-layer')) {
-      setSelectionAnchor(null);
+      clearPdfSelection();
       return;
     }
 
@@ -567,6 +626,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   return (
     <div
       ref={containerRef}
+      onMouseUp={handleTextSelection}
       className={`flex-1 min-h-0 w-full h-full flex flex-col bg-[#070b14] text-slate-100 overflow-hidden select-none ${
         isFullscreen ? 'fixed inset-0 z-50 w-screen h-screen' : ''
       }`}
@@ -666,7 +726,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
             >
               <button
                 onClick={() => goToPage(displayPage - 1)}
-                disabled={displayPage <= 1}
+                disabled={numPages === 0 || displayPage <= 1}
                 className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                 title="Previous Page"
               >
@@ -675,6 +735,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <input
                 type="number"
                 min={1}
+                max={numPages || undefined}
+                disabled={numPages === 0}
                 value={displayPage}
                 onChange={(e) => {
                   const v = parseInt(e.target.value, 10);
@@ -685,7 +747,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               />
               <button
                 onClick={() => goToPage(displayPage + 1)}
-                disabled={numPages > 0 && displayPage >= numPages}
+                disabled={numPages === 0 || displayPage >= numPages}
                 className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                 title="Next Page"
               >
@@ -729,6 +791,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           
           {/* Ask AI Doubt Button — opens the in-reader assistant */}
           <button
+            data-preserve-pdf-selection
             onClick={() => {
               setIsAiOpen(!isAiOpen);
               if (!isAiOpen) setIsChatOpen(false);
@@ -967,7 +1030,6 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               <div
                 ref={scrollRef}
                 onScroll={handlePagesScroll}
-                onMouseUp={handleTextSelection}
                 className="flex-1 min-h-0 overflow-y-auto relative bg-slate-900/50 px-2 py-2"
               >
                 {pdfDoc ? (
@@ -976,6 +1038,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                       Math.abs(pageNumber - displayPage) <= PAGE_RENDER_RADIUS ||
                       // Always keep the first page rendered so it can seed page sizing.
                       pageNumber === 1;
+                    const pageSize = pageSizes[pageNumber] || pageSizes[1];
 
                     return (
                       <div
@@ -984,13 +1047,16 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                           if (el) pageElsRef.current.set(pageNumber, el);
                           else pageElsRef.current.delete(pageNumber);
                         }}
-                        style={
-                          basePageSize ? { width: basePageSize.width, height: basePageSize.height } : undefined
-                        }
+                        style={pageSize ? { width: pageSize.width, height: pageSize.height } : undefined}
                         className="mx-auto my-3"
                       >
                         {inWindow ? (
-                          <PdfPageView pdf={pdfDoc} pageNumber={pageNumber} scale={pdfScale} />
+                          <PdfPageView
+                            pdf={pdfDoc}
+                            pageNumber={pageNumber}
+                            scale={pdfScale}
+                            onRendered={handlePageRendered}
+                          />
                         ) : (
                           <div className="w-full h-full bg-white/5 border border-white/10 rounded-sm flex items-center justify-center">
                             <span className="text-[10px] font-mono text-slate-600">page {pageNumber}</span>
@@ -1049,6 +1115,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           {/* Floating "Explain with AI" button, anchored to the text selection */}
           {selectionAnchor && selectedText && (
             <button
+              data-preserve-pdf-selection
               onMouseDown={(e) => e.preventDefault()}
               onClick={handleExplainSelection}
               style={{ left: selectionAnchor.x, top: selectionAnchor.y }}
@@ -1081,17 +1148,17 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
         {/* Right: AI Reader Assistant (takes the same column as the chat) */}
         {isAiOpen && (
-          <div className="w-80 lg:w-96 shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+          <div
+            data-pdf-ai-panel
+            className="w-80 lg:w-96 shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200"
+          >
             <PDFAiPanel
               docTitle={activePdfDoc?.title || 'Study PDF'}
               currentPage={displayPage}
               userId={currentUser.id}
               selectedText={selectedText}
               autoRunSelection={autoRunSelection}
-              onClearSelection={() => {
-                setSelectedText('');
-                setSelectionAnchor(null);
-              }}
+              onClearSelection={clearPdfSelection}
               onClose={() => setIsAiOpen(false)}
               getPageText={getPageText}
               addToast={addToast}

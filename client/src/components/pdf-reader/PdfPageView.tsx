@@ -7,7 +7,11 @@ interface PdfPageViewProps {
   pageNumber: number;
   scale: number;
   /** Lets the parent measure pages for scroll-driven page tracking. */
-  onRendered?: (pageNumber: number, element: HTMLDivElement) => void;
+  onRendered?: (
+    pageNumber: number,
+    element: HTMLDivElement,
+    size: { width: number; height: number }
+  ) => void;
 }
 
 /**
@@ -70,7 +74,7 @@ export const PdfPageView: React.FC<PdfPageViewProps> = ({ pdf, pageNumber, scale
         if (cancelled) return;
 
         setSize({ width: viewport.width, height: viewport.height });
-        if (wrapRef.current) onRendered?.(pageNumber, wrapRef.current);
+        if (wrapRef.current) onRendered?.(pageNumber, wrapRef.current, { width: viewport.width, height: viewport.height });
       } catch (err: any) {
         // A cancelled render is an expected part of teardown, not a failure.
         if (!cancelled && err?.name !== 'RenderingCancelledException') {

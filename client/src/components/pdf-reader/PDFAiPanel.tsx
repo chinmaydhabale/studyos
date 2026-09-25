@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, BookOpen, Loader2, X, HelpCircle, Cpu, Quote, Lightbulb } from 'lucide-react';
 import { API_BASE_URL } from '../../config.js';
 
+const MAX_PAGE_TEXT_CHARS = 6000;
+
 export interface PdfAssistResult {
   mode: 'page' | 'selection' | 'question';
   heading: string;
@@ -79,7 +81,9 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
     const page = opts.page ?? currentPage;
     setIsLoading(true);
     try {
-      const pageText = await getPageText(page);
+      // Match the server's prompt cap before serialization so a dense PDF page
+      // cannot exceed Express's JSON body limit.
+      const pageText = (await getPageText(page)).slice(0, MAX_PAGE_TEXT_CHARS);
       const res = await fetch(`${API_BASE_URL}/api/ai/pdf-assist`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
