@@ -70,7 +70,7 @@ const MainLayout: React.FC = () => {
             </div>
             <SyncTheater
               onAskAiDoubtAtTimestamp={(timestamp) => {
-                setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
+                setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
                 setActiveTab('ai-coach');
               }}
             />

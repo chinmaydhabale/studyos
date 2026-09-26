@@ -325,7 +325,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
     const tempId = `local-pdf-${Date.now()}`;
     const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ');
-    const targetRoomId = (roomId || 'RRB-7949').toUpperCase();
+    const targetRoomId = (roomId || 'STUDY-ROOM-ALPHA').toUpperCase();
 
     const localDoc: StudyDocument = {
       id: tempId,
@@ -989,7 +989,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                       uploaderName: p.name,
                       uploadedAt: new Date().toISOString(),
                       downloadCount: 0,
-                      roomId: (roomId || 'RRB-7949').toUpperCase()
+                      roomId: (roomId || 'STUDY-ROOM-ALPHA').toUpperCase()
                     };
                     openPdfInReader(docToOpen, p.currentDocument.currentPage || 1);
                     addToast('Read Along Started!', `Reading "${p.currentDocument.title}" with ${p.name} on Page ${p.currentDocument.currentPage || 1}`, 'success');

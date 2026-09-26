@@ -164,6 +164,26 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
 
       const peers = activeRoomPeers.get(rId) || [];
       const departingPeer = peers.find(p => p.socketId === socket.id || (data.userId && p.userId === data.userId));
+
+      // Auto-save in-progress study activity on room exit
+      if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
+        const durationSeconds = Math.max(0, Math.floor((Date.now() - departingPeer.activityStartTime) / 1000));
+        if (durationSeconds >= 10) {
+          storage.recordActivitySession(
+            departingPeer.userId,
+            departingPeer.name,
+            departingPeer.currentActivity,
+            departingPeer.activityCategory || 'study',
+            durationSeconds
+          );
+          const updatedUser = storage.getUser(departingPeer.userId);
+          if (updatedUser) {
+            socket.emit('user:profile_updated', updatedUser);
+          }
+        }
+        departingPeer.activityStartTime = null;
+      }
+
       const remaining = peers.filter(p => p.socketId !== socket.id && (!data.userId || p.userId !== data.userId));
       activeRoomPeers.set(rId, remaining);
       io.to(rId).emit('room:peers', remaining);
@@ -183,6 +203,17 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     }
   });
 
+  // User manual status change
+  socket.on('user:status_change', (data: { roomId: string; status: string }) => {
+    const roomId = cleanRoomId(data.roomId);
+    const peers = activeRoomPeers.get(roomId) || [];
+    const peer = peers.find(p => p.socketId === socket.id);
+    if (peer) {
+      peer.status = data.status;
+      io.to(roomId).emit('room:peers', peers);
+    }
+  });
+
   // Start a new Live Situation / Activity (Timer begins)
   socket.on('activity:start', (data: {
     roomId: string;
@@ -197,6 +228,20 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
 
     const now = Date.now();
     if (peer) {
+      // If previous activity was running, auto-save it first
+      if (peer.activityStartTime && peer.currentActivity && peer.currentActivity !== 'Idle 💤') {
+        const prevDuration = Math.max(0, Math.floor((now - peer.activityStartTime) / 1000));
+        if (prevDuration >= 10) {
+          storage.recordActivitySession(
+            peer.userId,
+            peer.name,
+            peer.currentActivity,
+            peer.activityCategory || 'study',
+            prevDuration
+          );
+        }
+      }
+
       peer.currentActivity = data.activityName;
       peer.activityCategory = data.category;
       peer.activityStartTime = now;
@@ -235,6 +280,12 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       data.durationSeconds,
       typeof data.localDate === 'string' && data.localDate.trim() ? data.localDate.trim() : undefined
     );
+
+    // Sync updated user stats back to the client immediately
+    const updatedUser = storage.getUser(data.userId);
+    if (updatedUser) {
+      socket.emit('user:profile_updated', updatedUser);
+    }
 
     if (peer) {
       peer.activityStartTime = null;
@@ -374,6 +425,22 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   socket.on('disconnect', () => {
     activeRoomPeers.forEach((peers, roomId) => {
       const departingPeer = peers.find(p => p.socketId === socket.id);
+
+      // Auto-save in-progress study activity on disconnect
+      if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
+        const durationSeconds = Math.max(0, Math.floor((Date.now() - departingPeer.activityStartTime) / 1000));
+        if (durationSeconds >= 10) {
+          storage.recordActivitySession(
+            departingPeer.userId,
+            departingPeer.name,
+            departingPeer.currentActivity,
+            departingPeer.activityCategory || 'study',
+            durationSeconds
+          );
+        }
+        departingPeer.activityStartTime = null;
+      }
+
       const remaining = peers.filter(p => p.socketId !== socket.id);
       activeRoomPeers.set(roomId, remaining);
       io.to(roomId).emit('room:peers', remaining);

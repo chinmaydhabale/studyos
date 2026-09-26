@@ -37,6 +37,14 @@ interface SocketContextType {
   activePdfPage: number;
   pdfPresentation: PdfPresentationState | null;
   selectedPeerForDossier: RoomPeer | null;
+  activeActivity: {
+    isRunning: boolean;
+    activityName: string;
+    category: 'study' | 'break' | 'personal';
+    startTime: number | null;
+  };
+  startGlobalActivity: (activityName: string, category?: 'study' | 'break' | 'personal') => void;
+  stopGlobalActivity: () => void;
   setIsAuthModalOpen: (open: boolean) => void;
   setIsVoiceModalOpen: (open: boolean) => void;
   setIsRoomModalOpen: (open: boolean) => void;
@@ -149,6 +157,31 @@ const defaultVideo: VideoSyncState = {
   updatedBy: 'System'
 };
 
+interface ActiveActivityState {
+  isRunning: boolean;
+  activityName: string;
+  category: 'study' | 'break' | 'personal';
+  startTime: number | null;
+}
+
+const getStoredActivity = (): ActiveActivityState => {
+  try {
+    const raw = localStorage.getItem('studyos_active_activity_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.isRunning && parsed.startTime && typeof parsed.startTime === 'number') {
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return {
+    isRunning: false,
+    activityName: '',
+    category: 'study',
+    startTime: null
+  };
+};
+
 const SocketContext = createContext<SocketContextType | null>(null);
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -171,6 +204,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(!initialUserData.isAuthenticated);
   const [isRoomModalOpen, setIsRoomModalOpen] = useState(!initialRoomId);
+
+  // Global persistent Live Activity State across all tabs
+  const [activeActivity, setActiveActivity] = useState<ActiveActivityState>(getStoredActivity);
+
+  // Keep localStorage in sync with active activity
+  useEffect(() => {
+    try {
+      if (activeActivity.isRunning && activeActivity.startTime) {
+        localStorage.setItem('studyos_active_activity_v1', JSON.stringify(activeActivity));
+      } else {
+        localStorage.removeItem('studyos_active_activity_v1');
+      }
+    } catch (e) {}
+  }, [activeActivity]);
 
   // PDF Reader & Peer Dossier State
   const [activePdfDoc, setActivePdfDoc] = useState<StudyDocument | null>(null);
@@ -477,6 +524,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActivePdfPage(data.currentPage);
     });
 
+    newSocket.on('user:profile_updated', (updatedUser: UserProfile) => {
+      if (updatedUser && updatedUser.id === userRef.current.id) {
+        setCurrentUser(prev => ({ ...prev, ...updatedUser }));
+        try {
+          localStorage.setItem('studyos_auth_user_v1', JSON.stringify({ ...userRef.current, ...updatedUser }));
+        } catch (e) {}
+      }
+    });
+
     return () => {
       newSocket.disconnect();
       socketRef.current = null;
@@ -676,8 +732,109 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const time = peer.currentVideo.currentTime || 0;
     sendVideoChange(`https://www.youtube.com/watch?v=${vId}`, vId);
     sendVideoSeek(time);
-    addToast('Tuned In to Video!', `Watching with ${peer.name} at ${Math.floor(time / 60)}:${(time % 60).toString().padStart(2, '0')}`, 'success');
+    addToast('Tuned In to Video!', `Watching with ${peer.name} at ${Math.floor(time / 60)}:${Math.floor(time % 60).toString().padStart(2, '0')}`, 'success');
   }, [sendVideoChange, sendVideoSeek, addToast]);
+
+  // Global Live Activity Lifecycle (Persists across tabs, auto-saves on change/unload)
+  const startGlobalActivity = useCallback((activityName: string, category: 'study' | 'break' | 'personal' = 'study') => {
+    const now = Date.now();
+    // If another activity is already running, auto-stop and record it first so no time is lost
+    if (activeActivity.isRunning && activeActivity.startTime) {
+      const durationSeconds = Math.max(0, Math.floor((now - activeActivity.startTime) / 1000));
+      if (durationSeconds >= 5) {
+        const localDate = new Date().toLocaleDateString('en-CA');
+        socketRef.current?.emit('activity:stop', {
+          roomId: roomIdRef.current,
+          userId: userRef.current.id,
+          userName: userRef.current.name,
+          activityName: activeActivity.activityName,
+          category: activeActivity.category,
+          durationSeconds,
+          localDate
+        });
+      }
+    }
+
+    const nextActivity: ActiveActivityState = {
+      isRunning: true,
+      activityName,
+      category,
+      startTime: now
+    };
+    setActiveActivity(nextActivity);
+
+    socketRef.current?.emit('activity:start', {
+      roomId: roomIdRef.current,
+      userId: userRef.current.id,
+      userName: userRef.current.name,
+      activityName,
+      category
+    });
+
+    addToast(
+      'Live Situation Started',
+      `Started ${activityName}. Your study timer will continue across all tabs!`,
+      category === 'break' ? 'warning' : 'success'
+    );
+  }, [activeActivity, addToast]);
+
+  const stopGlobalActivity = useCallback(() => {
+    if (!activeActivity.isRunning || !activeActivity.startTime) return;
+
+    const durationSeconds = Math.max(0, Math.floor((Date.now() - activeActivity.startTime) / 1000));
+    const actName = activeActivity.activityName;
+    const cat = activeActivity.category;
+
+    setActiveActivity({
+      isRunning: false,
+      activityName: '',
+      category: 'study',
+      startTime: null
+    });
+
+    const localDate = new Date().toLocaleDateString('en-CA');
+    socketRef.current?.emit('activity:stop', {
+      roomId: roomIdRef.current,
+      userId: userRef.current.id,
+      userName: userRef.current.name,
+      activityName: actName,
+      category: cat,
+      durationSeconds,
+      localDate
+    });
+
+    const mins = Math.floor(durationSeconds / 60);
+    const secs = durationSeconds % 60;
+    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+    addToast(
+      'Activity Saved',
+      `Completed ${timeStr} of ${actName}! Time logged into analytics and calendar.`,
+      'info'
+    );
+  }, [activeActivity, addToast]);
+
+  // Window unload listener to auto-flush active study session
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (activeActivity.isRunning && activeActivity.startTime) {
+        const durationSeconds = Math.max(0, Math.floor((Date.now() - activeActivity.startTime) / 1000));
+        if (durationSeconds >= 10) {
+          socketRef.current?.emit('activity:stop', {
+            roomId: roomIdRef.current,
+            userId: userRef.current.id,
+            userName: userRef.current.name,
+            activityName: activeActivity.activityName,
+            category: activeActivity.category,
+            durationSeconds,
+            localDate: new Date().toLocaleDateString('en-CA')
+          });
+        }
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeActivity]);
 
   // Tune in to peer's PDF
   const tuneInToPeerPdf = useCallback((peer: RoomPeer) => {
@@ -781,6 +938,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         activePdfPage,
         pdfPresentation,
         selectedPeerForDossier,
+        activeActivity,
+        startGlobalActivity,
+        stopGlobalActivity,
         setIsAuthModalOpen,
         setIsVoiceModalOpen,
         setIsRoomModalOpen,

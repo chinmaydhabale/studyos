@@ -38,8 +38,8 @@ export const RRB_IBPS_ACTIVITIES = [
   // Extra Personal & Rest Situations
   { id: 'break', name: '☕ Short Break (Tea / Water)', category: 'break' as const, color: 'text-amber-300 border-amber-500/30 bg-amber-500/10' },
   { id: 'rest', name: '🛋️ Rest / Power Nap', category: 'break' as const, color: 'text-slate-300 border-slate-500/30 bg-slate-500/10' },
-  { id: 'chatting', name: '💬 Group Discussion / Chatting', category: 'personal' as const, color: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' },
-  { id: 'music', name: '🎵 Listening to Focus Music', category: 'personal' as const, color: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10' },
+  { id: 'chatting', name: '💬 Group Discussion / Chatting', category: 'study' as const, color: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' },
+  { id: 'music', name: '🎵 Listening to Focus Music', category: 'study' as const, color: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10' },
   { id: 'chores', name: '🏠 Homebased Work / Chores', category: 'personal' as const, color: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
   { id: 'doubts', name: '🎯 Doubts Revision with Partner', category: 'study' as const, color: 'text-indigo-300 border-indigo-500/30 bg-indigo-500/10' }
 ];
@@ -53,19 +53,18 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
     addToast,
     openPeerDossier,
     tuneInToPeerPdf,
-    tuneInToPeerVideo
+    tuneInToPeerVideo,
+    activeActivity,
+    startGlobalActivity,
+    stopGlobalActivity
   } = useSocket();
 
   const { triggerCelebration } = useStudy();
 
   const [selectedActivity, setSelectedActivity] = useState<string>(RRB_IBPS_ACTIVITIES[0].name);
-  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
-  const [activeActivityName, setActiveActivityName] = useState<string>('');
-  const [activeCategory, setActiveCategory] = useState<'study' | 'break' | 'personal'>('study');
-  const [startTime, setStartTime] = useState<number | null>(null);
   const [clockNow, setClockNow] = useState<number>(Date.now());
 
-  // Continuous 1-second ticker so remote peers' elapsed times tick live even when local user is idle
+  // Continuous 1-second ticker so local & remote peers' elapsed times tick live across tabs
   useEffect(() => {
     const timer = setInterval(() => {
       setClockNow(Date.now());
@@ -73,77 +72,27 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
     return () => clearInterval(timer);
   }, []);
 
+  const isTimerRunning = activeActivity.isRunning;
+  const activeActivityName = activeActivity.activityName;
+  const activeCategory = activeActivity.category;
+  const startTime = activeActivity.startTime;
+
   const elapsedSeconds = isTimerRunning && startTime ? Math.max(0, Math.floor((clockNow - startTime) / 1000)) : 0;
 
-  // Start an activity
+  // Start an activity using global lifecycle
   const handleStartActivity = (activityToStart?: string) => {
     const actName = activityToStart || selectedActivity;
     const actDef = RRB_IBPS_ACTIVITIES.find(a => a.name === actName) || RRB_IBPS_ACTIVITIES[0];
-    
-    const now = Date.now();
-    setStartTime(now);
-    setActiveActivityName(actDef.name);
-    setActiveCategory(actDef.category);
-    setIsTimerRunning(true);
-
-    // Broadcast to room via socket
-    socket?.emit('activity:start', {
-      roomId,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      activityName: actDef.name,
-      category: actDef.category
-    });
-
-    addToast(
-      'Live Situation Updated',
-      `Started ${actDef.name}. Timer is counting. Room members can see your live situation!`,
-      actDef.category === 'break' ? 'warning' : 'success'
-    );
+    startGlobalActivity(actDef.name, actDef.category);
   };
 
-  // Stop an activity
+  // Stop an activity using global lifecycle
   const handleStopActivity = () => {
     if (!isTimerRunning) return;
-
-    // Compute the true duration at the moment the user stops, not the last tick
-    const duration = startTime ? Math.max(0, Math.floor((Date.now() - startTime) / 1000)) : elapsedSeconds;
-    const actName = activeActivityName;
-    const cat = activeCategory;
-
-    setIsTimerRunning(false);
-    setStartTime(null);
-
-    // Local calendar day so the server can book the session against the user's day
-    const now = new Date();
-    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-    // Notify socket to record session and stop peer timer.
-    // The server is the single source of XP for activity sessions, so we do NOT
-    // award XP here — we only fire the celebration.
-    socket?.emit('activity:stop', {
-      roomId,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      activityName: actName,
-      category: cat,
-      durationSeconds: duration,
-      localDate
-    });
-
-    if (cat === 'study' && duration >= 30) {
+    if (activeCategory === 'study' && elapsedSeconds >= 30) {
       triggerCelebration();
     }
-
-    const mins = Math.floor(duration / 60);
-    const secs = duration % 60;
-    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-
-    addToast(
-      'Activity Finished & Saved',
-      `Completed ${timeStr} of ${actName}! Time logged into analytics.`,
-      'info'
-    );
+    stopGlobalActivity();
   };
 
   const formatStopwatch = (seconds: number) => {

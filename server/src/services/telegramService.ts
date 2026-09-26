@@ -254,14 +254,14 @@ export class TelegramService {
   }
 
   // Scan channel updates and import all PDF documents into the Study Vault
-  public async syncDocumentsFromUpdates(roomId: string = 'RRB-7949'): Promise<{ success: boolean; syncedCount: number; message: string }> {
+  public async syncDocumentsFromUpdates(roomId: string = 'STUDY-ROOM-ALPHA'): Promise<{ success: boolean; syncedCount: number; message: string }> {
     try {
       const token = this.getBotToken();
       if (!token) {
         return { success: false, syncedCount: 0, message: 'Bot token not set' };
       }
 
-      const targetRoomId = (roomId || 'RRB-7949').trim().toUpperCase();
+      const targetRoomId = (roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
       const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?allowed_updates=["message","edited_message","channel_post","edited_channel_post"]`);
       const data = (await res.json()) as any;
       if (!data.ok) {

@@ -407,11 +407,18 @@ app.post('/api/tasks', (req, res) => {
 });
 
 app.post('/api/tasks/:id/toggle', (req, res) => {
+  const userId = req.body?.userId;
   const updated = storage.toggleTask(req.params.id, {
-    userId: req.body?.userId,
+    userId,
     userName: req.body?.userName
   });
   if (!updated) return res.status(404).json({ error: 'Task not found' });
+  if (userId) {
+    const user = storage.getUser(userId);
+    if (user) {
+      io.emit('user:profile_updated', user);
+    }
+  }
   res.json(updated);
 });
 

@@ -43,7 +43,7 @@ const modeDurations = {
 } as const;
 
 export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, updateUserProfile } = useSocket();
+  const { currentUser, updateUserProfile, socket, roomId } = useSocket();
 
   // Focus Timer States (25m focus, 5m short break, 15m long break)
   const [timerMode, setTimerModeState] = useState<'focus' | 'short_break' | 'long_break'>('focus');
@@ -156,6 +156,20 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (timerMode === 'focus') {
       addXp(100, 'Completed Focus Session');
       triggerCelebration();
+
+      // Log Pomodoro session to server persistent activity sessions & calendar
+      if (socket?.connected && roomId) {
+        socket.emit('activity:stop', {
+          roomId,
+          userId: currentUser.id,
+          userName: currentUser.name || currentUser.username || 'Student',
+          activityName: '🍅 Pomodoro Focus Session',
+          category: 'study',
+          durationSeconds: modeDurations.focus,
+          localDate: new Date().toLocaleDateString('en-CA')
+        });
+      }
+
       setTimerMode('short_break');
     } else {
       setBreakCountToday(b => b + 1);

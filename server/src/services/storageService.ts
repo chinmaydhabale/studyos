@@ -866,14 +866,18 @@ export class StorageService {
 
     // Scope the board to the requester's own college / city / country when asked.
     // 'Friends' and 'Study Room' have no relationship model yet, so they fall back to Global.
-    if (me) {
-      if (filter === 'College') {
-        realUsers = realUsers.filter(u => u.college && u.college === me.college);
-      } else if (filter === 'City') {
-        realUsers = realUsers.filter(u => u.city && u.city === me.city);
-      } else if (filter === 'Country') {
-        realUsers = realUsers.filter(u => u.country && u.country === me.country);
-      }
+    if (filter === 'College') {
+      realUsers = me?.college
+        ? realUsers.filter(u => u.college && u.college === me.college)
+        : realUsers.filter(u => Boolean(u.college));
+    } else if (filter === 'City') {
+      realUsers = me?.city
+        ? realUsers.filter(u => u.city && u.city === me.city)
+        : realUsers.filter(u => Boolean(u.city));
+    } else if (filter === 'Country') {
+      realUsers = me?.country
+        ? realUsers.filter(u => u.country && u.country === me.country)
+        : realUsers.filter(u => Boolean(u.country));
     }
 
     realUsers.sort((a, b) => b.xp - a.xp || b.totalStudyHours - a.totalStudyHours);

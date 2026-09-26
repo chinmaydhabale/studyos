@@ -9,7 +9,10 @@ import {
   Trophy,
   Play,
   RotateCcw,
-  Volume2
+  Volume2,
+  BookOpen,
+  FolderLock,
+  BarChart3
 } from 'lucide-react';
 import { useStudy } from '../../context/StudyContext.js';
 
@@ -128,6 +131,30 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       icon: Trophy,
       color: 'text-yellow-400 bg-yellow-500/10',
       run: () => onNavigateTab('leaderboards')
+    },
+    {
+      id: 'nav-pdf',
+      title: 'Open In-App PDF Reader & Co-Study',
+      subtitle: 'Upload or read exam PDFs with synchronized group page turns and notes',
+      icon: BookOpen,
+      color: 'text-indigo-400 bg-indigo-500/10',
+      run: () => onNavigateTab('pdf')
+    },
+    {
+      id: 'nav-vault',
+      title: 'Open Telegram Study Vault',
+      subtitle: 'Browse free cloud-stored PDFs, handwritten notes, and mock tests',
+      icon: FolderLock,
+      color: 'text-sky-400 bg-sky-500/10',
+      run: () => onNavigateTab('vault')
+    },
+    {
+      id: 'nav-analytics',
+      title: 'Open Study Analytics & Velocity',
+      subtitle: 'Track daily focus hours, weekly goals, subject velocity, and heatmaps',
+      icon: BarChart3,
+      color: 'text-cyan-400 bg-cyan-500/10',
+      run: () => onNavigateTab('analytics')
     }
   ];
 

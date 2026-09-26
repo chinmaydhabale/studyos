@@ -90,7 +90,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       const contextHeader = data.pdfPage
         ? `📖 *Context: ${data.pdfDocTitle || 'Study PDF'} (Page ${data.pdfPage})*\n\n`
         : data.videoTimestamp !== undefined
-        ? `⏱️ *Context: Lecture Timestamp ${Math.floor(data.videoTimestamp / 60)}:${(data.videoTimestamp % 60).toString().padStart(2, '0')}*\n\n`
+        ? `⏱️ *Context: Lecture Timestamp ${Math.floor(data.videoTimestamp / 60)}:${Math.floor(data.videoTimestamp % 60).toString().padStart(2, '0')}*\n\n`
         : '';
 
       const aiReply: ChatMessage = {
