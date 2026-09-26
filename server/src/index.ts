@@ -256,11 +256,31 @@ app.get('/api/telegram/documents', async (req, res) => {
 app.get('/api/telegram/download/:fileId', async (req, res) => {
   try {
     const fileId = req.params.fileId;
-    const url = await telegramService.getFileDownloadUrl(fileId);
     const docId = req.query.docId as string;
     if (docId) {
       await storage.incrementDocumentDownload(docId);
     }
+
+    // Handle pre-seeded sample documents
+    if (fileId.startsWith('sample-')) {
+      const title = fileId.includes('math')
+        ? 'RRB PO 2026: Speed Math & Simplification Tricks'
+        : fileId.includes('reasoning')
+        ? 'IBPS PO 2026: Reasoning Puzzles & Syllogism'
+        : 'Banking Awareness & Current Affairs Capsule';
+      const subject = fileId.includes('math')
+        ? 'Quantitative Aptitude'
+        : fileId.includes('reasoning')
+        ? 'Reasoning Ability'
+        : 'Current Affairs';
+      const pdfBuffer = generateSamplePdf(title, subject);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(title)}.pdf"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      return res.send(pdfBuffer);
+    }
+
+    const url = await telegramService.getFileDownloadUrl(fileId);
     res.redirect(url);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Could not retrieve file from Telegram storage' });
@@ -440,13 +460,6 @@ app.post('/api/ai/schedule-prompt', async (req, res) => {
   if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
   try {
     const result = await aiCoach.parseSchedulePrompt(prompt, userId);
-
-    io.emit('notification:toast', {
-      title: 'AI Coach Schedule Updated',
-      message: result.message,
-      type: 'success'
-    });
-
     res.json(result);
   } catch (err) {
     console.error('[ai] schedule-prompt failed:', err);

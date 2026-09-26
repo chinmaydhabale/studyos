@@ -45,6 +45,35 @@ export const WhiteboardCanvas: React.FC = () => {
   const sendCursorRef = useRef(sendWhiteboardCursor);
   sendCursorRef.current = sendWhiteboardCursor;
 
+  // Track canvas size to prevent coordinate squishing/stretching on resize
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const updateSize = () => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setCanvasSize({ width: Math.round(rect.width), height: Math.round(rect.height) });
+      }
+    };
+
+    updateSize();
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updateSize());
+      ro.observe(canvas);
+    }
+
+    window.addEventListener('resize', updateSize);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, []);
+
   // Feature-detect roundRect once; fall back to a manual rounded-rect path
   const supportsRoundRect = typeof CanvasRenderingContext2D !== 'undefined' &&
     typeof (CanvasRenderingContext2D.prototype as any).roundRect === 'function';
@@ -77,7 +106,7 @@ export const WhiteboardCanvas: React.FC = () => {
   };
 
   // Redraw the committed layer (grid + all elements) only when the element list,
-  // tool or style changes — never on every pointer move.
+  // tool, style, or canvas dimensions change — never on every pointer move.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -115,7 +144,7 @@ export const WhiteboardCanvas: React.FC = () => {
     whiteboardElements.forEach((el) => {
       renderElement(ctx, el);
     });
-  }, [whiteboardElements, currentTool, color, strokeWidth]);
+  }, [whiteboardElements, currentTool, color, strokeWidth, canvasSize]);
 
   // Render the in-progress stroke on the stacked overlay canvas, cleared per move
   useEffect(() => {
@@ -181,7 +210,7 @@ export const WhiteboardCanvas: React.FC = () => {
         }
       }
     }
-  }, [currentPoints, isDrawing, startPos, currentTool, color, strokeWidth]);
+  }, [currentPoints, isDrawing, startPos, currentTool, color, strokeWidth, canvasSize]);
 
   // Throttle cursor broadcasts to one per animation frame
   const queueCursorEmit = (x: number, y: number) => {

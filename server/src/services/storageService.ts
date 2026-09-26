@@ -530,14 +530,15 @@ export class StorageService {
     durationSeconds: number,
     dateKey?: string
   ): ActivitySession {
+    const safeDuration = Math.max(0, Math.floor(durationSeconds || 0));
     const session: ActivitySession = {
       id: `session-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       userId,
       userName,
       activityName,
       category,
-      durationSeconds,
-      startedAt: new Date(Date.now() - durationSeconds * 1000).toISOString(),
+      durationSeconds: safeDuration,
+      startedAt: new Date(Date.now() - safeDuration * 1000).toISOString(),
       endedAt: new Date().toISOString()
     };
 
@@ -551,19 +552,42 @@ export class StorageService {
     const user = this.users.get(userId);
     if (user) {
       if (category === 'study') {
-        const addedHours = +(durationSeconds / 3600).toFixed(2);
+        const addedHours = +(safeDuration / 3600).toFixed(2);
         user.totalStudyHours = +(user.totalStudyHours + addedHours).toFixed(2);
         
-        // 5 XP per minute of real studying
-        const earnedXp = Math.max(5, Math.floor(durationSeconds / 60) * 5);
+        // 5 XP per full minute of real studying (minimum 60s)
+        const earnedXp = safeDuration >= 60 ? Math.floor(safeDuration / 60) * 5 : 0;
         user.xp += earnedXp;
-        user.coins += Math.max(1, Math.floor(durationSeconds / 300));
+        // 1 coin per 5 minutes of study (minimum 300s)
+        const earnedCoins = safeDuration >= 300 ? Math.floor(safeDuration / 300) : 0;
+        user.coins += earnedCoins;
         user.level = Math.floor(user.xp / 400) + 1;
-        if (user.streak === 0) user.streak = 1;
 
         // Update Today's real calendar entry (per user)
         const todayDate = dateKey || localDateKey();
         let todayRecord = this.calendarHistory.find(r => r.date === todayDate && r.userId === userId);
+        const isFirstSessionToday = !todayRecord || todayRecord.hoursStudied === 0;
+
+        if (isFirstSessionToday) {
+          const d = dateKey ? new Date(dateKey + 'T12:00:00') : new Date();
+          const yesterday = new Date(d);
+          yesterday.setDate(yesterday.getDate() - 1);
+          const yesterdayDate = localDateKey(yesterday);
+
+          const studiedYesterday = this.calendarHistory.some(
+            r => r.userId === userId && r.date === yesterdayDate && r.hoursStudied > 0
+          ) || this.activitySessions.some(
+            s => s.userId === userId && s.category === 'study' && s.startedAt && localDateKey(new Date(s.startedAt)) === yesterdayDate
+          );
+
+          if (studiedYesterday) {
+            user.streak = (user.streak || 0) + 1;
+          } else {
+            user.streak = 1;
+          }
+          user.bestStreak = Math.max(user.bestStreak || 0, user.streak);
+        }
+
         if (!todayRecord) {
           todayRecord = {
             date: todayDate,

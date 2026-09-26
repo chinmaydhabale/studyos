@@ -11,10 +11,12 @@ import {
 } from 'lucide-react';
 import { CalendarDayRecord, StudyTask } from '../../types.js';
 import { useSocket } from '../../context/SocketContext.js';
+import { useStudy } from '../../context/StudyContext.js';
 import { API_BASE_URL } from '../../config.js';
 
 export const StudyCalendarView: React.FC = () => {
   const { addToast, currentUser } = useSocket();
+  const { addXp } = useStudy();
   const [history, setHistory] = useState<CalendarDayRecord[]>([]);
   const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [selectedDay, setSelectedDay] = useState<CalendarDayRecord | null>(null);
@@ -128,6 +130,9 @@ export const StudyCalendarView: React.FC = () => {
         throw new Error('Unexpected task response');
       }
       setTasks(prev => prev.map(t => t.id === id ? updated : t));
+      if (updated.completed) {
+        addXp(50, 'Completed Study Task');
+      }
       addToast('Task Status Updated', `Task marked as ${updated.completed ? 'completed (+50 XP)' : 'pending'}.`, 'success');
     } catch (e: any) {
       addToast('Task Update Failed', e?.message || 'Could not update the task. Please try again.', 'alert');

@@ -163,10 +163,23 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       socket.leave(`voice_${rId}`);
 
       const peers = activeRoomPeers.get(rId) || [];
+      const departingPeer = peers.find(p => p.socketId === socket.id || (data.userId && p.userId === data.userId));
       const remaining = peers.filter(p => p.socketId !== socket.id && (!data.userId || p.userId !== data.userId));
       activeRoomPeers.set(rId, remaining);
       io.to(rId).emit('room:peers', remaining);
       (socket as any).currentStudyRoom = null;
+
+      // Clean up orphaned PDF presentation if presenter left
+      const currentPres = activePdfPresentations.get(rId);
+      if (currentPres && departingPeer && currentPres.presenterId === departingPeer.userId) {
+        activePdfPresentations.delete(rId);
+        io.to(rId).emit('pdf:presentation_state', { isActive: false, roomId: rId });
+        io.to(rId).emit('notification:toast', {
+          title: 'PDF Co-Study Ended',
+          message: `${departingPeer.name} left the room. PDF presentation ended.`,
+          type: 'info'
+        });
+      }
     }
   });
 
@@ -360,9 +373,22 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Disconnect
   socket.on('disconnect', () => {
     activeRoomPeers.forEach((peers, roomId) => {
+      const departingPeer = peers.find(p => p.socketId === socket.id);
       const remaining = peers.filter(p => p.socketId !== socket.id);
       activeRoomPeers.set(roomId, remaining);
       io.to(roomId).emit('room:peers', remaining);
+
+      // Clean up orphaned PDF presentation if presenter disconnected
+      const currentPres = activePdfPresentations.get(roomId);
+      if (currentPres && departingPeer && currentPres.presenterId === departingPeer.userId) {
+        activePdfPresentations.delete(roomId);
+        io.to(roomId).emit('pdf:presentation_state', { isActive: false, roomId });
+        io.to(roomId).emit('notification:toast', {
+          title: 'PDF Co-Study Ended',
+          message: `${departingPeer.name} disconnected. PDF presentation ended.`,
+          type: 'info'
+        });
+      }
     });
   });
 }

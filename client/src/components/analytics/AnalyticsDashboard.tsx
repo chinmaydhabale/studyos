@@ -29,7 +29,9 @@ export const AnalyticsDashboard: React.FC = () => {
       .catch((err) => console.error(err));
   }, [currentUser.id]);
 
-  const todayHoursFormatted = ((totalFocusSecondsToday || 0) / 3600).toFixed(1);
+  const localFocusHours = (totalFocusSecondsToday || 0) / 3600;
+  const serverTodayHours = summary?.todayHours ?? 0;
+  const todayHoursFormatted = Math.max(serverTodayHours, +localFocusHours.toFixed(1)).toFixed(1);
 
   // Real totals only — the API returns zeros for a brand-new account, so no
   // placeholder values may be substituted here.

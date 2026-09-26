@@ -657,68 +657,82 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               </button>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Card {currentCardIndex + 1} of {flashcards.length}</span>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 font-mono">
-                {flashcards[currentCardIndex]?.subject}
-              </span>
-            </div>
-
-            {/* 3D Flip Card */}
-            <div
-              onClick={() => setIsFlipped(!isFlipped)}
-              className="w-full h-72 rounded-3xl bg-gradient-to-br from-slate-900 to-indigo-950/60 border border-white/15 p-6 flex flex-col items-center justify-center text-center cursor-pointer shadow-2xl relative select-none hover:border-indigo-400/50 transition-all"
-            >
-              <span className="absolute top-4 left-4 text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
-                {isFlipped ? 'Answer (Click to flip)' : 'Question (Click to reveal)'}
-              </span>
-
-              <p className="text-base sm:text-lg font-semibold text-white px-4 leading-relaxed">
-                {isFlipped ? flashcards[currentCardIndex]?.back : flashcards[currentCardIndex]?.front}
-              </p>
-
-              <span className="absolute bottom-4 text-xs text-slate-500">
-                Click anywhere to flip ⟳
-              </span>
-            </div>
-
-            {/* Spaced Repetition Rating Buttons */}
-            {isFlipped && (
-              <div className="grid grid-cols-3 gap-2 animate-in fade-in duration-200">
-                <button
-                  onClick={() => {
-                    setIsFlipped(false);
-                    setCurrentCardIndex((i) => (i + 1) % flashcards.length);
-                    addToast('Review Scheduled', 'Marked Hard: Will repeat in 10 minutes.', 'info');
-                  }}
-                  className="py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs transition-colors"
-                >
-                  🔴 Hard (10m)
-                </button>
-                <button
-                  onClick={() => {
-                    setIsFlipped(false);
-                    setCurrentCardIndex((i) => (i + 1) % flashcards.length);
-                    addXp(20);
-                    addToast('Review Scheduled', 'Marked Good: Will repeat tomorrow.', 'success');
-                  }}
-                  className="py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-semibold text-xs transition-colors"
-                >
-                  🟡 Good (1 Day)
-                </button>
-                <button
-                  onClick={() => {
-                    setIsFlipped(false);
-                    setCurrentCardIndex((i) => (i + 1) % flashcards.length);
-                    addXp(40);
-                    triggerCelebration();
-                    addToast('Mastered Card', 'Marked Easy: Will repeat in 4 days.', 'success');
-                  }}
-                  className="py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold text-xs transition-colors"
-                >
-                  🟢 Easy (4 Days)
-                </button>
+            {flashcards.length === 0 ? (
+              <div className="p-8 rounded-3xl bg-slate-900 border border-white/10 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto text-xl">
+                  🗂️
+                </div>
+                <h4 className="text-sm font-bold text-white">No Flashcards Yet</h4>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  Type a subject or topic above (e.g. &quot;Indian Constitution Articles&quot; or &quot;Time &amp; Distance Formulas&quot;) and click <b>Generate with AI</b> to create your interactive flashcard deck.
+                </p>
               </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Card {Math.min(currentCardIndex + 1, flashcards.length)} of {flashcards.length}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 font-mono">
+                    {flashcards[currentCardIndex]?.subject || 'General'}
+                  </span>
+                </div>
+
+                {/* 3D Flip Card */}
+                <div
+                  onClick={() => setIsFlipped(!isFlipped)}
+                  className="w-full h-72 rounded-3xl bg-gradient-to-br from-slate-900 to-indigo-950/60 border border-white/15 p-6 flex flex-col items-center justify-center text-center cursor-pointer shadow-2xl relative select-none hover:border-indigo-400/50 transition-all"
+                >
+                  <span className="absolute top-4 left-4 text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
+                    {isFlipped ? 'Answer (Click to flip)' : 'Question (Click to reveal)'}
+                  </span>
+
+                  <p className="text-base sm:text-lg font-semibold text-white px-4 leading-relaxed">
+                    {isFlipped ? flashcards[currentCardIndex]?.back : flashcards[currentCardIndex]?.front}
+                  </p>
+
+                  <span className="absolute bottom-4 text-xs text-slate-500">
+                    Click anywhere to flip ⟳
+                  </span>
+                </div>
+
+                {/* Spaced Repetition Rating Buttons */}
+                {isFlipped && (
+                  <div className="grid grid-cols-3 gap-2 animate-in fade-in duration-200">
+                    <button
+                      onClick={() => {
+                        setIsFlipped(false);
+                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
+                        addToast('Review Scheduled', 'Marked Hard: Will repeat in 10 minutes.', 'info');
+                      }}
+                      className="py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs transition-colors"
+                    >
+                      🔴 Hard (10m)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsFlipped(false);
+                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
+                        addXp(20);
+                        addToast('Review Scheduled', 'Marked Good: Will repeat tomorrow.', 'success');
+                      }}
+                      className="py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-semibold text-xs transition-colors"
+                    >
+                      🟡 Good (1 Day)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsFlipped(false);
+                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
+                        addXp(40);
+                        triggerCelebration();
+                        addToast('Mastered Card', 'Marked Easy: Will repeat in 4 days.', 'success');
+                      }}
+                      className="py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold text-xs transition-colors"
+                    >
+                      🟢 Easy (4 Days)
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
           </div>

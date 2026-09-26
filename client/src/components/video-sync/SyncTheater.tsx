@@ -160,10 +160,14 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     if (playerReady && playerRef.current && videoState.videoId) {
       const currentVideoUrl = playerRef.current.getVideoUrl?.() || '';
       if (!currentVideoUrl.includes(videoState.videoId)) {
-        playerRef.current.loadVideoById(videoState.videoId, videoState.currentTime || 0);
+        if (videoState.isPlaying) {
+          playerRef.current.loadVideoById(videoState.videoId, videoState.currentTime || 0);
+        } else {
+          playerRef.current.cueVideoById(videoState.videoId, videoState.currentTime || 0);
+        }
       }
     }
-  }, [videoState.videoId, playerReady]);
+  }, [videoState.videoId, playerReady, videoState.isPlaying]);
 
   // Synchronize remote play / pause / seek from peers
   useEffect(() => {
