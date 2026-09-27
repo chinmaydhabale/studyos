@@ -577,17 +577,17 @@ export class AICoachService {
   // 4. Flashcard generation
   // ---------------------------------------------------------------------------
 
-  public async generateFlashcards(topic: string, count = 6): Promise<Flashcard[]> {
-    const wanted = this.clampInt(count, 1, 15, 6);
+  public async generateFlashcards(topic: string, count = 12): Promise<Flashcard[]> {
+    const wanted = this.clampInt(count, 1, 25, 12);
 
     const result = await gemini.generateJson<{
       cards?: Array<{ front?: string; back?: string; masteryLevel?: string }>;
     }>({
-      systemInstruction: `${EXAM_COACH_PERSONA}\nWrite spaced-repetition flashcards. Respond with JSON only.`,
+      systemInstruction: `${EXAM_COACH_PERSONA}\nWrite spaced-repetition flashcards covering core concepts, formulas, definitions, exceptions, and exam tips. Respond with JSON only.`,
       prompt:
         `Topic: "${topic}"\n\n` +
-        `Create exactly ${wanted} flashcards. "front" is a single focused question or prompt, ` +
-        '"back" is a compact answer (max 2 sentences) that is easy to self-check. ' +
+        `Create exactly ${wanted} high-yield, comprehensive flashcards. "front" is a single focused question, scenario, or prompt, ` +
+        '"back" is an accurate, thorough yet concise answer (2-3 sentences) that is easy to self-check. ' +
         'masteryLevel must be one of learning, reviewing, mastered — use "learning" for brand-new cards.',
       schema: {
         type: 'OBJECT',
@@ -607,9 +607,9 @@ export class AICoachService {
         },
         required: ['cards']
       },
-      temperature: 0.8,
-      maxOutputTokens: 3072,
-      tier: 'lite'
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+      tier: 'flashcards'
     });
 
     const cards: Flashcard[] = [];
@@ -1104,13 +1104,13 @@ export class AICoachService {
     }
 
     let languageDirective =
-      'Language: HINGLISH. Write the podcast dialogue in conversational, lively Hinglish (Hindi + English mix in Roman script, e.g. "Arey Sam, yeh concept exam me hamesha poochha jata hai...", "Haan Alex! Par agar hum basic formula yaad rakhein toh easy ho jata hai..."). Alex and Sam sound like two brilliant, friendly Indian study partners.';
+      'Language: HINGLISH. Write the podcast dialogue in conversational, lively Hinglish (Hindi + English mix in Roman script, e.g. "Arey Sam, yeh concept exam me hamesha poochha jata hai...", "Haan Alex! Par agar hum basic formula yaad rakhein toh easy ho jata hai..."). Alex and Sam sound like two brilliant, friendly Indian study partners. Use simple, standard Romanized Hindi words so that Indian voice synthesizers pronounce every word clearly.';
     if (language === 'hindi') {
       languageDirective =
-        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in natural, clear Hindi using Devanagari script (e.g. "नमस्ते सैम! आज हम इस विषय पर चर्चा करेंगे...", "बिल्कुल एलेक्स! परीक्षा की दृष्टि से यह अत्यंत महत्वपूर्ण है..."). Alex and Sam speak in pure, engaging conversational Hindi.';
+        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in natural, clear, rich Hindi using Devanagari script (e.g. "नमस्ते सैम! आज हम इस पूरे अध्याय की गहराई में जाएंगे...", "बिल्कुल एलेक्स! अगर विद्यार्थी इसके हर पहलू को समझ लें, तो परीक्षा में एक भी अंक नहीं कटेगा..."). Alex and Sam speak in pure, engaging, grammatically correct Devanagari Hindi so that Hindi speech synthesizers pronounce every word perfectly.';
     } else if (language === 'english') {
       languageDirective =
-        'Language: ENGLISH. Write the podcast dialogue in natural, engaging conversational English.';
+        'Language: ENGLISH. Write the podcast dialogue in natural, engaging, deeply analytical conversational English with clear pedagogical pacing.';
     }
 
     const result = await gemini.generateJson<{
@@ -1121,15 +1121,19 @@ export class AICoachService {
     }>({
       tier: 'heavy',
       systemInstruction:
-        'You produce NotebookLM Audio Overviews. Two expert co-hosts, Alex (engaging, curious, relatable) ' +
-        'and Sam (analytical, structured, deep thinker) have a lively conversational deep dive into the source material. ' +
-        'They banter naturally, react dynamically ("Wait, really?", "Spot on, Alex!", "Arey bilkul!"), break down difficult concepts with intuitive analogies, ' +
-        'and tie ideas to exam success. Keep spoken sentences natural for speech synthesis. Avoid markdown symbols in text. Respond with JSON only.\n' +
+        'You produce NotebookLM Deep Dive Audio Overviews. Two expert co-hosts, Alex (engaging, curious, relatable co-host) ' +
+        'and Sam (analytical, structured, senior professor/tutor) have an in-depth, thorough, highly educational deep dive into the source material. ' +
+        'They do NOT rush or skim the surface. They explain the foundational "why" and "how", unpack complex formulas or rules, give vivid real-world analogies, ' +
+        'dissect common student traps and exam pitfalls, and give clear, memorable takeaways. ' +
+        'They banter naturally and respectfully ("Wait Sam, can you break that down further?", "Arey bilkul Alex, dekho asal me kya hota hai..."). ' +
+        'Keep dialogue rich, detailed, and completely clear (each turn should have 3 to 6 detailed sentences). ' +
+        'Avoid markdown symbols (*, #, _, `) in text since this will be read aloud by text-to-speech. Respond with JSON only.\n' +
         languageDirective,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Create a full 10-16 turn audio dialogue between Alex and Sam unpacking this document in the specified language. ' +
+        'Create an extensive, highly detailed 16-24 turn audio dialogue between Alex and Sam unpacking every critical nuance of this document in the specified language. ' +
+        'Ensure the dialogue thoroughly explains all concepts, definitions, derivations, real-world examples, and exam pitfalls from the source. ' +
         'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
       schema: {
         type: 'OBJECT',
@@ -1153,7 +1157,7 @@ export class AICoachService {
         required: ['title', 'tagline', 'durationEstimate', 'turns']
       },
       temperature: 0.7,
-      maxOutputTokens: 4096
+      maxOutputTokens: 8192
     });
 
     if (result && Array.isArray(result.turns) && result.turns.length >= 4) {
@@ -1163,7 +1167,7 @@ export class AICoachService {
           const speaker: 'Alex' | 'Sam' = speakerRaw.includes('sam') ? 'Sam' : 'Alex';
           return {
             speaker,
-            text: this.cleanString(t?.text, 800) || '',
+            text: this.cleanString(t?.text, 2000) || '',
             emotion: this.cleanString(t?.emotion, 50) || 'conversational'
           };
         })
@@ -1277,11 +1281,11 @@ export class AICoachService {
         explanation?: string;
       }>;
     }>({
-      systemInstruction: `${EXAM_COACH_PERSONA}\nGenerate high-yield active recall flashcards (5-8 items) and multiple-choice questions (3-5 items) strictly grounded in the source document. Respond with JSON only.`,
+      systemInstruction: `${EXAM_COACH_PERSONA}\nGenerate high-yield active recall flashcards (12-20 items) and multiple-choice questions (4-6 items) strictly grounded in the source document. Flashcards should thoroughly test key definitions, formulas, exceptions, steps, and facts. Respond with JSON only.`,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Generate flashcards (front: focused question, back: concise answer) and 4-option MCQs (correctAnswerIndex 0-3, plus explanation).',
+        'Generate an extensive set of 12-20 flashcards (front: focused question or prompt, back: crisp, self-contained answer) and 4-6 MCQs (correctAnswerIndex 0-3, plus explanation).',
       schema: {
         type: 'OBJECT',
         properties: {
@@ -1313,8 +1317,8 @@ export class AICoachService {
         required: ['flashcards', 'quiz']
       },
       temperature: 0.6,
-      maxOutputTokens: 3500,
-      tier: 'balanced'
+      maxOutputTokens: 6144,
+      tier: 'flashcards'
     });
 
     const flashcards: Flashcard[] = [];

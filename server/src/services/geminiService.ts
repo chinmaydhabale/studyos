@@ -12,10 +12,11 @@ const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models
 // Primary model is set to gemini-3.8-flash for high quality, fast inference.
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
-export type GeminiModelTier = 'heavy' | 'lite' | 'balanced';
+export type GeminiModelTier = 'heavy' | 'lite' | 'balanced' | 'flashcards';
 
 export const GEMINI_MODELS = {
   heavy: 'gemini-3.8-flash',
+  flashcards: 'gemini-3.7-flash', // Used for large-batch, high-yield flashcard generation
   balanced: 'gemini-3.6-flash',
   lite: 'gemini-3.5-flash-lite'
 };
@@ -79,6 +80,8 @@ export class GeminiService {
     let modelsToTry: string[] = [];
     if (customModel) {
       modelsToTry = [customModel];
+    } else if (tier === 'flashcards') {
+      modelsToTry = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
     } else if (tier === 'lite') {
       modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
     } else if (tier === 'balanced') {

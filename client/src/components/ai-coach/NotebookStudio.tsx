@@ -27,12 +27,19 @@ import {
   ChevronUp,
   Plus,
   Languages,
-  Bookmark
+  Bookmark,
+  Sliders,
+  Settings2,
+  FileCheck,
+  Loader2,
+  FileUp,
+  Headphones
 } from 'lucide-react';
 import { API_BASE_URL } from '../../config.js';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
 import { Flashcard, QuizQuestion } from '../../types.js';
+import { pdfjsLib, extractPageText } from '../../lib/pdfjs.js';
 
 interface AudioTurn {
   speaker: 'Alex' | 'Sam';
@@ -186,9 +193,56 @@ export const NotebookStudio: React.FC = () => {
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<{ [key: string]: number }>({});
   const [showQuizResult, setShowQuizResult] = useState(false);
 
-  // Voices list for Web Speech API
+  // Voices list for Web Speech API & Customization
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+
+  // PDF Extraction States
+  const [isExtractingPdf, setIsExtractingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<string>('');
+  const [pdfInfo, setPdfInfo] = useState<{ fileName: string; pageCount: number } | null>(null);
+
+  // Speaker Voice Selection & Settings
+  const [alexVoiceName, setAlexVoiceName] = useState<string>(() => {
+    return localStorage.getItem('studyos_voice_alex') || '';
+  });
+  const [samVoiceName, setSamVoiceName] = useState<string>(() => {
+    return localStorage.getItem('studyos_voice_sam') || '';
+  });
+  const [hinglishEngine, setHinglishEngine] = useState<'hi-IN' | 'en-IN'>(() => {
+    return (localStorage.getItem('studyos_hinglish_engine') as 'hi-IN' | 'en-IN') || 'hi-IN';
+  });
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [testingSpeaker, setTestingSpeaker] = useState<'Alex' | 'Sam' | null>(null);
+
+  // Categorize voices for Indian / Hindi friendliness
+  const isHindiVoice = (v: SpeechSynthesisVoice) => {
+    const lang = (v.lang || '').toLowerCase();
+    const name = (v.name || '').toLowerCase();
+    return (
+      lang.startsWith('hi') ||
+      lang.includes('hindi') ||
+      name.includes('hindi') ||
+      name.includes('swara') ||
+      name.includes('madhur') ||
+      name.includes('hemant') ||
+      name.includes('kalpana') ||
+      name.includes('हिन्दी')
+    );
+  };
+
+  const isIndianEnglishVoice = (v: SpeechSynthesisVoice) => {
+    const lang = (v.lang || '').toLowerCase();
+    const name = (v.name || '').toLowerCase();
+    return (
+      (lang.includes('in') || name.includes('india') || name.includes('neerja') || name.includes('prabhat') || name.includes('ravi') || name.includes('heera')) &&
+      !isHindiVoice(v)
+    );
+  };
+
+  const hindiVoices = voices.filter(isHindiVoice);
+  const indianVoices = voices.filter(isIndianEnglishVoice);
+  const otherVoices = voices.filter(v => !isHindiVoice(v) && !isIndianEnglishVoice(v));
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -207,6 +261,98 @@ export const NotebookStudio: React.FC = () => {
     };
   }, []);
 
+  // Auto-select best voices once voices are loaded if not manually set
+  useEffect(() => {
+    if (!voices.length) return;
+
+    if (!alexVoiceName || !voices.some(v => v.name === alexVoiceName)) {
+      const bestAlex = hindiVoices[0] || indianVoices[0] || voices[0];
+      if (bestAlex) {
+        setAlexVoiceName(bestAlex.name);
+        localStorage.setItem('studyos_voice_alex', bestAlex.name);
+      }
+    }
+
+    if (!samVoiceName || !voices.some(v => v.name === samVoiceName)) {
+      const bestSam =
+        (hindiVoices.length > 1 ? hindiVoices[1] : null) ||
+        indianVoices.find(v => v.name !== alexVoiceName) ||
+        indianVoices[0] ||
+        (voices.length > 1 ? voices[1] : voices[0]);
+      if (bestSam) {
+        setSamVoiceName(bestSam.name);
+        localStorage.setItem('studyos_voice_sam', bestSam.name);
+      }
+    }
+  }, [voices, hindiVoices.length, indianVoices.length]);
+
+  const handleSelectAlexVoice = (name: string) => {
+    setAlexVoiceName(name);
+    localStorage.setItem('studyos_voice_alex', name);
+  };
+
+  const handleSelectSamVoice = (name: string) => {
+    setSamVoiceName(name);
+    localStorage.setItem('studyos_voice_sam', name);
+  };
+
+  const handleSelectHinglishEngine = (engine: 'hi-IN' | 'en-IN') => {
+    setHinglishEngine(engine);
+    localStorage.setItem('studyos_hinglish_engine', engine);
+  };
+
+  // Test voice sample
+  const handleTestVoice = (speaker: 'Alex' | 'Sam') => {
+    if (!synthRef.current) return;
+    synthRef.current.cancel();
+
+    const voiceName = speaker === 'Alex' ? alexVoiceName : samVoiceName;
+    const voice = voices.find(v => v.name === voiceName);
+    const isHindi = voice ? isHindiVoice(voice) : audioLanguage === 'hindi';
+
+    let testText = '';
+    if (speaker === 'Alex') {
+      testText = isHindi || audioLanguage !== 'english'
+        ? 'नमस्ते! मैं एलेक्स हूँ। हम दोनों मिलकर हर कठिन विषय को बहुत आसान और रोचक बनाएंगे!'
+        : 'Hey there! I am Alex. Ready to break down this topic into simple, memorable concepts!';
+    } else {
+      testText = isHindi || audioLanguage !== 'english'
+        ? 'नमस्ते! मैं सैम हूँ। परीक्षा में सफलता के लिए सटीक सूत्र और नियमों को समझना बहुत आवश्यक है।'
+        : 'Hello! I am Sam. Let us analyze every formula, mechanism, and exam pitfall thoroughly.';
+    }
+
+    const utterance = new SpeechSynthesisUtterance(testText);
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = isHindi ? 'hi-IN' : (voice.lang || (audioLanguage === 'hindi' ? 'hi-IN' : 'en-IN'));
+    } else {
+      utterance.lang = audioLanguage === 'hindi' ? 'hi-IN' : 'en-IN';
+    }
+
+    utterance.rate = playbackRate;
+    utterance.pitch = speaker === 'Alex' ? 1.15 : 0.88;
+
+    setTestingSpeaker(speaker);
+    utterance.onend = () => setTestingSpeaker(null);
+    utterance.onerror = () => setTestingSpeaker(null);
+
+    synthRef.current.speak(utterance);
+  };
+
+  // Clean Markdown & formulas for spoken speech synthesis
+  const cleanTurnTextForSpeech = (text: string): string => {
+    return text
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/#{1,6}\s+/g, '')
+      .replace(/[-*+]\s+/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/\\(?:frac|delta|eta|alpha|beta|theta|pi)/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   // Word & Character count
   const wordCount = sourceText.trim() ? sourceText.trim().split(/\s+/).length : 0;
   const charCount = sourceText.length;
@@ -215,7 +361,65 @@ export const NotebookStudio: React.FC = () => {
   const handleLoadSample = (sample: (typeof SAMPLE_SOURCES)[0]) => {
     setDocTitle(sample.title);
     setSourceText(sample.content);
+    setPdfInfo(null);
     addToast('Source Loaded', `Loaded "${sample.title}"`, 'info');
+  };
+
+  // Handle PDF File Upload & Text Extraction
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+      addToast('Invalid File', 'Please select a valid PDF file.', 'alert');
+      return;
+    }
+
+    setIsExtractingPdf(true);
+    setPdfProgress('Reading PDF file structure...');
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+      const pdf = await loadingTask.promise;
+      const totalPages = pdf.numPages;
+
+      let extractedFullText = '';
+      const pagesToProcess = Math.min(totalPages, 50);
+
+      for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+        setPdfProgress(`Extracting page ${pageNum} of ${pagesToProcess}...`);
+        const pageText = await extractPageText(pdf, pageNum);
+        if (pageText.trim()) {
+          extractedFullText += `--- Page ${pageNum} ---\n${pageText.trim()}\n\n`;
+        }
+      }
+
+      if (!extractedFullText.trim()) {
+        throw new Error('No selectable text found in this PDF. It might contain scanned images or protected text.');
+      }
+
+      const cleanDocTitle = file.name.replace(/\.pdf$/i, '').trim();
+      setDocTitle(cleanDocTitle);
+      setSourceText(extractedFullText.trim());
+      setPdfInfo({ fileName: file.name, pageCount: totalPages });
+      setIsSourceCollapsed(false);
+
+      const words = extractedFullText.trim().split(/\s+/).length;
+      addToast(
+        'PDF Successfully Loaded!',
+        `Extracted ${pagesToProcess} page(s), ${words.toLocaleString()} words from "${file.name}"`,
+        'success'
+      );
+      addXp(35, 'Imported PDF Document into NotebookLM');
+    } catch (err: any) {
+      console.error('PDF extraction error:', err);
+      addToast('PDF Error', err?.message || 'Failed to read PDF document', 'alert');
+    } finally {
+      setIsExtractingPdf(false);
+      setPdfProgress('');
+      e.target.value = '';
+    }
   };
 
   // Handle Text File Upload
@@ -228,6 +432,7 @@ export const NotebookStudio: React.FC = () => {
       if (text) {
         setSourceText(text);
         setDocTitle(file.name.replace(/\.[^/.]+$/, ''));
+        setPdfInfo(null);
         addToast('File Imported', `Loaded ${file.name}`, 'success');
       }
     };
@@ -350,36 +555,54 @@ export const NotebookStudio: React.FC = () => {
 
     synthRef.current.cancel();
     const turn = currentTurns[turnIndex];
-    const utterance = new SpeechSynthesisUtterance(turn.text);
+    const cleanedText = cleanTurnTextForSpeech(turn.text);
+    const utterance = new SpeechSynthesisUtterance(cleanedText);
     utterance.rate = playbackRate;
 
     const isAlex = turn.speaker === 'Alex';
     const activeLang = audioOverview?.language || audioLanguage;
 
+    // Determine voice to use
+    const targetVoiceName = isAlex ? alexVoiceName : samVoiceName;
+    let chosenVoice = voices.find(v => v.name === targetVoiceName);
+
+    if (!chosenVoice) {
+      if (activeLang === 'hindi') {
+        chosenVoice = isAlex
+          ? (hindiVoices[0] || indianVoices[0] || voices[0])
+          : (hindiVoices[1] || hindiVoices[0] || indianVoices[0] || voices[0]);
+      } else if (activeLang === 'hinglish') {
+        if (hinglishEngine === 'hi-IN' && hindiVoices.length > 0) {
+          chosenVoice = isAlex
+            ? hindiVoices[0]
+            : (hindiVoices[1] || hindiVoices[0]);
+        } else {
+          chosenVoice = isAlex
+            ? (indianVoices[0] || hindiVoices[0] || voices[0])
+            : (indianVoices[1] || indianVoices[0] || hindiVoices[0] || voices[0]);
+        }
+      } else {
+        chosenVoice = isAlex
+          ? (otherVoices[0] || voices[0])
+          : (otherVoices[1] || otherVoices[0] || voices[0]);
+      }
+    }
+
+    if (chosenVoice) {
+      utterance.voice = chosenVoice;
+    }
+
+    // Set utterance language
     if (activeLang === 'hindi') {
       utterance.lang = 'hi-IN';
-      const hindiVoices = voices.filter(v => v.lang && (v.lang.startsWith('hi') || v.lang.includes('Hindi')));
-      if (hindiVoices.length >= 2) {
-        utterance.voice = isAlex ? hindiVoices[0] : hindiVoices[1];
-      } else if (hindiVoices.length === 1) {
-        utterance.voice = hindiVoices[0];
-      }
     } else if (activeLang === 'hinglish') {
-      utterance.lang = 'en-IN';
-      const indianVoices = voices.filter(v => v.lang && (v.lang.includes('IN') || v.lang.startsWith('hi')));
-      if (indianVoices.length >= 2) {
-        utterance.voice = isAlex ? indianVoices[0] : indianVoices[1];
-      } else if (indianVoices.length === 1) {
-        utterance.voice = indianVoices[0];
+      if (chosenVoice && isHindiVoice(chosenVoice)) {
+        utterance.lang = 'hi-IN';
+      } else {
+        utterance.lang = hinglishEngine;
       }
     } else {
-      utterance.lang = 'en-US';
-      const englishVoices = voices.filter(v => v.lang && v.lang.startsWith('en'));
-      if (englishVoices.length >= 2) {
-        utterance.voice = isAlex ? englishVoices[0] : englishVoices[1];
-      } else if (englishVoices.length === 1) {
-        utterance.voice = englishVoices[0];
-      }
+      utterance.lang = chosenVoice?.lang || 'en-US';
     }
 
     if (isAlex) {
@@ -626,7 +849,15 @@ export const NotebookStudio: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-start md:self-center">
+          <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+            {/* PDF Upload Button */}
+            <label className="cursor-pointer px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold flex items-center gap-2 border border-violet-400/30 transition-all shadow-md shadow-violet-900/30">
+              {isExtractingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" /> : <FileText className="w-3.5 h-3.5 text-violet-200" />}
+              <span>{isExtractingPdf ? 'Extracting PDF...' : '📄 Upload PDF Notes / Book'}</span>
+              <input type="file" accept=".pdf,application/pdf" onChange={handlePdfUpload} disabled={isExtractingPdf} className="hidden" />
+            </label>
+
+            {/* Text / Markdown Upload */}
             <label className="cursor-pointer px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center gap-2 border border-white/15 transition-all shadow-sm">
               <Upload className="w-3.5 h-3.5 text-violet-300" />
               <span>Import .txt/.md</span>
@@ -639,12 +870,24 @@ export const NotebookStudio: React.FC = () => {
       {/* SOURCE DOCUMENT ACCORDION / INPUT */}
       <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <BookOpen className="w-4 h-4 text-violet-400" />
             <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Active Source Document</span>
             <span className="text-[11px] px-2 py-0.5 rounded bg-white/5 text-slate-400 font-mono">
               {wordCount.toLocaleString()} words · {charCount.toLocaleString()} chars
             </span>
+            {pdfInfo && (
+              <span className="text-[11px] px-2.5 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/30 font-semibold flex items-center gap-1">
+                <FileCheck className="w-3.5 h-3.5 text-violet-400" />
+                <span>PDF: {pdfInfo.pageCount} Pages</span>
+              </span>
+            )}
+            {isExtractingPdf && (
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium flex items-center gap-1.5 animate-pulse">
+                <Loader2 className="w-3 h-3 animate-spin text-amber-300" />
+                <span>{pdfProgress}</span>
+              </span>
+            )}
           </div>
 
           <button
@@ -755,7 +998,7 @@ export const NotebookStudio: React.FC = () => {
               </p>
 
               {/* Language Selector */}
-              <div className="flex items-center gap-2 mt-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
                 <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
                   <Languages className="w-3.5 h-3.5 text-violet-400" />
                   Podcast Language:
@@ -777,7 +1020,198 @@ export const NotebookStudio: React.FC = () => {
                     {l.label}
                   </button>
                 ))}
+
+                <button
+                  onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+                  className={`ml-auto px-2.5 py-1 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-all ${
+                    showVoiceSettings
+                      ? 'bg-violet-500/20 text-violet-200 border-violet-400'
+                      : 'bg-white/5 text-slate-300 border-white/10 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Headphones className="w-3.5 h-3.5 text-violet-400" />
+                  <span>Speaker Voices</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/10 text-slate-300">
+                    {hindiVoices.length > 0 ? `${hindiVoices.length} Hindi Voices` : 'Setup'}
+                  </span>
+                </button>
               </div>
+
+              {/* Collapsible Speaker Voice Settings Panel */}
+              {showVoiceSettings && (
+                <div className="mt-4 p-4 rounded-xl bg-slate-950/80 border border-violet-500/30 space-y-4 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Settings2 className="w-4 h-4 text-violet-400" />
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">
+                        Speaker Voices & Hindi / Hinglish Setup
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400">
+                      {voices.length} system voices detected
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Alex Voice Selector */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <label className="font-bold text-violet-300 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-violet-400" />
+                          <span>Host 1 (Alex - Energetic / Curious):</span>
+                        </label>
+                        <button
+                          onClick={() => handleTestVoice('Alex')}
+                          disabled={testingSpeaker !== null}
+                          className="px-2 py-0.5 rounded bg-violet-600/30 hover:bg-violet-600/50 text-violet-200 text-[10px] font-semibold flex items-center gap-1 border border-violet-500/30"
+                        >
+                          {testingSpeaker === 'Alex' ? (
+                            <>
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              <span>Speaking...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-2.5 h-2.5 text-amber-300" />
+                              <span>Test Voice</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <select
+                        value={alexVoiceName}
+                        onChange={(e) => handleSelectAlexVoice(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-violet-400"
+                      >
+                        {hindiVoices.length > 0 && (
+                          <optgroup label="🇮🇳 Native Hindi Voices (Best for Hindi / Hinglish)">
+                            {hindiVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {indianVoices.length > 0 && (
+                          <optgroup label="🇮🇳 Indian English Voices">
+                            {indianVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {otherVoices.length > 0 && (
+                          <optgroup label="🌐 Other System Voices">
+                            {otherVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+
+                    {/* Sam Voice Selector */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <label className="font-bold text-cyan-300 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                          <span>Host 2 (Sam - Analytical / Deep):</span>
+                        </label>
+                        <button
+                          onClick={() => handleTestVoice('Sam')}
+                          disabled={testingSpeaker !== null}
+                          className="px-2 py-0.5 rounded bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 text-[10px] font-semibold flex items-center gap-1 border border-cyan-500/30"
+                        >
+                          {testingSpeaker === 'Sam' ? (
+                            <>
+                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              <span>Speaking...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-2.5 h-2.5 text-amber-300" />
+                              <span>Test Voice</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <select
+                        value={samVoiceName}
+                        onChange={(e) => handleSelectSamVoice(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        {hindiVoices.length > 0 && (
+                          <optgroup label="🇮🇳 Native Hindi Voices (Best for Hindi / Hinglish)">
+                            {hindiVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {indianVoices.length > 0 && (
+                          <optgroup label="🇮🇳 Indian English Voices">
+                            {indianVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {otherVoices.length > 0 && (
+                          <optgroup label="🌐 Other System Voices">
+                            {otherVoices.map((v, i) => (
+                              <option key={i} value={v.name}>
+                                {v.name} ({v.lang})
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Hinglish Engine Mode Selector */}
+                  <div className="pt-2 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div>
+                      <span className="font-semibold text-slate-300 block">Hinglish Pronunciation Engine:</span>
+                      <span className="text-[11px] text-slate-400">
+                        Choose phonetic engine used when speaking Romanized Hindi
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleSelectHinglishEngine('hi-IN')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                          hinglishEngine === 'hi-IN'
+                            ? 'bg-violet-600 text-white border-violet-400 shadow-sm'
+                            : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+                        }`}
+                      >
+                        🇮🇳 Native Hindi Engine (hi-IN) - Recommended
+                      </button>
+                      <button
+                        onClick={() => handleSelectHinglishEngine('en-IN')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                          hinglishEngine === 'en-IN'
+                            ? 'bg-violet-600 text-white border-violet-400 shadow-sm'
+                            : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+                        }`}
+                      >
+                        🇮🇳 Indian English Engine (en-IN)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-white/5 border border-white/5 text-[11px] text-slate-400 leading-relaxed">
+                    💡 <span className="text-violet-300 font-semibold">Pro-tip for Windows:</span> In Microsoft Edge & Windows 10/11, <strong className="text-white">"Microsoft Swara"</strong> and <strong className="text-white">"Microsoft Madhur"</strong> provide natural studio-grade Hindi speech. In Chrome, <strong className="text-white">"Google हिन्दी"</strong> provides authentic Hindi pronunciation.
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
@@ -889,8 +1323,21 @@ export const NotebookStudio: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Playback speed selector */}
-                  <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                  {/* Playback speed selector & Voices toggle */}
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <button
+                      onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-all ${
+                        showVoiceSettings
+                          ? 'bg-violet-500/20 text-violet-200 border-violet-400'
+                          : 'bg-white/5 text-slate-300 border-white/10 hover:text-white'
+                      }`}
+                      title="Adjust Host Voices"
+                    >
+                      <Settings2 className="w-3.5 h-3.5 text-violet-400" />
+                      <span className="hidden sm:inline">Voices</span>
+                    </button>
+
                     <span className="text-[11px] font-semibold">Speed:</span>
                     {[0.8, 1.0, 1.25, 1.5].map((speed) => (
                       <button
