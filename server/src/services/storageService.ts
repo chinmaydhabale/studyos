@@ -447,6 +447,10 @@ export class StorageService {
         this.documents.set(d.id, stripDbFields(d.toObject()) as any);
       });
 
+      // Save all synced data from MongoDB Atlas to persistent local disk
+      this.ensureChinmayAccount();
+      this.saveAllToDisk();
+
       console.log(`✅ Loaded ${this.users.size} registered users, ${this.groups.size} study groups, and ${this.documents.size} documents from MongoDB.`);
     } catch (err: any) {
       console.warn('MongoDB sync error:', err.message);
@@ -678,13 +682,23 @@ export class StorageService {
     if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
       throw new Error('Please enter both username and password.');
     }
-    const cleanUsername = username.trim().toLowerCase();
-    if (!cleanUsername) {
+    const cleanInput = username.trim().toLowerCase();
+    if (!cleanInput) {
       throw new Error('Username cannot be blank.');
     }
 
+    // Resolve username or display name (e.g. username 'pari_01' has name 'shivanshi')
+    let resolvedUsername = cleanInput;
+    for (const u of this.users.values()) {
+      if ((u.username && u.username.toLowerCase() === cleanInput) ||
+          (u.name && u.name.trim().toLowerCase() === cleanInput && u.username)) {
+        resolvedUsername = u.username.toLowerCase();
+        break;
+      }
+    }
+
     // Special auto-provisioning guarantee for chinmay / 7717
-    if (cleanUsername === 'chinmay' && password === '7717') {
+    if ((cleanInput === 'chinmay' || resolvedUsername === 'chinmay') && password === '7717') {
       this.ensureChinmayAccount();
       const u = this.getUserByUsername('chinmay') || this.users.get('user_1790089573198_ucnf');
       if (u) {
@@ -695,13 +709,20 @@ export class StorageService {
     let dbUser: any = null;
     if (isDbConnected()) {
       try {
-        dbUser = await UserModel.findOne({ username: cleanUsername });
+        dbUser = await UserModel.findOne({
+          $or: [
+            { username: cleanInput },
+            { username: resolvedUsername },
+            { name: { $regex: new RegExp(`^${cleanInput}$`, 'i') } }
+          ]
+        });
       } catch (err: any) {
         console.warn('MongoDB authentication lookup failed, falling back to disk cache:', err.message);
       }
     }
 
     if (dbUser) {
+      const actualUsername = (dbUser.username || resolvedUsername).toLowerCase();
       const salt = dbUser.salt || '';
       const expectedHash = dbUser.passwordHash || '';
       const inputHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
@@ -709,8 +730,8 @@ export class StorageService {
         throw new Error('Invalid username or password.');
       }
 
-      // Cache credentials in memory & disk
-      this.userCredentials.set(cleanUsername, { passwordHash: expectedHash, salt });
+      // Cache credentials in memory & disk under actual username
+      this.userCredentials.set(actualUsername, { passwordHash: expectedHash, salt });
       this.saveCredentialsToDisk();
 
       const safeUser = stripDbFields(dbUser.toObject()) as any;
@@ -722,8 +743,8 @@ export class StorageService {
       return { user: safeUser as UserProfile, token: `token_${safeUser.id}_${Date.now()}` };
     }
 
-    // Fallback: Check local credentials store
-    const inMemoryCreds = this.userCredentials.get(cleanUsername);
+    // Fallback: Check local credentials store (by resolvedUsername or cleanInput)
+    const inMemoryCreds = this.userCredentials.get(resolvedUsername) || this.userCredentials.get(cleanInput);
     if (!inMemoryCreds?.passwordHash || !inMemoryCreds?.salt) {
       throw new Error('Invalid username or password.');
     }
@@ -733,14 +754,23 @@ export class StorageService {
       throw new Error('Invalid username or password.');
     }
 
-    let inMemoryUser = this.getUserByUsername(cleanUsername);
+    let inMemoryUser = this.getUserByUsername(resolvedUsername) || this.getUserByUsername(cleanInput);
     if (!inMemoryUser) {
-      const newUserId = cleanUsername === 'chinmay' ? 'user_1790089573198_ucnf' : `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      for (const u of this.users.values()) {
+        if (u.name && u.name.trim().toLowerCase() === cleanInput) {
+          inMemoryUser = u;
+          break;
+        }
+      }
+    }
+
+    if (!inMemoryUser) {
+      const newUserId = cleanInput === 'chinmay' ? 'user_1790089573198_ucnf' : `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       inMemoryUser = {
         id: newUserId,
-        username: cleanUsername,
-        name: cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1),
-        avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=6366f1`,
+        username: resolvedUsername,
+        name: resolvedUsername.charAt(0).toUpperCase() + resolvedUsername.slice(1),
+        avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(resolvedUsername)}&backgroundColor=6366f1`,
         targetExam: 'RRB PO & IBPS PO',
         college: 'Competitive Aspirant',
         city: 'India',

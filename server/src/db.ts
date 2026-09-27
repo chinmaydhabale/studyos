@@ -3,7 +3,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const MONGODB_URI = process.env.MONGODB_URI || '';
+const DEFAULT_URI = 'mongodb+srv://chinmaydhabale007_db_user:fXgxqIongrV3aVwL@cluster0.keboxsk.mongodb.net/studyos?retryWrites=true&w=majority';
+const envUri = (process.env.MONGODB_URI || '').trim();
+const MONGODB_URI = (!envUri || envUri.includes('dhabalechinmay:t28cR4uWqR8b9zYw')) ? DEFAULT_URI : envUri;
 
 export function isDatabaseConfigured(): boolean {
   return Boolean(MONGODB_URI);
