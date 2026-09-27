@@ -12,6 +12,14 @@ const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models
 // Primary model is set to gemini-3.8-flash for high quality, fast inference.
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
+export type GeminiModelTier = 'heavy' | 'lite' | 'balanced';
+
+export const GEMINI_MODELS = {
+  heavy: 'gemini-3.8-flash',
+  balanced: 'gemini-3.6-flash',
+  lite: 'gemini-3.5-flash-lite'
+};
+
 const REQUEST_TIMEOUT_MS = 25000;
 
 export interface GeminiJsonRequest {
@@ -21,13 +29,17 @@ export interface GeminiJsonRequest {
   schema?: Record<string, unknown>;
   temperature?: number;
   maxOutputTokens?: number;
+  tier?: GeminiModelTier;
+  model?: string;
 }
 
-interface GeminiTextRequest {
+export interface GeminiTextRequest {
   prompt: string;
   systemInstruction?: string;
   temperature?: number;
   maxOutputTokens?: number;
+  tier?: GeminiModelTier;
+  model?: string;
 }
 
 export class GeminiService {
@@ -56,16 +68,30 @@ export class GeminiService {
     return text || null;
   }
 
-  private async request(payload: Record<string, unknown>): Promise<string | null> {
+  private async request(
+    payload: Record<string, unknown>,
+    tier?: GeminiModelTier,
+    customModel?: string
+  ): Promise<string | null> {
     const apiKey = this.getApiKey();
     if (!apiKey) return null;
 
-    const primaryModel = this.getModel();
-    const modelsToTry = [primaryModel];
-    if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
-    if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
-    if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
-    if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
+    let modelsToTry: string[] = [];
+    if (customModel) {
+      modelsToTry = [customModel];
+    } else if (tier === 'lite') {
+      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+    } else if (tier === 'balanced') {
+      modelsToTry = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+    } else {
+      // Default or heavy tier: start with primary model (gemini-3.8-flash)
+      const primaryModel = this.getModel();
+      modelsToTry = [primaryModel];
+      if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
+      if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
+      if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
+      if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
+    }
 
     for (const model of modelsToTry) {
       const controller = new AbortController();
@@ -132,7 +158,7 @@ export class GeminiService {
 
   /** Free-form text generation. Returns null when unavailable. */
   public async generateText(req: GeminiTextRequest): Promise<string | null> {
-    return this.request(this.buildPayload(req, false));
+    return this.request(this.buildPayload(req, false), req.tier, req.model);
   }
 
   /**
@@ -140,7 +166,7 @@ export class GeminiService {
    * unavailable or produced unparseable output.
    */
   public async generateJson<T>(req: GeminiJsonRequest): Promise<T | null> {
-    const raw = await this.request(this.buildPayload(req, true));
+    const raw = await this.request(this.buildPayload(req, true), req.tier, req.model);
     if (!raw) return null;
     try {
       return JSON.parse(raw) as T;

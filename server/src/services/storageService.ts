@@ -1347,6 +1347,34 @@ export class StorageService {
     return this.flashcards;
   }
 
+  public addFlashcard(card: Flashcard): Flashcard {
+    const existingIdx = this.flashcards.findIndex(c => c.id === card.id || (c.front === card.front && c.subject === card.subject));
+    if (existingIdx !== -1) {
+      this.flashcards[existingIdx] = { ...this.flashcards[existingIdx], ...card };
+      this.saveFlashcardsToDisk();
+      return this.flashcards[existingIdx];
+    }
+    this.flashcards.unshift(card);
+    this.saveFlashcardsToDisk();
+    return card;
+  }
+
+  public addFlashcards(cards: Flashcard[]): Flashcard[] {
+    const added: Flashcard[] = [];
+    for (const card of cards) {
+      if (!card.front || !card.back) continue;
+      const existing = this.flashcards.find(c => c.id === card.id || (c.front === card.front && c.subject === card.subject));
+      if (!existing) {
+        this.flashcards.unshift(card);
+        added.push(card);
+      }
+    }
+    if (added.length) {
+      this.saveFlashcardsToDisk();
+    }
+    return this.flashcards;
+  }
+
   public updateFlashcardMastery(id: string, level: 'learning' | 'reviewing' | 'mastered'): Flashcard | undefined {
     const card = this.flashcards.find(c => c.id === id);
     if (card) {

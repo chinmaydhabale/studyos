@@ -24,7 +24,10 @@ import {
   FileCode,
   ExternalLink,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Plus,
+  Languages,
+  Bookmark
 } from 'lucide-react';
 import { API_BASE_URL } from '../../config.js';
 import { useSocket } from '../../context/SocketContext.js';
@@ -42,6 +45,7 @@ interface NotebookAudioOverview {
   title: string;
   tagline: string;
   durationEstimate: string;
+  language?: 'hinglish' | 'hindi' | 'english';
   turns: AudioTurn[];
   source?: 'gemini' | 'fallback';
 }
@@ -145,10 +149,16 @@ export const NotebookStudio: React.FC = () => {
 
   // Audio Overview States
   const [audioOverview, setAudioOverview] = useState<NotebookAudioOverview | null>(null);
+  const [audioLanguage, setAudioLanguage] = useState<'hinglish' | 'hindi' | 'english'>('hinglish');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [hasCopiedTranscript, setHasCopiedTranscript] = useState(false);
+
+  // Flashcards Saved States
+  const [savedCardIds, setSavedCardIds] = useState<{ [id: string]: boolean }>({});
+  const [isSavingAllCards, setIsSavingAllCards] = useState(false);
+  const [savedConceptCards, setSavedConceptCards] = useState<{ [conceptIdx: number]: boolean }>({});
 
   // Briefing Doc States
   const [briefingDoc, setBriefingDoc] = useState<NotebookBriefingDoc | null>(null);
@@ -224,6 +234,75 @@ export const NotebookStudio: React.FC = () => {
     reader.readAsText(file);
   };
 
+  // Flashcard save helpers
+  const handleSaveFlashcard = async (card: Flashcard) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/flashcards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: card.id,
+          front: card.front,
+          back: card.back,
+          subject: card.subject || docTitle,
+          masteryLevel: 'learning'
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSavedCardIds(prev => ({ ...prev, [card.id]: true }));
+      addToast('Flashcard Saved', `Added to your revision vault: "${card.front.slice(0, 35)}..."`, 'success');
+      addXp(15, 'Saved Flashcard for Revision');
+    } catch (e: any) {
+      addToast('Error', e?.message || 'Could not save flashcard', 'alert');
+    }
+  };
+
+  const handleSaveAllFlashcards = async () => {
+    if (!studyCards.length) return;
+    setIsSavingAllCards(true);
+    try {
+      const cardsToSave = studyCards.map(c => ({
+        ...c,
+        subject: c.subject || docTitle,
+        masteryLevel: 'learning'
+      }));
+      const res = await fetch(`${API_BASE_URL}/api/flashcards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cardsToSave)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updatedMap: { [id: string]: boolean } = {};
+      studyCards.forEach(c => { updatedMap[c.id] = true; });
+      setSavedCardIds(prev => ({ ...prev, ...updatedMap }));
+      addToast('All Flashcards Saved!', `Added ${studyCards.length} cards to your revision library!`, 'success');
+      addXp(50, 'Saved Study Pack to Revision');
+    } catch (e: any) {
+      addToast('Error', e?.message || 'Could not save cards', 'alert');
+    } finally {
+      setIsSavingAllCards(false);
+    }
+  };
+
+  const handleSaveConceptAsFlashcard = async (
+    concept: { term: string; definition: string; examSignificance: string },
+    idx: number
+  ) => {
+    try {
+      const card: Flashcard = {
+        id: `fc-concept-${Date.now()}-${idx}`,
+        front: `What is ${concept.term}?`,
+        back: `${concept.definition}\n\nExam Note: ${concept.examSignificance}`,
+        subject: docTitle,
+        masteryLevel: 'learning'
+      };
+      await handleSaveFlashcard(card);
+      setSavedConceptCards(prev => ({ ...prev, [idx]: true }));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // ==========================================
   // 1. AUDIO OVERVIEW LOGIC & SPEECH SYNTHESIS
   // ==========================================
@@ -246,6 +325,7 @@ export const NotebookStudio: React.FC = () => {
         body: JSON.stringify({
           docTitle: docTitle.trim() || 'Study Document',
           sourceText: sourceText.trim(),
+          language: audioLanguage,
           userId: currentUser?.id
         })
       });
@@ -273,20 +353,39 @@ export const NotebookStudio: React.FC = () => {
     const utterance = new SpeechSynthesisUtterance(turn.text);
     utterance.rate = playbackRate;
 
-    // Pick two distinct voices or pitch patterns for Alex and Sam
-    const englishVoices = voices.filter(v => v.lang.startsWith('en'));
     const isAlex = turn.speaker === 'Alex';
+    const activeLang = audioOverview?.language || audioLanguage;
 
-    if (englishVoices.length >= 2) {
-      utterance.voice = isAlex ? englishVoices[0] : englishVoices[1];
-    } else if (englishVoices.length === 1) {
-      utterance.voice = englishVoices[0];
+    if (activeLang === 'hindi') {
+      utterance.lang = 'hi-IN';
+      const hindiVoices = voices.filter(v => v.lang && (v.lang.startsWith('hi') || v.lang.includes('Hindi')));
+      if (hindiVoices.length >= 2) {
+        utterance.voice = isAlex ? hindiVoices[0] : hindiVoices[1];
+      } else if (hindiVoices.length === 1) {
+        utterance.voice = hindiVoices[0];
+      }
+    } else if (activeLang === 'hinglish') {
+      utterance.lang = 'en-IN';
+      const indianVoices = voices.filter(v => v.lang && (v.lang.includes('IN') || v.lang.startsWith('hi')));
+      if (indianVoices.length >= 2) {
+        utterance.voice = isAlex ? indianVoices[0] : indianVoices[1];
+      } else if (indianVoices.length === 1) {
+        utterance.voice = indianVoices[0];
+      }
+    } else {
+      utterance.lang = 'en-US';
+      const englishVoices = voices.filter(v => v.lang && v.lang.startsWith('en'));
+      if (englishVoices.length >= 2) {
+        utterance.voice = isAlex ? englishVoices[0] : englishVoices[1];
+      } else if (englishVoices.length === 1) {
+        utterance.voice = englishVoices[0];
+      }
     }
 
     if (isAlex) {
-      utterance.pitch = 1.15; // Slightly higher, curious & energetic
+      utterance.pitch = 1.15; // Higher, curious & energetic
     } else {
-      utterance.pitch = 0.9; // Deeper, calm & authoritative
+      utterance.pitch = 0.88; // Deeper, calm & authoritative
     }
 
     utterance.onend = () => {
@@ -644,7 +743,7 @@ export const NotebookStudio: React.FC = () => {
       {studioTab === 'audio' && (
         <div className="space-y-5 animate-in fade-in duration-200">
           {/* Action Trigger Card */}
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-violet-950/30 via-slate-900 to-slate-900 border border-violet-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-violet-950/30 via-slate-900 to-slate-900 border border-violet-500/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <Mic className="w-4 h-4 text-violet-400" />
@@ -654,6 +753,31 @@ export const NotebookStudio: React.FC = () => {
                 Generates a lively, natural conversation between two co-hosts breaking down the source material with
                 intuitive analogies and exam insights.
               </p>
+
+              {/* Language Selector */}
+              <div className="flex items-center gap-2 mt-3 text-xs">
+                <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                  <Languages className="w-3.5 h-3.5 text-violet-400" />
+                  Podcast Language:
+                </span>
+                {[
+                  { id: 'hinglish', label: '🇮🇳 Hinglish', desc: 'Hindi + English Mix' },
+                  { id: 'hindi', label: '🇮🇳 हिंदी (Hindi)', desc: 'Pure Hindi' },
+                  { id: 'english', label: '🌐 English', desc: 'Global English' }
+                ].map((l) => (
+                  <button
+                    key={l.id}
+                    onClick={() => setAudioLanguage(l.id as any)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                      audioLanguage === l.id
+                        ? 'bg-violet-600 text-white border-violet-400 shadow-sm'
+                        : 'bg-white/5 text-slate-400 border-white/5 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <button
@@ -662,7 +786,11 @@ export const NotebookStudio: React.FC = () => {
               className="px-5 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-violet-600/30 transition-all shrink-0"
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>{isLoading ? 'Creating Audio Script...' : 'Generate Audio Overview'}</span>
+              <span>
+                {isLoading
+                  ? 'Creating Audio Script...'
+                  : `Generate in ${audioLanguage === 'hindi' ? 'हिंदी' : audioLanguage === 'hinglish' ? 'Hinglish' : 'English'}`}
+              </span>
             </button>
           </div>
 
@@ -673,9 +801,18 @@ export const NotebookStudio: React.FC = () => {
               <div className="p-5 rounded-2xl bg-slate-950/80 border border-violet-500/20 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-violet-400">
-                      NotebookLM Audio Deep Dive
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-violet-400">
+                        NotebookLM Audio Deep Dive
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                        {audioOverview.language === 'hindi'
+                          ? '🇮🇳 हिंदी'
+                          : audioOverview.language === 'hinglish'
+                          ? '🇮🇳 Hinglish'
+                          : '🌐 English'}
+                      </span>
+                    </div>
                     <h3 className="text-base sm:text-lg font-black text-white mt-0.5">{audioOverview.title}</h3>
                     <p className="text-xs text-slate-400 mt-0.5 italic">{audioOverview.tagline}</p>
                   </div>
@@ -914,11 +1051,25 @@ export const NotebookStudio: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {briefingDoc.keyConcepts.map((item, idx) => (
                     <div key={idx} className="p-4 rounded-xl bg-slate-950/50 border border-white/5 space-y-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-bold text-indigo-300">{item.term}</span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                          Core Concept
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleSaveConceptAsFlashcard(item, idx)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-all ${
+                              savedConceptCards[idx]
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
+                            }`}
+                            title="Save this concept as an active recall flashcard"
+                          >
+                            {savedConceptCards[idx] ? <Check className="w-3 h-3 text-emerald-400" /> : <Plus className="w-3 h-3" />}
+                            <span>{savedConceptCards[idx] ? 'Card Added' : '+ Flashcard'}</span>
+                          </button>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                            Core Concept
+                          </span>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-300 leading-relaxed">{item.definition}</p>
                       {item.examSignificance && (
@@ -1150,11 +1301,23 @@ export const NotebookStudio: React.FC = () => {
           {/* Flashcard Section */}
           {studyCards.length > 0 && (
             <div className="p-6 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                  Active Recall Flashcards ({activeCardIdx + 1}/{studyCards.length})
-                </span>
-                <span className="text-xs text-slate-400">Click card to reveal answer</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                    Active Recall Flashcards ({activeCardIdx + 1}/{studyCards.length})
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveAllFlashcards}
+                    disabled={isSavingAllCards}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>{isSavingAllCards ? 'Saving All...' : '📥 Save All to My Flashcards'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* 3D Flip Flashcard */}
@@ -1162,8 +1325,13 @@ export const NotebookStudio: React.FC = () => {
                 onClick={() => setIsCardFlipped(!isCardFlipped)}
                 className="min-h-[180px] p-6 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 border border-emerald-500/30 shadow-xl flex flex-col justify-between cursor-pointer hover:border-emerald-400 transition-all text-center select-none"
               >
-                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                  {isCardFlipped ? 'Answer (Self-Check)' : 'Question / Prompt'}
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                  <span>{isCardFlipped ? 'Answer (Self-Check)' : 'Question / Prompt'}</span>
+                  {savedCardIds[studyCards[activeCardIdx]?.id] && (
+                    <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      <Check className="w-3 h-3" /> Saved in Vault
+                    </span>
+                  )}
                 </div>
 
                 <div className="text-sm sm:text-base font-semibold text-white my-auto px-4 py-2 leading-relaxed">
@@ -1171,12 +1339,12 @@ export const NotebookStudio: React.FC = () => {
                 </div>
 
                 <div className="text-[10px] text-slate-500">
-                  {isCardFlipped ? 'Tap to see prompt' : 'Tap to flip'}
+                  {isCardFlipped ? 'Tap to see prompt' : 'Tap to reveal answer'}
                 </div>
               </div>
 
-              {/* Navigation Controls */}
-              <div className="flex items-center justify-between pt-1">
+              {/* Navigation & Save Controls */}
+              <div className="flex items-center justify-between gap-2 pt-1">
                 <button
                   onClick={() => {
                     setActiveCardIdx(Math.max(0, activeCardIdx - 1));
@@ -1189,6 +1357,27 @@ export const NotebookStudio: React.FC = () => {
                 </button>
 
                 <button
+                  onClick={() => handleSaveFlashcard(studyCards[activeCardIdx])}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                    savedCardIds[studyCards[activeCardIdx]?.id]
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-md shadow-emerald-600/20'
+                  }`}
+                >
+                  {savedCardIds[studyCards[activeCardIdx]?.id] ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Saved in Flashcards</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Save Card to My Flashcards</span>
+                    </>
+                  )}
+                </button>
+
+                <button
                   onClick={() => {
                     setActiveCardIdx(Math.min(studyCards.length - 1, activeCardIdx + 1));
                     setIsCardFlipped(false);
@@ -1198,6 +1387,11 @@ export const NotebookStudio: React.FC = () => {
                 >
                   Next Card →
                 </button>
+              </div>
+
+              {/* Helper sync banner */}
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-200 flex items-center justify-between">
+                <span>💡 Tip: Saved flashcards are synchronized with the <strong>🎴 Flashcards (SM-2)</strong> tab for spaced repetition and mastery tracking.</span>
               </div>
             </div>
           )}

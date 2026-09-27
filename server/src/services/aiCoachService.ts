@@ -69,6 +69,7 @@ export interface NotebookAudioOverview {
   title: string;
   tagline: string;
   durationEstimate: string;
+  language?: 'hinglish' | 'hindi' | 'english';
   turns: AudioTurn[];
   source: AISource;
 }
@@ -246,7 +247,8 @@ export class AICoachService {
         },
         required: ['subject', 'title', 'durationMinutes', 'targetDateOffset', 'scheduledTime', 'message', 'suggestedSchedule']
       },
-      temperature: 0.5
+      temperature: 0.5,
+      tier: 'lite'
     });
 
     const durationMinutes = plan
@@ -412,7 +414,8 @@ export class AICoachService {
         },
         required: ['explanation', 'steps', 'practiceTip']
       },
-      temperature: 0.6
+      temperature: 0.6,
+      tier: 'heavy'
     });
 
     if (solution) {
@@ -517,7 +520,8 @@ export class AICoachService {
         required: ['questions']
       },
       temperature: 0.8,
-      maxOutputTokens: 3072
+      maxOutputTokens: 3072,
+      tier: 'lite'
     });
 
     const questions: QuizQuestion[] = [];
@@ -604,7 +608,8 @@ export class AICoachService {
         required: ['cards']
       },
       temperature: 0.8,
-      maxOutputTokens: 3072
+      maxOutputTokens: 3072,
+      tier: 'lite'
     });
 
     const cards: Flashcard[] = [];
@@ -1050,7 +1055,8 @@ export class AICoachService {
         required: ['executiveSummary', 'keyConcepts', 'faq', 'pitfallsAndTraps', 'revisionChecklist']
       },
       temperature: 0.5,
-      maxOutputTokens: 4096
+      maxOutputTokens: 4096,
+      tier: 'heavy'
     });
 
     if (result && result.executiveSummary) {
@@ -1086,13 +1092,25 @@ export class AICoachService {
   public async generateAudioOverview(input: {
     docTitle?: string;
     sourceText: string;
+    language?: 'hinglish' | 'hindi' | 'english';
     userId?: string;
   }): Promise<NotebookAudioOverview> {
     const docTitle = this.cleanString(input.docTitle, 200) || 'Study Deep Dive';
     const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
+    const language = input.language || 'hinglish';
 
     if (!sourceText) {
-      return this.fallbackAudioOverview(docTitle);
+      return this.fallbackAudioOverview(docTitle, language);
+    }
+
+    let languageDirective =
+      'Language: HINGLISH. Write the podcast dialogue in conversational, lively Hinglish (Hindi + English mix in Roman script, e.g. "Arey Sam, yeh concept exam me hamesha poochha jata hai...", "Haan Alex! Par agar hum basic formula yaad rakhein toh easy ho jata hai..."). Alex and Sam sound like two brilliant, friendly Indian study partners.';
+    if (language === 'hindi') {
+      languageDirective =
+        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in natural, clear Hindi using Devanagari script (e.g. "नमस्ते सैम! आज हम इस विषय पर चर्चा करेंगे...", "बिल्कुल एलेक्स! परीक्षा की दृष्टि से यह अत्यंत महत्वपूर्ण है..."). Alex and Sam speak in pure, engaging conversational Hindi.';
+    } else if (language === 'english') {
+      languageDirective =
+        'Language: ENGLISH. Write the podcast dialogue in natural, engaging conversational English.';
     }
 
     const result = await gemini.generateJson<{
@@ -1101,15 +1119,17 @@ export class AICoachService {
       durationEstimate?: string;
       turns?: Array<{ speaker?: string; text?: string; emotion?: string }>;
     }>({
+      tier: 'heavy',
       systemInstruction:
         'You produce NotebookLM Audio Overviews. Two expert co-hosts, Alex (engaging, curious, relatable) ' +
         'and Sam (analytical, structured, deep thinker) have a lively conversational deep dive into the source material. ' +
-        'They banter naturally, react dynamically ("Wait, really?", "Spot on, Alex!"), break down difficult concepts with intuitive analogies, ' +
-        'and tie ideas to exam success. Keep spoken sentences natural for speech synthesis. Avoid markdown symbols in text. Respond with JSON only.',
+        'They banter naturally, react dynamically ("Wait, really?", "Spot on, Alex!", "Arey bilkul!"), break down difficult concepts with intuitive analogies, ' +
+        'and tie ideas to exam success. Keep spoken sentences natural for speech synthesis. Avoid markdown symbols in text. Respond with JSON only.\n' +
+        languageDirective,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Create a full 10-16 turn audio dialogue between Alex and Sam unpacking this document. ' +
+        'Create a full 10-16 turn audio dialogue between Alex and Sam unpacking this document in the specified language. ' +
         'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
       schema: {
         type: 'OBJECT',
@@ -1155,13 +1175,14 @@ export class AICoachService {
           title: this.cleanString(result.title, 200) || `${docTitle}: The Deep Dive`,
           tagline: this.cleanString(result.tagline, 250) || 'An engaging conversation breaking down the core concepts.',
           durationEstimate: this.cleanString(result.durationEstimate, 50) || `${Math.ceil(turns.length * 0.4)} min listen`,
+          language,
           turns,
           source: 'gemini'
         };
       }
     }
 
-    return this.fallbackAudioOverview(docTitle);
+    return this.fallbackAudioOverview(docTitle, language);
   }
 
   public async askSourceQuestion(input: {
@@ -1212,7 +1233,8 @@ export class AICoachService {
         required: ['answer', 'citations', 'suggestedFollowUps']
       },
       temperature: 0.5,
-      maxOutputTokens: 2048
+      maxOutputTokens: 2048,
+      tier: 'lite'
     });
 
     if (result && result.answer) {
@@ -1291,7 +1313,8 @@ export class AICoachService {
         required: ['flashcards', 'quiz']
       },
       temperature: 0.6,
-      maxOutputTokens: 3500
+      maxOutputTokens: 3500,
+      tier: 'balanced'
     });
 
     const flashcards: Flashcard[] = [];
@@ -1382,12 +1405,112 @@ export class AICoachService {
     };
   }
 
-  private fallbackAudioOverview(docTitle: string): NotebookAudioOverview {
+  private fallbackAudioOverview(
+    docTitle: string,
+    language: 'hinglish' | 'hindi' | 'english' = 'hinglish'
+  ): NotebookAudioOverview {
+    if (language === 'hindi') {
+      return {
+        docTitle,
+        title: `${docTitle}: संपूर्ण ऑडियो विश्लेषण (Hindi Deep Dive)`,
+        tagline: 'एलेक्स और सैम के साथ इस विषय का सरल और रोचक अध्ययन।',
+        durationEstimate: '4 मिनट',
+        language: 'hindi',
+        turns: [
+          {
+            speaker: 'Alex',
+            text: `नमस्ते दोस्तों! आज हम ${docTitle} पर गहराई से चर्चा करेंगे। सैम, यह एक ऐसा अध्याय है जिसमें छात्र अक्सर उलझ जाते हैं।`,
+            emotion: 'curious'
+          },
+          {
+            speaker: 'Sam',
+            text: `बिल्कुल सही कहा एलेक्स! लेकिन अगर हम इसके बुनियादी सिद्धांतों को समझ लें, तो यह पूरी तरह आसान और स्पष्ट हो जाता है।`,
+            emotion: 'insightful'
+          },
+          {
+            speaker: 'Alex',
+            text: `तो शुरुआत कहाँ से करें? परीक्षा के लिए सबसे महत्वपूर्ण बात क्या है?`,
+            emotion: 'enthusiastic'
+          },
+          {
+            speaker: 'Sam',
+            text: `सबसे पहले मुख्य परिभाषाओं और मान्यताओं को समझें। जब नींव मजबूत होती है, तो कठिन से कठिन सवाल भी आसानी से हल हो जाते हैं।`,
+            emotion: 'explaining'
+          },
+          {
+            speaker: 'Alex',
+            text: `अक्सर छात्र परीक्षा में कहाँ अंक खो देते हैं? सामान्य गलतियाँ क्या होती हैं?`,
+            emotion: 'curious'
+          },
+          {
+            speaker: 'Sam',
+            text: `इकाइयों और सीमाओं में! छात्र बिना यूनिट्स बदले सीधे फॉर्मूला लगा देते हैं, जिससे उत्तर गलत हो जाता है।`,
+            emotion: 'warning'
+          },
+          {
+            speaker: 'Alex',
+            text: `शानदार सुझाव सैम! सही इकाइयाँ और लगातार दोहराव ही परीक्षा में सफलता दिलाता है।`,
+            emotion: 'inspired'
+          }
+        ],
+        source: 'fallback'
+      };
+    }
+
+    if (language === 'hinglish') {
+      return {
+        docTitle,
+        title: `${docTitle}: The Ultimate Hinglish Deep Dive`,
+        tagline: 'Alex aur Sam ke saath concept ka complete post-mortem!',
+        durationEstimate: '4 min listen',
+        language: 'hinglish',
+        turns: [
+          {
+            speaker: 'Alex',
+            text: `Hey everyone, welcome back! Aaj hum deep dive karne wale hain ${docTitle} pe. Sam, ye topic competitive exams me bohot zyada pucha jata hai na?`,
+            emotion: 'curious'
+          },
+          {
+            speaker: 'Sam',
+            text: `Bilkul Alex! Aur students aksar isme silly mistakes karte hain. Lekin agar basic fundamentals clear ho, toh scoring bohot easy ho jati hai.`,
+            emotion: 'insightful'
+          },
+          {
+            speaker: 'Alex',
+            text: `Sahi bola! Toh students ko sabse pehle kis cheez pe focus karna chahiye?`,
+            emotion: 'enthusiastic'
+          },
+          {
+            speaker: 'Sam',
+            text: `Sabse pehle core definitions aur assumptions ko samjho. Agar foundation strong hai, toh complex numericals bina kisi tension ke solve ho jate hain.`,
+            emotion: 'explaining'
+          },
+          {
+            speaker: 'Alex',
+            text: `Aur exam hall me common traps kya hote hain jaha negative marking lagti hai?`,
+            emotion: 'curious'
+          },
+          {
+            speaker: 'Sam',
+            text: `Units conversion aur boundary conditions! Log Celsius ko Kelvin me convert karna bhool jate hain aur galat option tick kar aate hain.`,
+            emotion: 'warning'
+          },
+          {
+            speaker: 'Alex',
+            text: `Bilkul accurate point! Formula lagane se pehle units check karo aur active recall se revise karo!`,
+            emotion: 'inspired'
+          }
+        ],
+        source: 'fallback'
+      };
+    }
+
     return {
       docTitle,
       title: `${docTitle}: The Deep Dive`,
       tagline: 'Two hosts unpack everything you need to master this topic.',
       durationEstimate: '4 min listen',
+      language: 'english',
       turns: [
         {
           speaker: 'Alex',

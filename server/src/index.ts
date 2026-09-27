@@ -15,6 +15,7 @@ import { setupVideoSyncSocket } from './sockets/videoSyncSocket.js';
 import { setupVoiceAndChatSocket } from './sockets/voiceAndChatSocket.js';
 import { setupStudyRoomSocket, getExpectedVoicePassword } from './sockets/studyRoomSocket.js';
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
+import { Flashcard } from './types.js';
 
 dotenv.config();
 
@@ -445,6 +446,27 @@ app.get('/api/flashcards', (req, res) => {
   res.json(storage.getFlashcards());
 });
 
+app.post('/api/flashcards', (req, res) => {
+  const cardData = req.body;
+  if (Array.isArray(cardData)) {
+    const saved = storage.addFlashcards(cardData);
+    return res.json(saved);
+  }
+  if (!cardData?.front || !cardData?.back) {
+    return res.status(400).json({ error: 'Front and back are required' });
+  }
+  const card: Flashcard = {
+    id: cardData.id || `fc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    front: cardData.front,
+    back: cardData.back,
+    subject: cardData.subject || 'General',
+    masteryLevel: cardData.masteryLevel || 'learning',
+    lastReviewed: new Date().toISOString()
+  };
+  const saved = storage.addFlashcard(card);
+  res.json(saved);
+});
+
 app.post('/api/flashcards/:id/mastery', (req, res) => {
   const updated = storage.updateFlashcardMastery(req.params.id, req.body.level);
   if (!updated) return res.status(404).json({ error: 'Card not found' });
@@ -569,10 +591,10 @@ app.post('/api/ai/notebook/briefing', async (req, res) => {
 });
 
 app.post('/api/ai/notebook/audio-overview', async (req, res) => {
-  const { docTitle, sourceText, userId } = req.body || {};
+  const { docTitle, sourceText, language, userId } = req.body || {};
   if (!sourceText) return res.status(400).json({ error: 'sourceText is required' });
   try {
-    const result = await aiCoach.generateAudioOverview({ docTitle, sourceText, userId });
+    const result = await aiCoach.generateAudioOverview({ docTitle, sourceText, language, userId });
     res.json(result);
   } catch (err) {
     console.error('[ai] notebook/audio-overview failed:', err);
