@@ -180,12 +180,18 @@ export const Header: React.FC<HeaderProps> = ({
     toggleMic,
     isVoiceUnlocked,
     peers,
+    isConnected,
+    serverUrl,
+    setServerUrl,
     addToast,
     setIsRoomModalOpen,
     setIsAuthModalOpen,
     logoutUser,
     openPeerDossier
   } = useSocket();
+
+  const [showServerModal, setShowServerModal] = useState(false);
+  const [customUrlInput, setCustomUrlInput] = useState(serverUrl || '');
 
   const {
     timerMode,
@@ -301,27 +307,43 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
                 {roomId && (
                   <div className="flex items-center gap-1.5 ml-1">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-emerald-400 text-[10px] font-medium">{peers.length} Live</span>
-                    <div className="hidden md:flex items-center -space-x-1.5 ml-1">
-                      {peers.slice(0, 4).map((p) => (
-                        <button
-                          key={p.userId}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openPeerDossier(p);
-                          }}
-                          className="relative rounded-full hover:scale-110 hover:z-10 transition-transform"
-                          title={`${p.name} - Click to see live activity dossier & breakdown`}
-                        >
-                          <img
-                            src={p.avatar}
-                            alt={p.name}
-                            className="w-4 h-4 rounded-full border border-slate-900 ring-1 ring-emerald-500/50"
-                          />
-                        </button>
-                      ))}
-                    </div>
+                    {isConnected ? (
+                      <>
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span className="text-emerald-400 text-[10px] font-medium">{peers.length} Live</span>
+                        <div className="hidden md:flex items-center -space-x-1.5 ml-1">
+                          {peers.slice(0, 4).map((p) => (
+                            <button
+                              key={p.userId}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPeerDossier(p);
+                              }}
+                              className="relative rounded-full hover:scale-110 hover:z-10 transition-transform"
+                              title={`${p.name} - Click to see live activity dossier & breakdown`}
+                            >
+                              <img
+                                src={p.avatar}
+                                alt={p.name}
+                                className="w-4 h-4 rounded-full border border-slate-900 ring-1 ring-emerald-500/50"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowServerModal(true);
+                        }}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[10px] font-bold transition-colors cursor-pointer"
+                        title="Click to check or update server connection"
+                      >
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
+                        <span>Reconnecting</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -740,6 +762,78 @@ export const Header: React.FC<HeaderProps> = ({
             );
           })}
 
+        </div>
+      )}
+
+      {/* Server Connection Modal */}
+      {showServerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-white">⚡ Server Connection Status</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${isConnected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                  {isConnected ? 'Online' : 'Disconnected'}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowServerModal(false)}
+                className="text-slate-400 hover:text-white text-xs font-mono p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Active Backend URL:
+                </label>
+                <input
+                  type="text"
+                  value={customUrlInput}
+                  onChange={(e) => setCustomUrlInput(e.target.value)}
+                  placeholder="https://...trycloudflare.com"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-slate-400 space-y-1.5">
+                <p>
+                  <strong>Tip:</strong> If the Cloudflare tunnel was restarted, you can paste the new tunnel URL here to reconnect immediately without redeploying Vercel.
+                </p>
+                <p className="font-mono text-cyan-300 text-[10px] break-all">
+                  Default Active Tunnel: https://reduction-bin-listings-train.trycloudflare.com
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomUrlInput('https://reduction-bin-listings-train.trycloudflare.com');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
+                >
+                  Reset to Active Tunnel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customUrlInput.trim()) {
+                      setServerUrl(customUrlInput.trim());
+                      addToast('Server URL Saved', 'Reconnecting to new backend...', 'success');
+                      setShowServerModal(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all"
+                >
+                  Save & Reconnect
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </header>

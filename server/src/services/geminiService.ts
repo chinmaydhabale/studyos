@@ -81,11 +81,11 @@ export class GeminiService {
     if (customModel) {
       modelsToTry = [customModel];
     } else if (tier === 'flashcards') {
-      modelsToTry = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+      modelsToTry = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'];
     } else if (tier === 'lite') {
-      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3.8-flash'];
     } else if (tier === 'balanced') {
-      modelsToTry = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+      modelsToTry = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'];
     } else {
       // Default or heavy tier: start with primary model (gemini-3.8-flash)
       const primaryModel = this.getModel();
@@ -93,6 +93,7 @@ export class GeminiService {
       if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
       if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
       if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
+      if (!modelsToTry.includes('gemini-2.5-flash')) modelsToTry.push('gemini-2.5-flash');
       if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
     }
 

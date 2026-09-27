@@ -12,11 +12,14 @@ import {
   StudyDocument,
   PdfPresentationState
 } from '../types.js';
-import { API_BASE_URL, SOCKET_URL } from '../config.js';
+import { API_BASE_URL, SOCKET_URL, setCustomServerUrl } from '../config.js';
 import { useVoiceChat } from '../hooks/useVoiceChat.js';
 
 interface SocketContextType {
   socket: Socket | null;
+  isConnected: boolean;
+  serverUrl: string;
+  setServerUrl: (url: string) => void;
   roomId: string;
   currentUser: UserProfile;
   peers: RoomPeer[];
@@ -188,6 +191,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const initialUserData = getStoredUser();
   const initialRoomId = getStoredRoom();
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
   const [roomId, setRoomId] = useState<string>(initialRoomId);
   const [currentGroup, setCurrentGroup] = useState<StudyGroup | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile>(initialUserData.user);
@@ -430,6 +434,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('connect', () => {
       console.log('Connected to StudyOS real-time server:', newSocket.id);
+      setIsConnected(true);
       const activeRoom = roomIdRef.current;
       const activeUser = userRef.current;
       const effectiveUser = {
@@ -439,6 +444,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       newSocket.emit('room:join', { roomId: activeRoom, user: effectiveUser });
       newSocket.emit('video:join', { roomId: activeRoom, userName: effectiveUser.name });
       newSocket.emit('chat:join', { roomId: activeRoom });
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.warn('StudyOS real-time socket disconnected:', reason);
+      setIsConnected(false);
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.warn('StudyOS real-time socket connect error:', err.message);
+      setIsConnected(false);
     });
 
     newSocket.on('room:peers', (updatedPeers: RoomPeer[]) => {
@@ -924,6 +939,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     <SocketContext.Provider
       value={{
         socket,
+        isConnected,
+        serverUrl: API_BASE_URL,
+        setServerUrl: setCustomServerUrl,
         roomId,
         currentUser,
         peers,
