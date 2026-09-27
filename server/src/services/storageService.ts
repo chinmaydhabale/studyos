@@ -14,6 +14,8 @@ import {
   StudyDocument
 } from '../types.js';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { isDbConnected } from '../db.js';
 import { UserModel } from '../models/User.js';
 import { ActivitySessionModel } from '../models/ActivitySession.js';
@@ -39,6 +41,73 @@ export const localDateKey = (date: Date = new Date()): string => {
   return `${date.getFullYear()}-${month}-${day}`;
 };
 
+const getDirname = (): string => {
+  return typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+};
+
+const resolveDataDir = (): string => {
+  const custom = process.env.STUDYOS_DATA_DIR;
+  if (custom && custom.trim()) {
+    try {
+      fs.mkdirSync(custom, { recursive: true });
+      return custom;
+    } catch (e) {}
+  }
+
+  const baseDir = getDirname();
+  const candidates = [
+    path.resolve(process.cwd(), 'data'),
+    path.resolve(process.cwd(), 'server/data'),
+    path.resolve(baseDir, '../../data'),
+    path.resolve(baseDir, '../data'),
+    path.resolve(baseDir, 'data')
+  ];
+
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+
+  const preferred = path.resolve(baseDir, '../../data');
+  try {
+    fs.mkdirSync(preferred, { recursive: true });
+    return preferred;
+  } catch {
+    const cwdTarget = path.resolve(process.cwd(), 'data');
+    try {
+      fs.mkdirSync(cwdTarget, { recursive: true });
+      return cwdTarget;
+    } catch {
+      return process.cwd();
+    }
+  }
+};
+
+function writeJsonSafe(filePath: string, data: any): void {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 6)}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempPath, filePath);
+  } catch (err: any) {
+    console.warn(`[storage] Failed to write ${filePath}:`, err.message);
+  }
+}
+
+function readJsonSafe<T>(filePath: string, fallback: T): T {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    if (!content.trim()) return fallback;
+    return JSON.parse(content) as T;
+  } catch (err: any) {
+    console.warn(`[storage] Failed to read ${filePath}:`, err.message);
+    return fallback;
+  }
+}
+
 export class StorageService {
   private users: Map<string, UserProfile> = new Map();
   private userCredentials: Map<string, { passwordHash: string; salt: string }> = new Map();
@@ -53,9 +122,13 @@ export class StorageService {
   private activitySessions: ActivitySession[] = [];
   private groups: Map<string, StudyGroup> = new Map();
   private documents: Map<string, StudyDocument> = new Map();
+  private dataDir: string;
 
   constructor() {
+    this.dataDir = resolveDataDir();
+    this.loadFromDisk();
     this.ensureDefaultGroup();
+    this.ensureChinmayAccount();
   }
 
   public ensureDefaultGroup(): StudyGroup {
@@ -74,7 +147,205 @@ export class StorageService {
       createdAt: new Date().toISOString()
     };
     this.groups.set('STUDY-ROOM-ALPHA', defaultAlpha);
+    this.saveGroupsToDisk();
     return defaultAlpha;
+  }
+
+  public ensureChinmayAccount(): void {
+    const targetUsername = 'chinmay';
+    const targetPassword = '7717';
+    const targetUserId = 'user_1790089573198_ucnf';
+
+    // 1. Ensure credentials exist
+    let creds = this.userCredentials.get(targetUsername);
+    if (!creds || !creds.passwordHash || !creds.salt) {
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = crypto.pbkdf2Sync(targetPassword, salt, 100000, 64, 'sha512').toString('hex');
+      creds = { passwordHash, salt };
+      this.userCredentials.set(targetUsername, creds);
+      this.saveCredentialsToDisk();
+    }
+
+    // 2. Ensure UserProfile exists
+    let user = this.getUserByUsername(targetUsername) || this.users.get(targetUserId);
+
+    if (!user) {
+      user = {
+        id: targetUserId,
+        username: targetUsername,
+        name: 'Chinmay Dhabale',
+        avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=Scholar&backgroundColor=6366f1',
+        targetExam: 'RRB PO & IBPS PO',
+        college: 'Competitive Aspirant',
+        city: 'India',
+        country: 'India',
+        xp: 0,
+        level: 1,
+        coins: 50,
+        streak: 1,
+        bestStreak: 1,
+        totalStudyHours: 0,
+        focusScore: 100,
+        accuracy: 100,
+        tasksCompleted: 0,
+        tasksMissed: 0,
+        badges: ['⚡ New Scholar'],
+        status: 'Ready to Study',
+        isMuted: true,
+        isSpeaking: false,
+        currentActivity: 'Ready to Study',
+        activityCategory: 'study',
+        activityStartTime: null
+      };
+      this.users.set(user.id, user);
+      this.saveUsersToDisk();
+    } else {
+      let changed = false;
+      if (!user.username || user.username.toLowerCase() !== targetUsername) {
+        user.username = targetUsername;
+        changed = true;
+      }
+      if (!user.name || user.name === 'Student Aspirant') {
+        user.name = 'Chinmay Dhabale';
+        changed = true;
+      }
+      if (changed) {
+        this.users.set(user.id, user);
+        this.saveUsersToDisk();
+      }
+    }
+  }
+
+  private loadFromDisk(): void {
+    try {
+      console.log(`📂 Initializing persistent local disk storage at ${this.dataDir}...`);
+
+      // 1. Credentials
+      const credsFile = path.join(this.dataDir, 'credentials.json');
+      const credsData = readJsonSafe<Record<string, { passwordHash: string; salt: string }>>(credsFile, {});
+      for (const [uname, cred] of Object.entries(credsData)) {
+        if (cred && cred.passwordHash && cred.salt) {
+          this.userCredentials.set(uname.toLowerCase(), cred);
+        }
+      }
+
+      // 2. Users
+      const usersFile = path.join(this.dataDir, 'users.json');
+      const usersData = readJsonSafe<UserProfile[]>(usersFile, []);
+      for (const u of usersData) {
+        if (u && u.id) {
+          this.users.set(u.id, u);
+        }
+      }
+
+      // 3. Groups
+      const groupsFile = path.join(this.dataDir, 'groups.json');
+      const groupsData = readJsonSafe<StudyGroup[]>(groupsFile, []);
+      for (const g of groupsData) {
+        if (g && g.roomId) {
+          this.groups.set(g.roomId, g);
+        }
+      }
+
+      // 4. Tasks
+      const tasksFile = path.join(this.dataDir, 'tasks.json');
+      const loadedTasks = readJsonSafe<StudyTask[]>(tasksFile, []);
+      if (loadedTasks.length > 0) {
+        this.tasks = loadedTasks;
+      }
+
+      // 5. Calendar history
+      const calFile = path.join(this.dataDir, 'calendar.json');
+      const loadedCal = readJsonSafe<CalendarDayRecord[]>(calFile, []);
+      if (loadedCal.length > 0) {
+        this.calendarHistory = loadedCal;
+      }
+
+      // 6. Activity Sessions
+      const sessionsFile = path.join(this.dataDir, 'activity_sessions.json');
+      const loadedSessions = readJsonSafe<ActivitySession[]>(sessionsFile, []);
+      if (loadedSessions.length > 0) {
+        this.activitySessions = loadedSessions;
+      }
+
+      // 7. Documents
+      const docsFile = path.join(this.dataDir, 'documents.json');
+      const docsData = readJsonSafe<StudyDocument[]>(docsFile, []);
+      for (const d of docsData) {
+        if (d && d.id) {
+          this.documents.set(d.id, d);
+        }
+      }
+
+      // 8. Shared Notes
+      const notesFile = path.join(this.dataDir, 'notes.json');
+      const notesData = readJsonSafe<Record<string, SharedNote>>(notesFile, {});
+      for (const [rId, note] of Object.entries(notesData)) {
+        if (note) {
+          this.notes.set(rId, note);
+        }
+      }
+
+      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups.`);
+    } catch (err: any) {
+      console.warn('[storage] Error loading from disk:', err.message);
+    }
+  }
+
+  public saveAllToDisk(): void {
+    this.saveCredentialsToDisk();
+    this.saveUsersToDisk();
+    this.saveGroupsToDisk();
+    this.saveTasksToDisk();
+    this.saveCalendarToDisk();
+    this.saveActivitySessionsToDisk();
+    this.saveDocumentsToDisk();
+    this.saveNotesToDisk();
+    this.saveFlashcardsToDisk();
+  }
+
+  public saveCredentialsToDisk(): void {
+    const obj: Record<string, { passwordHash: string; salt: string }> = {};
+    for (const [k, v] of this.userCredentials.entries()) {
+      obj[k] = v;
+    }
+    writeJsonSafe(path.join(this.dataDir, 'credentials.json'), obj);
+  }
+
+  public saveUsersToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'users.json'), Array.from(this.users.values()));
+  }
+
+  public saveGroupsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'groups.json'), Array.from(this.groups.values()));
+  }
+
+  public saveTasksToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'tasks.json'), this.tasks);
+  }
+
+  public saveCalendarToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'calendar.json'), this.calendarHistory);
+  }
+
+  public saveActivitySessionsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'activity_sessions.json'), this.activitySessions);
+  }
+
+  public saveDocumentsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'documents.json'), Array.from(this.documents.values()));
+  }
+
+  public saveNotesToDisk(): void {
+    const obj: Record<string, SharedNote> = {};
+    for (const [k, v] of this.notes.entries()) {
+      obj[k] = v;
+    }
+    writeJsonSafe(path.join(this.dataDir, 'notes.json'), obj);
+  }
+
+  public saveFlashcardsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'flashcards.json'), this.flashcards);
   }
 
   // Clear all mock data from MongoDB Atlas on first startup
@@ -220,10 +491,19 @@ export class StorageService {
       };
     }
 
-    // Preserve registered username if exists; do not generate fake usernames for guest accounts
-    const username = profile.username || existing.username || '';
+    // Determine username safely without letting guest socket sessions hijack registered usernames
+    let username = existing.username || '';
+    if (profile.username && profile.username.trim()) {
+      const candidateUsername = profile.username.trim().toLowerCase();
+      const userWithThisUsername = this.getUserByUsername(candidateUsername);
+      if (!userWithThisUsername || userWithThisUsername.id === profile.id || !this.userCredentials.has(candidateUsername)) {
+        username = candidateUsername;
+      }
+    }
+
     const updated: UserProfile = { ...existing, ...profile, username };
     this.users.set(profile.id, updated);
+    this.saveUsersToDisk();
 
     if (isDbConnected()) {
       // Safe update - update profile fields without wiping stats or password hash
@@ -305,45 +585,61 @@ export class StorageService {
       throw new Error('Password must be at least 4 characters');
     }
 
-    // Check in memory and DB
-    if (this.getUserByUsername(cleanUsername)) {
-      throw new Error('Username already taken. Please choose another one.');
-    }
+    const isChinmayExemption = cleanUsername === 'chinmay' && data.password === '7717';
+
+    // Check in-memory credentials and DB
+    const existingCreds = this.userCredentials.get(cleanUsername);
+    let existingInDb: any = null;
     if (isDbConnected()) {
-      const existingInDb = await UserModel.findOne({ username: cleanUsername });
-      if (existingInDb) {
-        throw new Error('Username already taken. Please choose another one.');
+      try {
+        existingInDb = await UserModel.findOne({ username: cleanUsername });
+      } catch (err: any) {
+        console.warn('MongoDB check failed in registerUser:', err.message);
       }
+    }
+
+    // Only throw "already taken" if actual password credentials exist for this username
+    if (!isChinmayExemption && (existingCreds || (existingInDb && existingInDb.passwordHash))) {
+      throw new Error('Username already taken. Please choose another one or log in.');
     }
 
     // Hash password with salt
     const salt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.pbkdf2Sync(data.password, salt, 100000, 64, 'sha512').toString('hex');
-    const newUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-    // Store in dedicated in-memory credentials map
+    // Store in dedicated credentials map & persist to disk
     this.userCredentials.set(cleanUsername, { passwordHash, salt });
+    this.saveCredentialsToDisk();
+
+    // Check if user profile already exists (e.g. from socket join or unauthenticated session)
+    let existingUser = this.getUserByUsername(cleanUsername);
+    const userId = existingUser ? existingUser.id : (cleanUsername === 'chinmay' ? 'user_1790089573198_ucnf' : `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+
+    const effectiveName = (data.name && typeof data.name === 'string' && data.name.trim()) 
+      ? data.name.trim() 
+      : (existingUser?.name || cleanUsername);
 
     const newUser: UserProfile = {
-      id: newUserId,
+      ...(existingUser || {}),
+      id: userId,
       username: cleanUsername,
-      name: (data.name && typeof data.name === 'string') ? data.name.trim() : cleanUsername,
-      avatar: data.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=6366f1`,
-      targetExam: data.targetExam || 'RRB PO & IBPS PO',
-      college: 'Competitive Aspirant',
-      city: data.city || 'India',
+      name: effectiveName,
+      avatar: data.avatar || existingUser?.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=6366f1`,
+      targetExam: data.targetExam || existingUser?.targetExam || 'RRB PO & IBPS PO',
+      college: existingUser?.college || 'Competitive Aspirant',
+      city: data.city || existingUser?.city || 'India',
       country: 'India',
-      xp: 0,
-      level: 1,
-      coins: 50,
-      streak: 0,
-      bestStreak: 0,
-      totalStudyHours: 0,
-      focusScore: 100,
-      accuracy: 100,
-      tasksCompleted: 0,
-      tasksMissed: 0,
-      badges: ['⚡ New Scholar'],
+      xp: existingUser?.xp || 0,
+      level: existingUser?.level || 1,
+      coins: existingUser?.coins || 50,
+      streak: existingUser?.streak || 0,
+      bestStreak: existingUser?.bestStreak || 0,
+      totalStudyHours: existingUser?.totalStudyHours || 0,
+      focusScore: existingUser?.focusScore || 100,
+      accuracy: existingUser?.accuracy || 100,
+      tasksCompleted: existingUser?.tasksCompleted || 0,
+      tasksMissed: existingUser?.tasksMissed || 0,
+      badges: existingUser?.badges || ['⚡ New Scholar'],
       status: 'Ready to Study',
       isMuted: true,
       isSpeaking: false,
@@ -352,32 +648,57 @@ export class StorageService {
       activityStartTime: null
     };
 
-    this.users.set(newUserId, newUser);
+    this.users.set(userId, newUser);
+    this.saveUsersToDisk();
 
     if (isDbConnected()) {
-      await UserModel.create({
-        ...stripDbFields(newUser),
-        passwordHash,
-        salt
-      });
+      try {
+        await UserModel.findOneAndUpdate(
+          { username: cleanUsername },
+          {
+            $set: {
+              ...stripDbFields(newUser),
+              passwordHash,
+              salt,
+              updatedAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
+      } catch (err: any) {
+        console.warn('MongoDB User save in register error:', err.message);
+      }
     }
 
-    const token = `token_${newUserId}_${Date.now()}`;
+    const token = `token_${userId}_${Date.now()}`;
     return { user: stripDbFields(newUser), token };
   }
 
   public async authenticateUser(username: string, password: string): Promise<{ user: UserProfile; token: string }> {
     if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
-      throw new Error('Username and password are required.');
+      throw new Error('Please enter both username and password.');
     }
     const cleanUsername = username.trim().toLowerCase();
     if (!cleanUsername) {
       throw new Error('Username cannot be blank.');
     }
 
+    // Special auto-provisioning guarantee for chinmay / 7717
+    if (cleanUsername === 'chinmay' && password === '7717') {
+      this.ensureChinmayAccount();
+      const u = this.getUserByUsername('chinmay') || this.users.get('user_1790089573198_ucnf');
+      if (u) {
+        return { user: stripDbFields(u), token: `token_${u.id}_${Date.now()}` };
+      }
+    }
+
     let dbUser: any = null;
     if (isDbConnected()) {
-      dbUser = await UserModel.findOne({ username: cleanUsername });
+      try {
+        dbUser = await UserModel.findOne({ username: cleanUsername });
+      } catch (err: any) {
+        console.warn('MongoDB authentication lookup failed, falling back to disk cache:', err.message);
+      }
     }
 
     if (dbUser) {
@@ -388,28 +709,62 @@ export class StorageService {
         throw new Error('Invalid username or password.');
       }
 
-      // Cache credentials in memory for resiliency
+      // Cache credentials in memory & disk
       this.userCredentials.set(cleanUsername, { passwordHash: expectedHash, salt });
+      this.saveCredentialsToDisk();
 
       const safeUser = stripDbFields(dbUser.toObject()) as any;
       delete safeUser.passwordHash;
       delete safeUser.salt;
 
       this.users.set(safeUser.id, safeUser);
+      this.saveUsersToDisk();
       return { user: safeUser as UserProfile, token: `token_${safeUser.id}_${Date.now()}` };
     }
 
-    // Fallback: Check in-memory credentials & user
-    const inMemoryUser = this.getUserByUsername(cleanUsername);
+    // Fallback: Check local credentials store
     const inMemoryCreds = this.userCredentials.get(cleanUsername);
-
-    if (!inMemoryUser || !inMemoryCreds?.passwordHash || !inMemoryCreds?.salt) {
+    if (!inMemoryCreds?.passwordHash || !inMemoryCreds?.salt) {
       throw new Error('Invalid username or password.');
     }
 
     const inputHash = crypto.pbkdf2Sync(password, inMemoryCreds.salt, 100000, 64, 'sha512').toString('hex');
     if (inputHash !== inMemoryCreds.passwordHash) {
       throw new Error('Invalid username or password.');
+    }
+
+    let inMemoryUser = this.getUserByUsername(cleanUsername);
+    if (!inMemoryUser) {
+      const newUserId = cleanUsername === 'chinmay' ? 'user_1790089573198_ucnf' : `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      inMemoryUser = {
+        id: newUserId,
+        username: cleanUsername,
+        name: cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1),
+        avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=6366f1`,
+        targetExam: 'RRB PO & IBPS PO',
+        college: 'Competitive Aspirant',
+        city: 'India',
+        country: 'India',
+        xp: 0,
+        level: 1,
+        coins: 50,
+        streak: 0,
+        bestStreak: 0,
+        totalStudyHours: 0,
+        focusScore: 100,
+        accuracy: 100,
+        tasksCompleted: 0,
+        tasksMissed: 0,
+        badges: ['⚡ New Scholar'],
+        status: 'Ready to Study',
+        isMuted: true,
+        isSpeaking: false,
+        currentActivity: 'Ready to Study',
+        activityCategory: 'study',
+        activityStartTime: null
+      };
+      this.users.set(newUserId, inMemoryUser);
+      this.saveUsersToDisk();
     }
 
     const safeUser = stripDbFields(inMemoryUser) as any;
@@ -456,6 +811,7 @@ export class StorageService {
     };
 
     this.groups.set(generatedId, newGroup);
+    this.saveGroupsToDisk();
 
     if (isDbConnected()) {
       await StudyGroupModel.findOneAndUpdate(
@@ -525,6 +881,7 @@ export class StorageService {
     };
 
     this.documents.set(id, newDoc);
+    this.saveDocumentsToDisk();
 
     if (isDbConnected()) {
       await StudyDocumentModel.create(newDoc);
@@ -647,6 +1004,7 @@ export class StorageService {
     };
 
     this.activitySessions.push(session);
+    this.saveActivitySessionsToDisk();
 
     if (isDbConnected()) {
       ActivitySessionModel.create(session).catch(e => console.warn('MongoDB session save error:', e.message));
@@ -713,6 +1071,8 @@ export class StorageService {
         }
         todayRecord.status = todayRecord.hoursStudied >= 4 ? 'strong' : todayRecord.hoursStudied >= 1.5 ? 'moderate' : 'weak';
 
+        this.saveCalendarToDisk();
+
         if (isDbConnected()) {
           CalendarRecordModel.findOneAndUpdate(
             { date: todayDate, userId },
@@ -724,6 +1084,7 @@ export class StorageService {
 
       user.currentActivity = category === 'break' ? '☕ Break Finished' : 'Idle 💤';
       user.activityStartTime = null;
+      this.saveUsersToDisk();
 
       if (isDbConnected()) {
         UserModel.findOneAndUpdate({ id: userId }, { $set: stripDbFields(user) }).catch(() => {});
@@ -862,6 +1223,7 @@ export class StorageService {
     note.lastModifiedBy = modifiedBy;
     note.lastModifiedAt = new Date().toISOString();
     this.notes.set(roomId, note);
+    this.saveNotesToDisk();
 
     if (isDbConnected()) {
       SharedNoteModel.findOneAndUpdate(
@@ -881,6 +1243,7 @@ export class StorageService {
 
   public addTask(task: StudyTask): StudyTask {
     this.tasks.unshift(task);
+    this.saveTasksToDisk();
     if (isDbConnected()) {
       TaskModel.create(task).catch(() => {});
     }
@@ -922,6 +1285,8 @@ export class StorageService {
       task.rewardedUserId = undefined;
     }
 
+    this.saveTasksToDisk();
+
     if (isDbConnected()) {
       TaskModel.findOneAndUpdate(
         { id },
@@ -934,7 +1299,9 @@ export class StorageService {
 
   private persistUserStats(userId: string): void {
     const user = this.users.get(userId);
-    if (!user || !isDbConnected()) return;
+    if (!user) return;
+    this.saveUsersToDisk();
+    if (!isDbConnected()) return;
     UserModel.findOneAndUpdate(
       { id: userId },
       { $set: { xp: user.xp, coins: user.coins, tasksCompleted: user.tasksCompleted, level: user.level } }
@@ -955,6 +1322,7 @@ export class StorageService {
     if (card) {
       card.masteryLevel = level;
       card.lastReviewed = new Date().toISOString();
+      this.saveFlashcardsToDisk();
     }
     return card;
   }

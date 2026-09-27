@@ -32,3 +32,9 @@ yarn-error.log*
 *.sw?
 .DS_Store
 Thumbs.db
+
+# Persistent local data
+server/data/*.tmp
+server/data/*.json
+!server/data/.gitkeep
+
