@@ -1104,13 +1104,21 @@ export class AICoachService {
     }
 
     let languageDirective =
-      'Language: HINGLISH. Write the podcast dialogue in conversational, lively Hinglish (Hindi + English mix in Roman script, e.g. "Arey Sam, yeh concept exam me hamesha poochha jata hai...", "Haan Alex! Par agar hum basic formula yaad rakhein toh easy ho jata hai..."). Alex and Sam sound like two brilliant, friendly Indian study partners. Use simple, standard Romanized Hindi words so that Indian voice synthesizers pronounce every word clearly.';
+      'Language: HINGLISH. Write the podcast dialogue in authentic, natural conversational Hinglish (the way intelligent Indian educators and students speak). ' +
+      'CRUCIAL FOR NATURAL INDIAN PRONUNCIATION: Write all spoken conversational Hindi sentences in DEVANAGARI script (e.g. "अरे सैम!", "बिल्कुल सही बात!", "लेकिन यहाँ एक बहुत बड़ा ट्विस्ट है...", "चलो इसे एक आसान उदाहरण से समझते हैं..."). ' +
+      'Write technical terms, formulas, key concepts, and common English phrases in English or standard terminology (e.g. Thermodynamics, First Law, Heat Engine, Internal Energy, Work Done, Isolated System, Efficiency, Common Pitfalls). ' +
+      'Alex and Sam must sound like two enthusiastic, brilliant friends having an insightful conversation over chai, making every complex concept intuitive and fun. ' +
+      'Do NOT write Hindi in Roman script; using Devanagari for the Hindi parts ensures the neural voice pronounces every word with authentic native Indian warmth and cadence without any foreign accent!';
     if (language === 'hindi') {
       languageDirective =
-        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in natural, clear, rich Hindi using Devanagari script (e.g. "नमस्ते सैम! आज हम इस पूरे अध्याय की गहराई में जाएंगे...", "बिल्कुल एलेक्स! अगर विद्यार्थी इसके हर पहलू को समझ लें, तो परीक्षा में एक भी अंक नहीं कटेगा..."). Alex and Sam speak in pure, engaging, grammatically correct Devanagari Hindi so that Hindi speech synthesizers pronounce every word perfectly.';
+        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in warm, fluent, engaging conversational Hindi using Devanagari script throughout. ' +
+        'Alex and Sam talk like two passionate, brilliant study partners sitting across the table with cups of chai. ' +
+        'Use natural spoken phrases like "अरे वाह सैम!", "बिल्कुल सही बात!", "अब यहाँ एक बहुत बड़ा ट्विस्ट है...", "परीक्षा में विद्यार्थी अक्सर यहीं गलती करते हैं...". ' +
+        'Explain every technical term with clarity, using standard Hindi terminology while keeping the tone lively, respectful, and motivating.';
     } else if (language === 'english') {
       languageDirective =
-        'Language: ENGLISH. Write the podcast dialogue in natural, engaging, deeply analytical conversational English with clear pedagogical pacing.';
+        'Language: ENGLISH (Indian Educator & NotebookLM Style). Write the podcast dialogue in charismatic, witty, deeply insightful English in the signature Google NotebookLM style. ' +
+        'Alex is curious and energetic; Sam is structured, perceptive, and clear. They banter naturally, use vivid analogies, and tie ideas to competitive exam mastery.';
     }
 
     const result = await gemini.generateJson<{
@@ -1121,19 +1129,20 @@ export class AICoachService {
     }>({
       tier: 'heavy',
       systemInstruction:
-        'You produce NotebookLM Deep Dive Audio Overviews. Two expert co-hosts, Alex (engaging, curious, relatable co-host) ' +
-        'and Sam (analytical, structured, senior professor/tutor) have an in-depth, thorough, highly educational deep dive into the source material. ' +
-        'They do NOT rush or skim the surface. They explain the foundational "why" and "how", unpack complex formulas or rules, give vivid real-world analogies, ' +
-        'dissect common student traps and exam pitfalls, and give clear, memorable takeaways. ' +
-        'They banter naturally and respectfully ("Wait Sam, can you break that down further?", "Arey bilkul Alex, dekho asal me kya hota hai..."). ' +
-        'Keep dialogue rich, detailed, and completely clear (each turn should have 3 to 6 detailed sentences). ' +
-        'Avoid markdown symbols (*, #, _, `) in text since this will be read aloud by text-to-speech. Respond with JSON only.\n' +
+        'You are the lead showrunner and audio director for Google NotebookLM Deep Dive Podcasts. ' +
+        'You write scripts for two world-class co-hosts: Alex (curious, relatable, asks the tough questions, catches student confusion points) ' +
+        'and Sam (analytical, calm, deep-thinker, gives unforgettable real-world analogies and topper exam secrets). ' +
+        'THEIR BANTER IS FAMOUS FOR FEELING 100% ALIVE, WITTY, AND HUMAN: ' +
+        'They react dynamically ("Wait, wait, Sam, back up a second!", "Haha, exactly Alex!", "Spot on!"), build on each other’s thoughts, ' +
+        'and never lecture monotonously. Each turn must have 3 to 6 rich, comprehensive sentences that thoroughly unpack every concept, ' +
+        'formula, exception, and trap from the source material. ' +
+        'CRITICAL FOR AUDIO: Write pure spoken words only. Never include markdown symbols (*, #, _, `, bullet points, brackets) or raw math notation (write "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Respond with JSON only.\n' +
         languageDirective,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Create an extensive, highly detailed 16-24 turn audio dialogue between Alex and Sam unpacking every critical nuance of this document in the specified language. ' +
-        'Ensure the dialogue thoroughly explains all concepts, definitions, derivations, real-world examples, and exam pitfalls from the source. ' +
+        'Generate a complete 16-24 turn Google NotebookLM style Audio Deep Dive between Alex and Sam unpacking this document in the specified language. ' +
+        'Cover all principles, definitions, derivations, real-world examples, and exam pitfalls in thorough detail. ' +
         'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
       schema: {
         type: 'OBJECT',
@@ -1465,43 +1474,43 @@ export class AICoachService {
       return {
         docTitle,
         title: `${docTitle}: The Ultimate Hinglish Deep Dive`,
-        tagline: 'Alex aur Sam ke saath concept ka complete post-mortem!',
+        tagline: 'एलेक्स और सैम के साथ कांसेप्ट का कम्पलीट पोस्टमार्टम!',
         durationEstimate: '4 min listen',
         language: 'hinglish',
         turns: [
           {
             speaker: 'Alex',
-            text: `Hey everyone, welcome back! Aaj hum deep dive karne wale hain ${docTitle} pe. Sam, ye topic competitive exams me bohot zyada pucha jata hai na?`,
+            text: `अरे सैम! आज हम deep dive करने वाले हैं ${docTitle} पर। यह टॉपिक competitive exams में बहुत ज्यादा पूछा जाता है न?`,
             emotion: 'curious'
           },
           {
             speaker: 'Sam',
-            text: `Bilkul Alex! Aur students aksar isme silly mistakes karte hain. Lekin agar basic fundamentals clear ho, toh scoring bohot easy ho jati hai.`,
+            text: `बिल्कुल एलेक्स! और विद्यार्थी अक्सर इसमें silly mistakes कर देते हैं। लेकिन अगर basic fundamentals और concepts अच्छे से clear हों, तो स्कोरिंग बहुत आसान हो जाती है।`,
             emotion: 'insightful'
           },
           {
             speaker: 'Alex',
-            text: `Sahi bola! Toh students ko sabse pehle kis cheez pe focus karna chahiye?`,
+            text: `सही बोला सैम! तो सबसे पहले विद्यार्थियों को किस चीज़ पर focus करना चाहिए?`,
             emotion: 'enthusiastic'
           },
           {
             speaker: 'Sam',
-            text: `Sabse pehle core definitions aur assumptions ko samjho. Agar foundation strong hai, toh complex numericals bina kisi tension ke solve ho jate hain.`,
+            text: `सबसे पहले core definitions, formulas और assumptions को समझो। अगर foundation strong है, तो complex questions भी बिना किसी tension के solve हो जाते हैं।`,
             emotion: 'explaining'
           },
           {
             speaker: 'Alex',
-            text: `Aur exam hall me common traps kya hote hain jaha negative marking lagti hai?`,
+            text: `और exam hall में common traps क्या होते हैं जहाँ negative marking लगती है?`,
             emotion: 'curious'
           },
           {
             speaker: 'Sam',
-            text: `Units conversion aur boundary conditions! Log Celsius ko Kelvin me convert karna bhool jate hain aur galat option tick kar aate hain.`,
+            text: `Units conversion और boundary conditions! जैसे विद्यार्थी Celsius को Kelvin में बदलना भूल जाते हैं और गलत option tick कर आते हैं।`,
             emotion: 'warning'
           },
           {
             speaker: 'Alex',
-            text: `Bilkul accurate point! Formula lagane se pehle units check karo aur active recall se revise karo!`,
+            text: `बिल्कुल सटीक point! Formula लगाने से पहले units check करो और active recall से बार-बार revise करो!`,
             emotion: 'inspired'
           }
         ],

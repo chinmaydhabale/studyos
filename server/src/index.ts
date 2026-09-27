@@ -15,6 +15,7 @@ import { setupVideoSyncSocket } from './sockets/videoSyncSocket.js';
 import { setupVoiceAndChatSocket } from './sockets/voiceAndChatSocket.js';
 import { setupStudyRoomSocket, getExpectedVoicePassword } from './sockets/studyRoomSocket.js';
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
+import { neuralTts } from './services/neuralTtsService.js';
 import { Flashcard } from './types.js';
 
 dotenv.config();
@@ -599,6 +600,25 @@ app.post('/api/ai/notebook/audio-overview', async (req, res) => {
   } catch (err) {
     console.error('[ai] notebook/audio-overview failed:', err);
     res.status(500).json({ error: 'Failed to generate audio overview' });
+  }
+});
+
+app.post('/api/ai/tts', async (req, res) => {
+  const { text, speaker, language, voice, rate, pitch } = req.body || {};
+  if (!text) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  try {
+    const audioBuffer = await neuralTts.synthesize({ text, speaker, language, voice, rate, pitch });
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audioBuffer.length.toString(),
+      'Cache-Control': 'public, max-age=86400'
+    });
+    res.send(audioBuffer);
+  } catch (err: any) {
+    console.error('[tts] neural synthesis failed:', err?.message || err);
+    res.status(500).json({ error: 'Neural TTS generation failed', details: err?.message });
   }
 });
 

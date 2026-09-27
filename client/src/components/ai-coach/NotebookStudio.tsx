@@ -196,6 +196,9 @@ export const NotebookStudio: React.FC = () => {
   // Voices list for Web Speech API & Customization
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCacheRef = useRef<Map<string, string>>(new Map());
+  const [isAudioBuffering, setIsAudioBuffering] = useState(false);
 
   // PDF Extraction States
   const [isExtractingPdf, setIsExtractingPdf] = useState(false);
@@ -204,10 +207,10 @@ export const NotebookStudio: React.FC = () => {
 
   // Speaker Voice Selection & Settings
   const [alexVoiceName, setAlexVoiceName] = useState<string>(() => {
-    return localStorage.getItem('studyos_voice_alex') || '';
+    return localStorage.getItem('studyos_voice_alex') || 'hi-IN-SwaraNeural';
   });
   const [samVoiceName, setSamVoiceName] = useState<string>(() => {
-    return localStorage.getItem('studyos_voice_sam') || '';
+    return localStorage.getItem('studyos_voice_sam') || 'hi-IN-MadhurNeural';
   });
   const [hinglishEngine, setHinglishEngine] = useState<'hi-IN' | 'en-IN'>(() => {
     return (localStorage.getItem('studyos_hinglish_engine') as 'hi-IN' | 'en-IN') || 'hi-IN';
@@ -258,33 +261,12 @@ export const NotebookStudio: React.FC = () => {
       if (synthRef.current) {
         synthRef.current.cancel();
       }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
   }, []);
-
-  // Auto-select best voices once voices are loaded if not manually set
-  useEffect(() => {
-    if (!voices.length) return;
-
-    if (!alexVoiceName || !voices.some(v => v.name === alexVoiceName)) {
-      const bestAlex = hindiVoices[0] || indianVoices[0] || voices[0];
-      if (bestAlex) {
-        setAlexVoiceName(bestAlex.name);
-        localStorage.setItem('studyos_voice_alex', bestAlex.name);
-      }
-    }
-
-    if (!samVoiceName || !voices.some(v => v.name === samVoiceName)) {
-      const bestSam =
-        (hindiVoices.length > 1 ? hindiVoices[1] : null) ||
-        indianVoices.find(v => v.name !== alexVoiceName) ||
-        indianVoices[0] ||
-        (voices.length > 1 ? voices[1] : voices[0]);
-      if (bestSam) {
-        setSamVoiceName(bestSam.name);
-        localStorage.setItem('studyos_voice_sam', bestSam.name);
-      }
-    }
-  }, [voices, hindiVoices.length, indianVoices.length]);
 
   const handleSelectAlexVoice = (name: string) => {
     setAlexVoiceName(name);
@@ -301,41 +283,68 @@ export const NotebookStudio: React.FC = () => {
     localStorage.setItem('studyos_hinglish_engine', engine);
   };
 
-  // Test voice sample
-  const handleTestVoice = (speaker: 'Alex' | 'Sam') => {
-    if (!synthRef.current) return;
-    synthRef.current.cancel();
-
-    const voiceName = speaker === 'Alex' ? alexVoiceName : samVoiceName;
-    const voice = voices.find(v => v.name === voiceName);
-    const isHindi = voice ? isHindiVoice(voice) : audioLanguage === 'hindi';
-
-    let testText = '';
-    if (speaker === 'Alex') {
-      testText = isHindi || audioLanguage !== 'english'
-        ? 'नमस्ते! मैं एलेक्स हूँ। हम दोनों मिलकर हर कठिन विषय को बहुत आसान और रोचक बनाएंगे!'
-        : 'Hey there! I am Alex. Ready to break down this topic into simple, memorable concepts!';
-    } else {
-      testText = isHindi || audioLanguage !== 'english'
-        ? 'नमस्ते! मैं सैम हूँ। परीक्षा में सफलता के लिए सटीक सूत्र और नियमों को समझना बहुत आवश्यक है।'
-        : 'Hello! I am Sam. Let us analyze every formula, mechanism, and exam pitfall thoroughly.';
+  // Test voice sample using high-fidelity Neural Studio TTS
+  const handleTestVoice = async (speaker: 'Alex' | 'Sam') => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (synthRef.current) {
+      synthRef.current.cancel();
     }
 
-    const utterance = new SpeechSynthesisUtterance(testText);
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = isHindi ? 'hi-IN' : (voice.lang || (audioLanguage === 'hindi' ? 'hi-IN' : 'en-IN'));
-    } else {
-      utterance.lang = audioLanguage === 'hindi' ? 'hi-IN' : 'en-IN';
-    }
+    const isAlex = speaker === 'Alex';
+    const activeLang = audioLanguage;
+    const neuralVoice = isAlex
+      ? (alexVoiceName.includes('Neural') ? alexVoiceName : activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
+      : (samVoiceName.includes('Neural') ? samVoiceName : activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
 
-    utterance.rate = playbackRate;
-    utterance.pitch = speaker === 'Alex' ? 1.15 : 0.88;
+    const sampleText = isAlex
+      ? (activeLang === 'english'
+          ? 'Hey there! I am Alex. Ready to break down this topic together in our deep dive?'
+          : 'नमस्ते! मैं एलेक्स हूँ। हम दोनों मिलकर हर कठिन कांसेप्ट को बहुत आसान और मजेदार तरीके से समझेंगे!')
+      : (activeLang === 'english'
+          ? 'Hello! I am Sam. Let us examine the core principles, derivations, and exam traps thoroughly.'
+          : 'नमस्ते! मैं सैम हूँ। परीक्षा में सफलता के लिए सटीक सूत्र और नियमों को समझना बहुत आवश्यक है।');
 
     setTestingSpeaker(speaker);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: sampleText,
+          speaker,
+          language: activeLang,
+          voice: neuralVoice
+        })
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audio.onended = () => setTestingSpeaker(null);
+        audio.onerror = () => setTestingSpeaker(null);
+        await audio.play();
+        return;
+      }
+    } catch (e) {
+      console.warn('Neural test failed, using fallback:', e);
+    }
+
+    // Fallback to browser synth
+    if (!synthRef.current) {
+      setTestingSpeaker(null);
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(sampleText);
+    utterance.lang = activeLang === 'hindi' ? 'hi-IN' : 'en-IN';
+    utterance.pitch = isAlex ? 1.15 : 0.88;
     utterance.onend = () => setTestingSpeaker(null);
     utterance.onerror = () => setTestingSpeaker(null);
-
     synthRef.current.speak(utterance);
   };
 
@@ -546,7 +555,7 @@ export const NotebookStudio: React.FC = () => {
     }
   };
 
-  const playTurn = (turnIndex: number, currentTurns: AudioTurn[]) => {
+  const fallbackBrowserSpeech = (turnIndex: number, currentTurns: AudioTurn[]) => {
     if (!synthRef.current || !currentTurns || turnIndex >= currentTurns.length) {
       setIsPlaying(false);
       setCurrentTurnIndex(0);
@@ -562,54 +571,18 @@ export const NotebookStudio: React.FC = () => {
     const isAlex = turn.speaker === 'Alex';
     const activeLang = audioOverview?.language || audioLanguage;
 
-    // Determine voice to use
-    const targetVoiceName = isAlex ? alexVoiceName : samVoiceName;
-    let chosenVoice = voices.find(v => v.name === targetVoiceName);
-
-    if (!chosenVoice) {
-      if (activeLang === 'hindi') {
-        chosenVoice = isAlex
-          ? (hindiVoices[0] || indianVoices[0] || voices[0])
-          : (hindiVoices[1] || hindiVoices[0] || indianVoices[0] || voices[0]);
-      } else if (activeLang === 'hinglish') {
-        if (hinglishEngine === 'hi-IN' && hindiVoices.length > 0) {
-          chosenVoice = isAlex
-            ? hindiVoices[0]
-            : (hindiVoices[1] || hindiVoices[0]);
-        } else {
-          chosenVoice = isAlex
-            ? (indianVoices[0] || hindiVoices[0] || voices[0])
-            : (indianVoices[1] || indianVoices[0] || hindiVoices[0] || voices[0]);
-        }
-      } else {
-        chosenVoice = isAlex
-          ? (otherVoices[0] || voices[0])
-          : (otherVoices[1] || otherVoices[0] || voices[0]);
-      }
-    }
-
-    if (chosenVoice) {
-      utterance.voice = chosenVoice;
-    }
-
-    // Set utterance language
     if (activeLang === 'hindi') {
       utterance.lang = 'hi-IN';
+      const hv = voices.filter(v => isHindiVoice(v));
+      if (hv.length >= 2) utterance.voice = isAlex ? hv[0] : hv[1];
+      else if (hv.length === 1) utterance.voice = hv[0];
     } else if (activeLang === 'hinglish') {
-      if (chosenVoice && isHindiVoice(chosenVoice)) {
-        utterance.lang = 'hi-IN';
-      } else {
-        utterance.lang = hinglishEngine;
-      }
+      utterance.lang = 'hi-IN';
     } else {
-      utterance.lang = chosenVoice?.lang || 'en-US';
+      utterance.lang = 'en-US';
     }
 
-    if (isAlex) {
-      utterance.pitch = 1.15; // Higher, curious & energetic
-    } else {
-      utterance.pitch = 0.88; // Deeper, calm & authoritative
-    }
+    utterance.pitch = isAlex ? 1.15 : 0.88;
 
     utterance.onend = () => {
       if (turnIndex + 1 < currentTurns.length) {
@@ -629,14 +602,139 @@ export const NotebookStudio: React.FC = () => {
       setIsPlaying(false);
     };
 
-    setCurrentTurnIndex(turnIndex);
     synthRef.current.speak(utterance);
     setIsPlaying(true);
+  };
+
+  const playTurn = async (turnIndex: number, currentTurns: AudioTurn[]) => {
+    if (!currentTurns || turnIndex >= currentTurns.length) {
+      setIsPlaying(false);
+      setCurrentTurnIndex(0);
+      return;
+    }
+
+    // Stop existing audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (synthRef.current) {
+      synthRef.current.cancel();
+    }
+
+    setCurrentTurnIndex(turnIndex);
+    setIsPlaying(true);
+
+    const turn = currentTurns[turnIndex];
+    const isAlex = turn.speaker === 'Alex';
+    const activeLang = audioOverview?.language || audioLanguage;
+
+    // Resolve Neural Voice ID
+    let neuralVoice = isAlex
+      ? (activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
+      : (activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
+
+    if (alexVoiceName && isAlex && alexVoiceName.includes('Neural')) {
+      neuralVoice = alexVoiceName;
+    } else if (samVoiceName && !isAlex && samVoiceName.includes('Neural')) {
+      neuralVoice = samVoiceName;
+    }
+
+    // Try high-fidelity Neural TTS first
+    try {
+      setIsAudioBuffering(true);
+      const cacheKey = `${neuralVoice}|${playbackRate}|${turn.text}`;
+      let audioBlobUrl = audioCacheRef.current.get(cacheKey);
+
+      if (!audioBlobUrl) {
+        const rateParam = playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%';
+        const res = await fetch(`${API_BASE_URL}/api/ai/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: turn.text,
+            speaker: turn.speaker,
+            language: activeLang,
+            voice: neuralVoice,
+            rate: rateParam
+          })
+        });
+
+        if (!res.ok) {
+          throw new Error(`TTS server responded with ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        audioBlobUrl = URL.createObjectURL(blob);
+        audioCacheRef.current.set(cacheKey, audioBlobUrl);
+      }
+
+      setIsAudioBuffering(false);
+
+      const audio = new Audio(audioBlobUrl);
+      audioRef.current = audio;
+      audio.playbackRate = playbackRate;
+
+      audio.onended = () => {
+        if (turnIndex + 1 < currentTurns.length) {
+          setCurrentTurnIndex(turnIndex + 1);
+          playTurn(turnIndex + 1, currentTurns);
+        } else {
+          setIsPlaying(false);
+          setCurrentTurnIndex(0);
+          addToast('Podcast Finished', 'Audio Overview complete!', 'success');
+        }
+      };
+
+      audio.onerror = () => {
+        console.warn('Neural audio playback failed, falling back to browser speech synthesis');
+        fallbackBrowserSpeech(turnIndex, currentTurns);
+      };
+
+      await audio.play();
+
+      // Prefetch next turn in background for 0-latency gapless playback
+      if (turnIndex + 1 < currentTurns.length) {
+        const nextTurn = currentTurns[turnIndex + 1];
+        const nextIsAlex = nextTurn.speaker === 'Alex';
+        const nextVoice = nextIsAlex
+          ? (activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
+          : (activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
+        const nextKey = `${nextVoice}|${playbackRate}|${nextTurn.text}`;
+        if (!audioCacheRef.current.has(nextKey)) {
+          fetch(`${API_BASE_URL}/api/ai/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: nextTurn.text,
+              speaker: nextTurn.speaker,
+              language: activeLang,
+              voice: nextVoice,
+              rate: playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%'
+            })
+          })
+            .then(r => r.ok ? r.blob() : null)
+            .then(b => {
+              if (b) audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
+            })
+            .catch(() => {});
+        }
+      }
+
+      return;
+    } catch (err) {
+      console.warn('Neural TTS request failed, using browser speech synthesis fallback:', err);
+      setIsAudioBuffering(false);
+      fallbackBrowserSpeech(turnIndex, currentTurns);
+    }
   };
 
   const togglePlayAudio = () => {
     if (!audioOverview || !audioOverview.turns.length) return;
     if (isPlaying) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
       if (synthRef.current) synthRef.current.cancel();
       setIsPlaying(false);
     } else {
@@ -646,6 +744,10 @@ export const NotebookStudio: React.FC = () => {
 
   const restartAudio = () => {
     if (!audioOverview) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     if (synthRef.current) synthRef.current.cancel();
     setCurrentTurnIndex(0);
     playTurn(0, audioOverview.turns);
@@ -654,6 +756,10 @@ export const NotebookStudio: React.FC = () => {
   const skipTurn = (delta: number) => {
     if (!audioOverview) return;
     const nextIdx = Math.max(0, Math.min(audioOverview.turns.length - 1, currentTurnIndex + delta));
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     if (synthRef.current) synthRef.current.cancel();
     setCurrentTurnIndex(nextIdx);
     if (isPlaying) {
@@ -1083,8 +1189,13 @@ export const NotebookStudio: React.FC = () => {
                         onChange={(e) => handleSelectAlexVoice(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-violet-400"
                       >
+                        <optgroup label="🌟 Studio Neural Voices (Google NotebookLM Quality)">
+                          <option value="hi-IN-SwaraNeural">🇮🇳 Swara Neural (Natural Hindi / Hinglish Female - Recommended)</option>
+                          <option value="en-IN-NeerjaExpressiveNeural">🇮🇳 Neerja Expressive (Natural Indian English Female)</option>
+                          <option value="en-US-JennyNeural">🌐 Jenny Neural (Studio Global English Female)</option>
+                        </optgroup>
                         {hindiVoices.length > 0 && (
-                          <optgroup label="🇮🇳 Native Hindi Voices (Best for Hindi / Hinglish)">
+                          <optgroup label="💻 Browser Native Hindi Voices">
                             {hindiVoices.map((v, i) => (
                               <option key={i} value={v.name}>
                                 {v.name} ({v.lang})
@@ -1093,7 +1204,7 @@ export const NotebookStudio: React.FC = () => {
                           </optgroup>
                         )}
                         {indianVoices.length > 0 && (
-                          <optgroup label="🇮🇳 Indian English Voices">
+                          <optgroup label="💻 Browser Indian English Voices">
                             {indianVoices.map((v, i) => (
                               <option key={i} value={v.name}>
                                 {v.name} ({v.lang})
@@ -1143,8 +1254,13 @@ export const NotebookStudio: React.FC = () => {
                         onChange={(e) => handleSelectSamVoice(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
                       >
+                        <optgroup label="🌟 Studio Neural Voices (Google NotebookLM Quality)">
+                          <option value="hi-IN-MadhurNeural">🇮🇳 Madhur Neural (Studio Hindi / Hinglish Male - Recommended)</option>
+                          <option value="en-IN-PrabhatNeural">🇮🇳 Prabhat Neural (Confident Indian English Male)</option>
+                          <option value="en-US-GuyNeural">🌐 Guy Neural (Studio Global English Male)</option>
+                        </optgroup>
                         {hindiVoices.length > 0 && (
-                          <optgroup label="🇮🇳 Native Hindi Voices (Best for Hindi / Hinglish)">
+                          <optgroup label="💻 Browser Native Hindi Voices">
                             {hindiVoices.map((v, i) => (
                               <option key={i} value={v.name}>
                                 {v.name} ({v.lang})
@@ -1153,7 +1269,7 @@ export const NotebookStudio: React.FC = () => {
                           </optgroup>
                         )}
                         {indianVoices.length > 0 && (
-                          <optgroup label="🇮🇳 Indian English Voices">
+                          <optgroup label="💻 Browser Indian English Voices">
                             {indianVoices.map((v, i) => (
                               <option key={i} value={v.name}>
                                 {v.name} ({v.lang})

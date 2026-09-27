@@ -5,19 +5,24 @@ import {
   HelpCircle,
   FileQuestion,
   Layers,
-  FileText,
-  Video,
   Clock,
   Calendar,
   CheckCircle,
   ArrowRight,
-  TrendingDown,
   BookOpen,
   Award,
   Zap,
-  Printer,
   ChevronRight,
-  Cpu
+  Cpu,
+  Brain,
+  Lightbulb,
+  Check,
+  RotateCcw,
+  Target,
+  Flame,
+  Radio,
+  FileText,
+  Volume2
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
@@ -37,16 +42,18 @@ interface AIStatus {
   defaultModel: string;
 }
 
+type SubTabId = 'notebook' | 'doubts' | 'flashcards' | 'quiz' | 'planner';
+
 export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNavigateToCalendar }) => {
   const { addToast, currentUser } = useSocket();
   const { addXp, triggerCelebration } = useStudy();
 
-  const [activeSubTab, setActiveSubTab] = useState<'notebook' | 'planner' | 'doubts' | 'handwritten' | 'quiz' | 'flashcards' | 'summarize'>('notebook');
-  const [promptInput, setPromptInput] = useState(initialPrompt || 'Tomorrow should include 30 minutes of Current Affairs.');
+  const [activeSubTab, setActiveSubTab] = useState<SubTabId>('notebook');
   const [isLoading, setIsLoading] = useState(false);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
 
   // Planner States
+  const [promptInput, setPromptInput] = useState(initialPrompt || 'Tomorrow should include 45 minutes of Physics Thermodynamics focus block.');
   const [plannerResult, setPlannerResult] = useState<{
     message: string;
     task: any;
@@ -56,6 +63,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
 
   // Doubt Solver States
   const [doubtQuestion, setDoubtQuestion] = useState('Why does Carnot engine have maximum theoretical efficiency?');
+  const [doubtSubject, setDoubtSubject] = useState('Physics');
   const [doubtSolution, setDoubtSolution] = useState<{
     explanation: string;
     steps: string[];
@@ -64,72 +72,64 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     source?: 'gemini' | 'fallback';
   } | null>(null);
 
-  // Handwritten Notes States
-  const [handwrittenTopic, setHandwrittenTopic] = useState('Thermodynamics & Carnot Cycle');
-  const [handwrittenData, setHandwrittenData] = useState<any>(null);
-
-  // Quiz topic input
-  const [quizTopic, setQuizTopic] = useState('Indian Economy & Thermodynamics');
-
-  // Flashcard topic input
-  const [flashcardTopic, setFlashcardTopic] = useState('Quantitative Aptitude Formulas');
-
   // Flashcards States
+  const [flashcardTopic, setFlashcardTopic] = useState('Thermodynamics & Heat Engines');
+  const [flashcardCount, setFlashcardCount] = useState<number>(8);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([
     {
       id: 'fc-1',
       front: 'What is the Second Law of Thermodynamics in terms of entropy?',
-      back: 'In an isolated system, total entropy never decreases over time: ΔS_total ≥ 0.',
+      back: 'In an isolated system, total entropy never decreases over time: ΔS_total ≥ 0. Entropy remains constant in reversible processes and increases in irreversible ones.',
       subject: 'Physics',
       masteryLevel: 'reviewing'
     },
     {
       id: 'fc-2',
-      front: 'What is the Current Affairs focus of G20 New Delhi Declaration?',
-      back: 'Inclusive global growth, digital public infrastructure (DPI), green development pact, and multilateral bank reforms.',
-      subject: 'Current Affairs',
+      front: 'What is the Carnot efficiency formula and critical unit constraint?',
+      back: 'η = 1 - (T_C / T_H). Both reservoir temperatures T_C and T_H must strictly be in Kelvin (K = °C + 273.15).',
+      subject: 'Physics',
       masteryLevel: 'learning'
+    },
+    {
+      id: 'fc-3',
+      front: 'What is the Monetary Policy Committee (MPC) inflation target in India?',
+      back: 'Flexible inflation target of 4% Consumer Price Index (CPI) with a tolerance band of ±2% (2% to 6%), under Section 45ZB of the RBI Act.',
+      subject: 'Economics',
+      masteryLevel: 'mastered'
     }
   ]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
 
   // Quiz States
+  const [quizTopic, setQuizTopic] = useState('Thermodynamics & Carnot Cycle');
   const [quizList, setQuizList] = useState<QuizQuestion[]>([
     {
       id: 'q-1',
-      question: 'Which international organization publishes the World Economic Outlook report?',
-      options: ['World Bank', 'International Monetary Fund (IMF)', 'World Trade Organization', 'OECD'],
-      correctAnswer: 1,
-      explanation: 'The International Monetary Fund (IMF) publishes the World Economic Outlook twice a year.',
-      subject: 'Current Affairs',
-      topic: 'Global Institutions'
+      question: 'Which of the following processes in a Carnot cycle involves heat absorption at high temperature?',
+      options: [
+        'Reversible Isothermal Expansion',
+        'Reversible Adiabatic Expansion',
+        'Reversible Isothermal Compression',
+        'Reversible Adiabatic Compression'
+      ],
+      correctAnswer: 0,
+      explanation: 'In stage 1 of the Carnot cycle, the working gas expands isothermally at high temperature T_H, absorbing heat Q_H from the source.',
+      subject: 'Physics',
+      topic: 'Thermodynamics'
     },
     {
       id: 'q-2',
-      question: 'For an adiabatic reversible expansion of an ideal gas, which quantity remains constant?',
-      options: ['P · V', 'P · V^γ', 'T · V', 'P / T'],
+      question: 'For an adiabatic reversible expansion of an ideal gas, which relationship holds true?',
+      options: ['P · V = constant', 'P · V^γ = constant', 'T / P = constant', 'V / T^γ = constant'],
       correctAnswer: 1,
-      explanation: 'In an adiabatic reversible process (PV^γ = constant), no heat enters or leaves the system.',
+      explanation: 'In an adiabatic reversible process with no heat exchange (dQ = 0), the state equation is P · V^γ = constant.',
       subject: 'Physics',
       topic: 'Thermodynamics'
     }
   ]);
   const [selectedAnswers, setSelectedAnswers] = useState<{ [qId: string]: number }>({});
   const [showQuizResults, setShowQuizResults] = useState(false);
-
-  // Lecture Summarizer States
-  const [summaryUrl, setSummaryUrl] = useState('https://www.youtube.com/watch?v=k7YS_P_t3uA');
-  const [summaryTitle, setSummaryTitle] = useState('Quantitative Aptitude Masterclass');
-  const [lectureSummary, setLectureSummary] = useState<{
-    title?: string;
-    channel?: string;
-    duration?: string;
-    summary?: string;
-    chapters?: Array<{ timestamp?: string; title?: string; takeaway?: string }>;
-    quickQuiz?: string[];
-    source?: 'gemini' | 'fallback';
-  } | null>(null);
 
   // Sync initialPrompt changes (e.g. from SyncTheater "Ask AI at timestamp")
   useEffect(() => {
@@ -140,32 +140,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     }
   }, [initialPrompt]);
 
-  const handleSummarizeLecture = async () => {
-    if (!summaryUrl.trim()) return;
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/summarize-lecture`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoUrl: summaryUrl.trim(),
-          title: summaryTitle.trim() || undefined,
-          userId: currentUser.id
-        })
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setLectureSummary(data);
-      addToast('Lecture Summarized!', 'AI generated chapter breakdown and key takeaways.', 'success');
-      addXp(30, 'Lecture Summarization');
-    } catch (e: any) {
-      addToast('Summarization Failed', e?.message || 'Could not summarize lecture.', 'alert');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Report which backend is actually answering: live Gemini or offline templates.
+  // Report which backend is actively answering: live Gemini or offline templates.
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE_URL}/api/ai/status`)
@@ -181,7 +156,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     };
   }, []);
 
-  // Handler: Parse NLP Schedule Prompt
+  // Handler: Run Schedule Prompt
   const handleRunSchedulePrompt = async (textToRun?: string) => {
     const text = textToRun || promptInput;
     if (!text.trim()) return;
@@ -191,7 +166,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/schedule-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, userId: currentUser.id })
+        body: JSON.stringify({ prompt: text, userId: currentUser?.id })
       });
       const data = await res.json();
       setPlannerResult(data);
@@ -206,71 +181,35 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   };
 
   // Handler: Solve Doubt
-  const handleSolveDoubt = async () => {
-    if (!doubtQuestion.trim()) return;
+  const handleSolveDoubt = async (customQ?: string) => {
+    const q = customQ || doubtQuestion;
+    if (!q.trim()) return;
     setIsLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/doubt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: doubtQuestion, context: { userId: currentUser.id } })
+        body: JSON.stringify({
+          question: q.trim(),
+          context: {
+            subject: doubtSubject,
+            userId: currentUser?.id
+          }
+        })
       });
       const data = await res.json();
       setDoubtSolution(data);
-      addToast('Doubt Solved', 'AI Teacher provided complete conceptual breakdown.', 'info');
+      addToast('Doubt Solved', 'AI Coach provided complete conceptual breakdown.', 'info');
+      addXp(25, 'Solved Concept Doubt');
     } catch (e) {
       console.error(e);
+      addToast('Failed', 'Could not reach AI doubt service', 'alert');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handler: Generate Handwritten Notes
-  const handleGenerateHandwritten = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/handwritten-notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: handwrittenTopic, userId: currentUser.id })
-      });
-      const data = await res.json();
-      setHandwrittenData(data);
-      addToast('Handwritten Notes Ready', 'Generated realistic notebook study sheet!', 'success');
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handler: Generate a fresh AI quiz for the chosen topic
-  const handleGenerateQuiz = async () => {
-    if (!quizTopic.trim()) return;
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/quiz`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: quizTopic, count: 3 })
-      });
-      const data: QuizQuestion[] = await res.json();
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error('AI returned no questions');
-      }
-      setQuizList(data);
-      setSelectedAnswers({});
-      setShowQuizResults(false);
-      addToast('Quiz Generated', `${data.length} AI questions on ${quizTopic}.`, 'success');
-    } catch (e) {
-      console.error(e);
-      addToast('Quiz Failed', 'Could not generate a quiz right now.', 'alert');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handler: Generate AI flashcards for the chosen topic
+  // Handler: Generate AI Flashcards
   const handleGenerateFlashcards = async () => {
     if (!flashcardTopic.trim()) return;
     setIsLoading(true);
@@ -278,7 +217,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/flashcards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: flashcardTopic, count: 6 })
+        body: JSON.stringify({ topic: flashcardTopic.trim(), count: flashcardCount })
       });
       const data: Flashcard[] = await res.json();
       if (!Array.isArray(data) || data.length === 0) {
@@ -287,10 +226,38 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       setFlashcards(data);
       setCurrentCardIndex(0);
       setIsFlipped(false);
-      addToast('Flashcards Generated', `${data.length} AI cards on ${flashcardTopic}.`, 'success');
+      addToast('Flashcards Ready', `Generated ${data.length} high-yield cards via Gemini 3.7 Flash.`, 'success');
+      addXp(40, 'Generated Flashcard Deck');
     } catch (e) {
       console.error(e);
       addToast('Flashcards Failed', 'Could not generate flashcards right now.', 'alert');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler: Generate AI Quiz
+  const handleGenerateQuiz = async () => {
+    if (!quizTopic.trim()) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/quiz`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: quizTopic.trim(), count: 4 })
+      });
+      const data: QuizQuestion[] = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('AI returned no questions');
+      }
+      setQuizList(data);
+      setSelectedAnswers({});
+      setShowQuizResults(false);
+      addToast('Quiz Generated', `${data.length} diagnostic questions on ${quizTopic}.`, 'success');
+      addXp(30, 'Generated Diagnostic Quiz');
+    } catch (e) {
+      console.error(e);
+      addToast('Quiz Failed', 'Could not generate a quiz right now.', 'alert');
     } finally {
       setIsLoading(false);
     }
@@ -301,204 +268,143 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     0
   );
 
+  const masteredCount = flashcards.filter(f => f.masteryLevel === 'mastered').length;
+  const reviewingCount = flashcards.filter(f => f.masteryLevel === 'reviewing').length;
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)]">
+    <div className="w-full max-w-7xl mx-auto p-3 sm:p-4 flex flex-col h-[calc(100vh-4.5rem)]">
       
-      {/* Top AI Coach Banner & Navigation Sub-Tabs */}
-      <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-4 mb-4 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* ========================================================================= */}
+      {/* 1. TOP COMMAND BAR: StudyOS AI Coach 2.0 Glassmorphic Header */}
+      {/* ========================================================================= */}
+      <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/10 rounded-2xl p-3 sm:p-4 mb-3 shadow-2xl relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute -top-12 -left-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 relative z-10">
+          
+          {/* Brand & Status */}
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/25">
-              <Sparkles className="w-6 h-6 text-white animate-pulse" />
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/30 shrink-0">
+              <Sparkles className="w-5 h-5 text-white animate-pulse" />
             </div>
             <div>
-              <h1 className="text-base font-extrabold text-white flex items-center gap-2">
-                <span>Personal AI Study Coach & Teacher</span>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1 ${
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
+                  <span>StudyOS AI Coach</span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-indigo-500 to-cyan-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm">
+                    2.0 Pro
+                  </span>
+                </h1>
+
+                {/* Model Indicator Pill */}
+                <div
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex items-center gap-1.5 transition-all ${
                     aiStatus?.enabled
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                      : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                      : 'bg-slate-800 text-slate-300 border-white/10'
                   }`}
                   title={
                     aiStatus?.enabled
-                      ? 'Responses are generated live by Gemini'
-                      : 'GEMINI_API_KEY is not configured, so built-in offline templates are used'
+                      ? 'Connected to Gemini API & Microsoft Edge Neural TTS'
+                      : 'GEMINI_API_KEY not detected, using intelligent built-in templates'
                   }
                 >
-                  <Cpu className="w-3 h-3" />
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
                   <span>
                     {aiStatus === null
-                      ? 'Checking AI...'
+                      ? 'Connecting AI...'
                       : aiStatus.enabled
-                      ? `Gemini · ${aiStatus.model}`
-                      : 'Offline templates'}
+                      ? `Gemini ${aiStatus.model} · Neural Studio`
+                      : 'Offline Engine Active'}
                   </span>
-                </span>
-              </h1>
-              <p className="text-xs text-slate-400">
-                Natural schedule planning, instant doubt breakdowns, handwritten study sheets & flashcard mastery
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-400 hidden sm:block mt-0.5">
+                Google NotebookLM Studio, Neural Audio Podcast, Step-by-Step Doubt Solver & Flashcards
               </p>
             </div>
           </div>
 
-          {/* Sub-tab Navigation */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/10 overflow-x-auto">
+          {/* Quick Metrics & Subtab Navigation */}
+          <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-white/10 overflow-x-auto scrollbar-none">
             {[
-              { id: 'notebook', label: '🎙️ NotebookLM Studio', icon: Sparkles },
-              { id: 'planner', label: '📅 AI Schedule Planner', icon: Calendar },
-              { id: 'doubts', label: '💡 Doubt Solver', icon: HelpCircle },
-              { id: 'handwritten', label: '✍️ Handwritten Notes', icon: FileText },
-              { id: 'summarize', label: '🎬 Summarize Lecture', icon: Video },
-              { id: 'flashcards', label: '🎴 Flashcards (SM-2)', icon: Layers },
-              { id: 'quiz', label: '🎯 Quiz & Mock Test', icon: FileQuestion }
+              { id: 'notebook', label: '🎙️ NotebookLM Studio', badge: 'Flagship' },
+              { id: 'doubts', label: '⚡ Doubt Solver', badge: '' },
+              { id: 'flashcards', label: '🎴 Flashcard Vault', badge: 'SM-2' },
+              { id: 'quiz', label: '🎯 Diagnostic Drill', badge: '' },
+              { id: 'planner', label: '📅 AI Daily Planner', badge: '' }
             ].map((tab) => {
-              const Icon = tab.icon;
+              const isActive = activeSubTab === tab.id;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveSubTab(tab.id as any)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                    activeSubTab === tab.id
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                  onClick={() => setActiveSubTab(tab.id as SubTabId)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+                    isActive
+                      ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-md shadow-indigo-500/30 scale-[1.02]'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
                   <span>{tab.label}</span>
+                  {tab.badge && (
+                    <span
+                      className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${
+                        isActive
+                          ? 'bg-white/20 text-white'
+                          : 'bg-indigo-500/20 text-indigo-300'
+                      }`}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
+
         </div>
       </div>
 
-      {/* Main Feature Content Container */}
-      <div className="flex-1 overflow-y-auto">
+      {/* ========================================================================= */}
+      {/* 2. MAIN ACTIVE VIEW CONTAINER */}
+      {/* ========================================================================= */}
+      <div className="flex-1 overflow-y-auto pr-1">
         
-        {/* SUBTAB 0: NotebookLM Studio */}
+        {/* SUBTAB 0: Flagship NotebookLM Studio */}
         {activeSubTab === 'notebook' && (
           <NotebookStudio />
         )}
 
-        {/* SUBTAB 1: AI Schedule Planner */}
-        {activeSubTab === 'planner' && (
-          <div className="space-y-4">
-            
-            {/* Prompt Bar Card */}
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">
-                Tell your AI Coach what to schedule:
-              </label>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={promptInput}
-                  onChange={(e) => setPromptInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleRunSchedulePrompt()}
-                  placeholder='Try: "Tomorrow should include 30 minutes of Current Affairs."'
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/80 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
-                />
-                <button
-                  onClick={() => handleRunSchedulePrompt()}
-                  disabled={isLoading}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all"
-                >
-                  <Sparkles className="w-4 h-4 text-cyan-300" />
-                  <span>{isLoading ? 'Planning...' : 'Schedule with AI'}</span>
-                </button>
-              </div>
-
-              {/* Quick Prompt Ideas */}
-              <div className="flex items-center gap-2 mt-3 overflow-x-auto text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-500">Quick Prompts:</span>
-                {[
-                  'Tomorrow should include 30 minutes of Current Affairs.',
-                  'Schedule 45 minutes of Physics Thermodynamics for tomorrow morning.',
-                  'Add 1 hour of Calculus problem solving today at 2 PM.'
-                ].map((sample, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setPromptInput(sample);
-                      handleRunSchedulePrompt(sample);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-xs transition-colors"
-                  >
-                    "{sample}"
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* AI Coach Generated Response & Schedule Blocks */}
-            {plannerResult && (
-              <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
-                
-                {/* Notification Message */}
-                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-start gap-3">
-                  <div className="p-2 rounded-lg bg-indigo-600 text-white mt-0.5">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Coach Confirmation</h3>
-                    <div className="text-xs text-indigo-200 mt-1 leading-relaxed whitespace-pre-wrap">
-                      {plannerResult.message}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Generated Daily Time-Blocking Schedule */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-cyan-400" />
-                      <span>Optimized Daily Schedule for Tomorrow</span>
-                    </h3>
-                    <button
-                      onClick={onNavigateToCalendar}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold"
-                    >
-                      <span>Open Study Calendar</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                    {plannerResult.suggestedSchedule.map((slot, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-3.5 rounded-xl border flex items-center justify-between ${
-                          slot.activity.includes('Current Affairs')
-                            ? 'bg-cyan-500/10 border-cyan-500/30 text-white'
-                            : 'bg-slate-950/60 border-white/5 text-slate-300'
-                        }`}
-                      >
-                        <div>
-                          <p className="text-xs font-semibold">{slot.activity}</p>
-                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">{slot.time}</p>
-                        </div>
-                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-white/10 font-mono font-medium">
-                          {slot.duration}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-              </div>
-            )}
-
-          </div>
-        )}
-
-        {/* SUBTAB 2: Doubt Solver */}
+        {/* SUBTAB 1: Smart Doubt Solver */}
         {activeSubTab === 'doubts' && (
-          <div className="space-y-4">
-            <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                Ask your conceptual doubt (Math, Science, Current Affairs):
-              </label>
+          <div className="max-w-4xl mx-auto space-y-4">
+            
+            {/* Input Card */}
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                  <Brain className="w-4 h-4 text-cyan-300" />
+                  <span>Ask Your Conceptual Doubt (Formulas, Derivations, Proofs):</span>
+                </label>
+                <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                  <span className="font-semibold text-slate-500">Subject:</span>
+                  <select
+                    value={doubtSubject}
+                    onChange={(e) => setDoubtSubject(e.target.value)}
+                    className="bg-slate-950 border border-white/10 rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none"
+                  >
+                    <option value="Physics">Physics</option>
+                    <option value="Mathematics">Mathematics</option>
+                    <option value="Banking & Economy">Banking & Economy</option>
+                    <option value="Indian Polity">Indian Polity</option>
+                    <option value="Chemistry">Chemistry</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
@@ -506,288 +412,332 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                   onChange={(e) => setDoubtQuestion(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSolveDoubt()}
                   placeholder="e.g. Why does entropy increase in irreversible thermodynamic processes?"
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/90 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
                 />
                 <button
-                  onClick={handleSolveDoubt}
+                  onClick={() => handleSolveDoubt()}
                   disabled={isLoading}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all"
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all shrink-0"
                 >
                   <Sparkles className="w-4 h-4 text-cyan-300" />
-                  <span>{isLoading ? 'Solving...' : 'Solve Doubt'}</span>
+                  <span>{isLoading ? 'Breaking Down...' : 'Solve Doubt'}</span>
                 </button>
+              </div>
+
+              {/* Quick Doubt Chips */}
+              <div className="flex items-center gap-2 overflow-x-auto text-[11px] pt-1">
+                <span className="font-semibold text-slate-500 whitespace-nowrap">Try asking:</span>
+                {[
+                  'Why does Carnot engine have maximum theoretical efficiency?',
+                  'Explain Repo Rate vs Reverse Repo Rate impact on inflation.',
+                  'Difference between Fundamental Rights and DPSP in Indian Constitution.',
+                  'Why is work done in a cyclic process equal to enclosed area on P-V diagram?'
+                ].map((sample, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setDoubtQuestion(sample);
+                      handleSolveDoubt(sample);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-xs transition-colors shrink-0"
+                  >
+                    {sample}
+                  </button>
+                ))}
               </div>
             </div>
 
+            {/* Solution Display */}
             {doubtSolution && (
-              <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
-                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1">Conceptual Explanation</h3>
-                  <p className="text-xs text-slate-200 leading-relaxed">{doubtSolution.explanation}</p>
+              <div className="p-6 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
+                
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                    <span>Conceptual Breakdown & Solution</span>
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                    {doubtSolution.source === 'gemini' ? '⚡ Gemini 3.8 Live Solution' : 'Verified Knowledge Template'}
+                  </span>
                 </div>
 
-                <div>
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Step-by-Step Logic</h4>
+                {/* Core Conceptual Explanation */}
+                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 space-y-1">
+                  <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Big Picture Intuition</h4>
+                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-sans">
+                    {doubtSolution.explanation}
+                  </p>
+                </div>
+
+                {/* Step-by-Step Logic */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Step-by-Step Derivation & Logic:</h4>
                   <div className="space-y-2">
                     {doubtSolution.steps.map((step, idx) => (
-                      <div key={idx} className="p-3 rounded-xl bg-slate-950 border border-white/5 text-xs text-slate-300 flex items-start gap-2.5">
-                        <CheckCircle className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                        <span>{step}</span>
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-xl bg-slate-950/70 border border-white/5 text-xs text-slate-300 flex items-start gap-3 hover:border-white/10 transition-colors"
+                      >
+                        <span className="w-5 h-5 rounded-full bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-mono text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <span className="leading-relaxed">{step}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
+                {/* Governing Formula */}
                 {doubtSolution.keyFormula && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-indigo-500/30 flex items-center justify-between">
+                  <div className="p-4 rounded-xl bg-slate-950 border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">Governing Formula</span>
-                      <p className="text-sm font-mono font-bold text-white mt-0.5">{doubtSolution.keyFormula}</p>
+                      <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">Governing Mathematical Law:</span>
+                      <p className="text-base font-mono font-bold text-white mt-1 select-all">{doubtSolution.keyFormula}</p>
                     </div>
-                    <span className="text-xs text-slate-400">KaTeX Formatted</span>
+                    <span className="text-[10px] px-2.5 py-1 rounded bg-white/5 text-slate-400 border border-white/5 whitespace-nowrap self-start sm:self-auto">
+                      LaTeX Standard
+                    </span>
                   </div>
                 )}
 
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
-                  💡 <strong>Exam Practice Tip:</strong> {doubtSolution.practiceTip}
+                {/* Exam Tip & Trap */}
+                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-start gap-2.5">
+                  <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    <strong className="text-amber-200">Topper Exam Tip & Pitfall:</strong> {doubtSolution.practiceTip}
+                  </div>
                 </div>
+
               </div>
             )}
+
           </div>
         )}
 
-        {/* SUBTAB 3: Realistic Handwritten Notes Style */}
-        {activeSubTab === 'handwritten' && (
-          <div className="space-y-4">
+        {/* SUBTAB 2: Flashcard Vault (Spaced Repetition SM-2) */}
+        {activeSubTab === 'flashcards' && (
+          <div className="max-w-2xl mx-auto space-y-4 pt-2">
             
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex-1 min-w-[280px] flex items-center gap-2">
-                <input
-                  type="text"
-                  value={handwrittenTopic}
-                  onChange={(e) => setHandwrittenTopic(e.target.value)}
-                  placeholder="Enter topic for handwritten summary sheet..."
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
-                />
-                <button
-                  onClick={handleGenerateHandwritten}
-                  disabled={isLoading}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition-all"
-                >
-                  Generate Notebook Sheet
-                </button>
-              </div>
-
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs border border-white/10 transition-colors"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print / Save PDF</span>
-              </button>
-            </div>
-
-            {/* Ruled Notebook Page Simulator */}
-            <div className="ruled-paper p-8 rounded-2xl border border-stone-300 max-w-4xl mx-auto shadow-2xl min-h-[500px] text-slate-900 font-handwritten text-xl select-none">
-
-              {/* Header */}
-              <div className="border-b-2 border-red-300/80 pb-3 mb-6 flex items-center justify-between pl-10">
+            {/* Top Deck Generator Bar */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-3xl font-bold text-indigo-900">
-                    {handwrittenData?.title || `${handwrittenTopic} — Master Study Sheet`}
-                  </h2>
-                  <p className="text-base text-stone-600 font-sans mt-0.5">
-                    Topic: {handwrittenTopic} • Date: {handwrittenData?.date || new Date().toLocaleDateString()}
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-indigo-400" />
+                    <span>Spaced Repetition Flashcard Vault</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Active recall calibrated with SM-2 spaced repetition intervals
                   </p>
                 </div>
-                <div className="text-right font-sans text-xs text-stone-500">
-                  <p>Student: <strong>{handwrittenData?.studentName || currentUser.name || 'Student'}</strong></p>
-                  <p>{handwrittenData?.source === 'gemini' ? 'Generated by Gemini' : 'Offline template sheet'}</p>
-                </div>
-              </div>
-
-              {/* Sections */}
-              <div className="space-y-6 pl-10 leading-loose">
-                {handwrittenData?.sections?.length ? (
-                  handwrittenData.sections.map((section: any, idx: number) => (
-                    <div key={idx}>
-                      <h3 className="text-2xl font-bold text-red-700 underline decoration-wavy">
-                        {section.heading}
-                      </h3>
-                      {section.notes?.map((note: string, noteIdx: number) => (
-                        <p key={noteIdx} className="mt-1">• {note}</p>
-                      ))}
-                      {section.highlight && (
-                        <p className="mt-2 text-stone-800 italic bg-amber-100 p-2 rounded border-l-4 border-amber-500">
-                          {section.highlight}
-                        </p>
-                      )}
-                      {section.sketch && (
-                        <p className="mt-2 p-3 bg-stone-100 rounded-lg border border-stone-300 font-mono text-base text-slate-900">
-                          ✎ Sketch: {section.sketch}
-                        </p>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-stone-500 font-sans text-base">
-                    Enter a topic above and hit <strong>Generate Notebook Sheet</strong> to build a revision sheet.
-                  </div>
-                )}
-              </div>
-
-            </div>
-
-          </div>
-        )}
-
-        {/* SUBTAB 4: Spaced Repetition Flashcards */}
-        {activeSubTab === 'flashcards' && (
-          <div className="max-w-xl mx-auto space-y-4 pt-4">
-
-            {/* AI card generation */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                value={flashcardTopic}
-                onChange={(e) => setFlashcardTopic(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleGenerateFlashcards()}
-                placeholder="Topic for AI flashcards, e.g. Indian Polity Articles"
-                className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
-              />
-              <button
-                onClick={handleGenerateFlashcards}
-                disabled={isLoading}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all"
-              >
-                {isLoading ? 'Generating...' : 'Generate with AI'}
-              </button>
-            </div>
-
-            {flashcards.length === 0 ? (
-              <div className="p-8 rounded-3xl bg-slate-900 border border-white/10 text-center space-y-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto text-xl">
-                  🗂️
-                </div>
-                <h4 className="text-sm font-bold text-white">No Flashcards Yet</h4>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Type a subject or topic above (e.g. &quot;Indian Constitution Articles&quot; or &quot;Time &amp; Distance Formulas&quot;) and click <b>Generate with AI</b> to create your interactive flashcard deck.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span>Card {Math.min(currentCardIndex + 1, flashcards.length)} of {flashcards.length}</span>
-                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 font-mono">
-                    {flashcards[currentCardIndex]?.subject || 'General'}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono text-[10px]">
+                    Mastered: {masteredCount}
                   </span>
+                  <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono text-[10px]">
+                    Reviewing: {reviewingCount}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={flashcardTopic}
+                  onChange={(e) => setFlashcardTopic(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleGenerateFlashcards()}
+                  placeholder="Enter topic e.g. Thermodynamics, Indian Polity Articles..."
+                  className="flex-1 min-w-[220px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
+                />
+                <select
+                  value={flashcardCount}
+                  onChange={(e) => setFlashcardCount(parseInt(e.target.value, 10))}
+                  className="px-2.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-slate-300 focus:outline-none"
+                >
+                  <option value={6}>6 Cards</option>
+                  <option value={10}>10 Cards</option>
+                  <option value={16}>16 Cards</option>
+                </select>
+                <button
+                  onClick={handleGenerateFlashcards}
+                  disabled={isLoading}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all shrink-0"
+                >
+                  {isLoading ? 'Generating Cards...' : 'Generate with Gemini 3.7'}
+                </button>
+              </div>
+            </div>
+
+            {/* Flashcard Player */}
+            {flashcards.length > 0 ? (
+              <div className="space-y-3">
+                
+                {/* Progress Indicator */}
+                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                  <span>Card {currentCardIndex + 1} of {flashcards.length}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 text-[11px] font-mono">
+                      {flashcards[currentCardIndex]?.subject || 'General'}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-bold tracking-wider ${
+                        flashcards[currentCardIndex]?.masteryLevel === 'mastered'
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : flashcards[currentCardIndex]?.masteryLevel === 'reviewing'
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-indigo-500/20 text-indigo-300'
+                      }`}
+                    >
+                      {flashcards[currentCardIndex]?.masteryLevel || 'learning'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* 3D Flip Card */}
                 <div
                   onClick={() => setIsFlipped(!isFlipped)}
-                  className="w-full h-72 rounded-3xl bg-gradient-to-br from-slate-900 to-indigo-950/60 border border-white/15 p-6 flex flex-col items-center justify-center text-center cursor-pointer shadow-2xl relative select-none hover:border-indigo-400/50 transition-all"
+                  className="w-full min-h-[260px] sm:min-h-[290px] rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/60 border border-white/15 p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer shadow-2xl relative select-none hover:border-indigo-400/50 transition-all group"
                 >
-                  <span className="absolute top-4 left-4 text-[10px] uppercase font-bold text-indigo-400 tracking-wider">
-                    {isFlipped ? 'Answer (Click to flip)' : 'Question (Click to reveal)'}
-                  </span>
+                  <div className="absolute top-4 left-5 flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">
+                      {isFlipped ? '💡 Answer (Click to flip back)' : '❓ Question (Click to reveal answer)'}
+                    </span>
+                  </div>
 
-                  <p className="text-base sm:text-lg font-semibold text-white px-4 leading-relaxed">
+                  <p className="text-base sm:text-lg font-semibold text-white px-2 leading-relaxed">
                     {isFlipped ? flashcards[currentCardIndex]?.back : flashcards[currentCardIndex]?.front}
                   </p>
 
-                  <span className="absolute bottom-4 text-xs text-slate-500">
-                    Click anywhere to flip ⟳
-                  </span>
+                  <div className="absolute bottom-4 flex items-center gap-1.5 text-xs text-slate-500 group-hover:text-slate-400 transition-colors">
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Click anywhere to flip</span>
+                  </div>
                 </div>
 
-                {/* Spaced Repetition Rating Buttons */}
+                {/* SM-2 Spaced Repetition Grading */}
                 {isFlipped && (
-                  <div className="grid grid-cols-3 gap-2 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-3 gap-2.5 animate-in fade-in duration-200">
                     <button
                       onClick={() => {
                         setIsFlipped(false);
-                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
-                        addToast('Review Scheduled', 'Marked Hard: Will repeat in 10 minutes.', 'info');
+                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
+                        addToast('Review Scheduled', 'Marked Hard: Repeated in 10 minutes.', 'info');
                       }}
-                      className="py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold text-xs transition-colors"
+                      className="py-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
                     >
-                      🔴 Hard (10m)
+                      <span>🔴 Hard</span>
+                      <span className="text-[10px] text-rose-400 font-mono">Repeat in 10m</span>
                     </button>
                     <button
                       onClick={() => {
                         setIsFlipped(false);
-                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
+                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
                         addXp(20);
-                        addToast('Review Scheduled', 'Marked Good: Will repeat tomorrow.', 'success');
+                        addToast('Progress Saved', 'Marked Good: Scheduled for tomorrow.', 'success');
                       }}
-                      className="py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-semibold text-xs transition-colors"
+                      className="py-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
                     >
-                      🟡 Good (1 Day)
+                      <span>🟡 Good</span>
+                      <span className="text-[10px] text-amber-400 font-mono">Next: Tomorrow</span>
                     </button>
                     <button
                       onClick={() => {
                         setIsFlipped(false);
-                        setCurrentCardIndex((i) => flashcards.length > 0 ? (i + 1) % flashcards.length : 0);
+                        flashcards[currentCardIndex].masteryLevel = 'mastered';
+                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
                         addXp(40);
                         triggerCelebration();
-                        addToast('Mastered Card', 'Marked Easy: Will repeat in 4 days.', 'success');
+                        addToast('Card Mastered! 🎉', 'Marked Easy: Scheduled in 4 days (+40 XP)', 'success');
                       }}
-                      className="py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold text-xs transition-colors"
+                      className="py-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
                     >
-                      🟢 Easy (4 Days)
+                      <span>🟢 Easy</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">Next: 4 Days</span>
                     </button>
                   </div>
                 )}
-              </>
+
+                {/* Card Navigation */}
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    onClick={() => {
+                      setIsFlipped(false);
+                      setCurrentCardIndex((i) => (i > 0 ? i - 1 : flashcards.length - 1));
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition-colors"
+                  >
+                    ← Previous
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsFlipped(false);
+                      setCurrentCardIndex((i) => (i + 1) % flashcards.length);
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition-colors"
+                  >
+                    Next →
+                  </button>
+                </div>
+
+              </div>
+            ) : (
+              <div className="p-8 rounded-3xl bg-slate-900 border border-white/10 text-center space-y-3">
+                <p className="text-xs text-slate-400">Generate a deck above to begin your active recall session.</p>
+              </div>
             )}
 
           </div>
         )}
 
-        {/* SUBTAB 5: Quiz & Mock Test */}
+        {/* SUBTAB 3: Diagnostic Quiz Drill */}
         {activeSubTab === 'quiz' && (
           <div className="max-w-2xl mx-auto space-y-4 pt-2">
             
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 space-y-3">
+            {/* Top Config Card */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Daily Mastery Quiz</h3>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Target className="w-4 h-4 text-cyan-400" />
+                    <span>Diagnostic Exam Drill & Mock Test</span>
+                  </h3>
                   <p className="text-[11px] text-slate-400">
-                    {quizList.length} question{quizList.length === 1 ? '' : 's'} on {quizList[0]?.topic || 'your syllabus'}
+                    Real-time calibrated MCQs with detailed explanations
                   </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 font-mono text-xs font-semibold">
-                  +100 XP Upon Completion
+                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 font-mono text-xs font-bold border border-indigo-500/20">
+                  +100 XP On Completion
                 </span>
               </div>
 
-              {/* Generate a fresh AI quiz */}
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="text"
                   value={quizTopic}
                   onChange={(e) => setQuizTopic(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleGenerateQuiz()}
-                  placeholder="Topic for AI questions, e.g. Union Budget 2026"
-                  className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
+                  placeholder="Enter exam topic e.g. Union Budget 2026, Thermodynamics..."
+                  className="flex-1 min-w-[200px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
                 />
                 <button
                   onClick={handleGenerateQuiz}
                   disabled={isLoading}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md transition-all"
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all shrink-0"
                 >
-                  {isLoading ? 'Generating...' : 'Generate Quiz with AI'}
+                  {isLoading ? 'Crafting Questions...' : 'Generate New Drill'}
                 </button>
               </div>
             </div>
 
+            {/* Questions List */}
             {quizList.map((q, idx) => (
               <div key={q.id} className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
                 <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span className="font-semibold text-indigo-400">Question {idx + 1}</span>
-                  <span className="px-2 py-0.5 rounded bg-white/5 font-mono text-[10px]">{q.subject}</span>
+                  <span className="font-bold text-indigo-400">Question {idx + 1} of {quizList.length}</span>
+                  <span className="px-2 py-0.5 rounded bg-white/5 font-mono text-[10px] text-slate-300">{q.subject}</span>
                 </div>
+                
                 <h4 className="text-sm font-semibold text-white leading-relaxed">{q.question}</h4>
 
                 <div className="space-y-2 pt-1">
@@ -808,170 +758,168 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                         key={optIdx}
                         disabled={showQuizResults}
                         onClick={() => setSelectedAnswers(prev => ({ ...prev, [q.id]: optIdx }))}
-                        className={`w-full text-left p-3 rounded-xl border text-xs font-medium transition-all ${btnStyle}`}
+                        className={`w-full text-left p-3.5 rounded-xl border text-xs font-medium transition-all ${btnStyle}`}
                       >
-                        {String.fromCharCode(65 + optIdx)}. {opt}
+                        <span className="font-mono font-bold mr-2 text-indigo-400">{String.fromCharCode(65 + optIdx)}.</span>
+                        <span>{opt}</span>
                       </button>
                     );
                   })}
                 </div>
 
                 {showQuizResults && (
-                  <div className="p-3 rounded-xl bg-slate-950 border border-white/5 text-xs text-slate-300 mt-2">
-                    💡 <strong>Explanation:</strong> {q.explanation}
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/5 text-xs text-slate-300 mt-2 leading-relaxed">
+                    💡 <strong className="text-indigo-300">Explanation:</strong> {q.explanation}
                   </div>
                 )}
               </div>
             ))}
 
+            {/* Submit or Score Bar */}
             {!showQuizResults ? (
               <button
                 onClick={() => {
                   setShowQuizResults(true);
                   const percent = Math.round((quizScore / Math.max(1, quizList.length)) * 100);
                   addXp(100);
-                  if (percent >= 80) triggerCelebration();
+                  if (percent >= 75) triggerCelebration();
                   addToast(
-                    'Quiz Completed!',
+                    'Drill Completed!',
                     `You scored ${quizScore}/${quizList.length} (${percent}%). +100 XP awarded!`,
-                    percent >= 80 ? 'success' : 'info'
+                    percent >= 75 ? 'success' : 'info'
                   );
                 }}
                 disabled={Object.keys(selectedAnswers).length < quizList.length}
-                className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all"
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:opacity-40 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all"
               >
-                Submit Answers & Evaluate
+                Submit Answers & Evaluate Performance
               </button>
             ) : (
-              <>
-                <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 text-center">
-                  <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Your Score</p>
-                  <p className="text-2xl font-extrabold text-white mt-1">
-                    {quizScore} / {quizList.length}
-                    <span className="text-sm text-indigo-300 ml-2">
-                      ({Math.round((quizScore / Math.max(1, quizList.length)) * 100)}%)
-                    </span>
-                  </p>
-                </div>
+              <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 text-center space-y-3 shadow-xl">
+                <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Your Score</p>
+                <p className="text-3xl font-extrabold text-white">
+                  {quizScore} / {quizList.length}
+                  <span className="text-base text-indigo-300 ml-2 font-mono">
+                    ({Math.round((quizScore / Math.max(1, quizList.length)) * 100)}%)
+                  </span>
+                </p>
                 <button
                   onClick={() => {
                     setShowQuizResults(false);
                     setSelectedAnswers({});
                   }}
-                  className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors"
+                  className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors"
                 >
-                  Try Another Diagnostic Quiz
+                  Try Another Drill
                 </button>
-              </>
+              </div>
             )}
 
           </div>
         )}
 
-        {/* SUBTAB 6: AI Lecture Summarizer */}
-        {activeSubTab === 'summarize' && (
-          <div className="space-y-4">
+        {/* SUBTAB 4: Intelligent Daily Planner */}
+        {activeSubTab === 'planner' && (
+          <div className="max-w-4xl mx-auto space-y-4">
             
-            {/* Input Card */}
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">
-                YouTube Video URL to Summarize:
+            {/* NLP Schedule Bar */}
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl space-y-3">
+              <label className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-cyan-300" />
+                <span>Tell your AI Coach what to organize in your schedule:</span>
               </label>
-              <div className="flex flex-col sm:flex-row gap-2 mb-3">
-                <input
-                  type="text"
-                  value={summaryUrl}
-                  onChange={(e) => setSummaryUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/80 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
-                />
-              </div>
 
-              <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">
-                Lecture Title or Subject (Optional):
-              </label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
-                  value={summaryTitle}
-                  onChange={(e) => setSummaryTitle(e.target.value)}
-                  placeholder="e.g. RRB PO Quantitative Aptitude Speed Math"
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/80 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
+                  value={promptInput}
+                  onChange={(e) => setPromptInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleRunSchedulePrompt()}
+                  placeholder='Try: "Tomorrow should include 45 minutes of Physics Thermodynamics Focus Block."'
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/90 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
                 />
                 <button
-                  onClick={handleSummarizeLecture}
+                  onClick={() => handleRunSchedulePrompt()}
                   disabled={isLoading}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all"
+                  className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all shrink-0"
                 >
-                  <Sparkles className="w-4 h-4 text-cyan-200" />
-                  <span>{isLoading ? 'Synthesizing Lecture...' : 'Summarize Lecture'}</span>
+                  <Sparkles className="w-4 h-4 text-cyan-300" />
+                  <span>{isLoading ? 'Planning...' : 'Schedule with AI'}</span>
                 </button>
+              </div>
+
+              {/* Quick Prompts */}
+              <div className="flex items-center gap-2 overflow-x-auto text-[11px] pt-1">
+                <span className="font-semibold text-slate-500 whitespace-nowrap">Quick Prompts:</span>
+                {[
+                  'Tomorrow should include 45 minutes of Physics Thermodynamics focus block.',
+                  'Schedule 30 minutes of Current Affairs revision for tomorrow morning.',
+                  'Add 1 hour of Banking Aptitude problem solving today at 3 PM.'
+                ].map((sample, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setPromptInput(sample);
+                      handleRunSchedulePrompt(sample);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-xs transition-colors shrink-0"
+                  >
+                    "{sample}"
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Summary Result */}
-            {lectureSummary && (
-              <div className="p-5 rounded-2xl bg-slate-900/90 border border-white/10 shadow-xl space-y-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                  <div>
-                    <h3 className="text-base font-bold text-white">
-                      {lectureSummary.title || 'Lecture Summary & Outline'}
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      {lectureSummary.channel ? `Channel: ${lectureSummary.channel} • ` : ''}
-                      {lectureSummary.duration ? `Duration: ${lectureSummary.duration} • ` : ''}
-                      Generated by StudyOS AI Teacher
-                    </p>
+            {/* Generated Timetable */}
+            {plannerResult && (
+              <div className="p-6 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
+                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-start gap-3">
+                  <div className="p-2 rounded-lg bg-indigo-600 text-white mt-0.5">
+                    <Sparkles className="w-4 h-4" />
                   </div>
-                  <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
-                    {lectureSummary.source === 'gemini' ? '⚡ Live Gemini' : 'Offline Engine'}
-                  </span>
-                </div>
-
-                {lectureSummary.summary && (
-                  <div className="p-4 rounded-xl bg-indigo-950/20 border border-indigo-500/20 text-xs text-slate-200 leading-relaxed">
-                    <p className="font-semibold text-indigo-300 mb-1">Executive Summary:</p>
-                    <p>{lectureSummary.summary}</p>
-                  </div>
-                )}
-
-                {lectureSummary.chapters && lectureSummary.chapters.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Chapter Breakdown & Key Takeaways:
-                    </h4>
-                    <div className="space-y-2">
-                      {lectureSummary.chapters.map((chap, idx) => (
-                        <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-start gap-3">
-                          {chap.timestamp && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 whitespace-nowrap mt-0.5">
-                              {chap.timestamp}
-                            </span>
-                          )}
-                          <div className="flex-1">
-                            <h5 className="text-xs font-bold text-white">{chap.title}</h5>
-                            {chap.takeaway && (
-                              <p className="text-xs text-slate-400 mt-1">{chap.takeaway}</p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                  <div className="flex-1">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Coach Confirmation</h3>
+                    <div className="text-xs text-indigo-200 mt-1 leading-relaxed whitespace-pre-wrap">
+                      {plannerResult.message}
                     </div>
                   </div>
-                )}
+                </div>
 
-                {lectureSummary.quickQuiz && lectureSummary.quickQuiz.length > 0 && (
-                  <div className="space-y-2 pt-2 border-t border-white/5">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                      Quick Self-Check Questions:
-                    </h4>
-                    <ul className="space-y-1.5 list-disc list-inside text-xs text-slate-300">
-                      {lectureSummary.quickQuiz.map((q, idx) => (
-                        <li key={idx} className="leading-relaxed">{q}</li>
-                      ))}
-                    </ul>
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-400" />
+                      <span>Optimized Daily Schedule</span>
+                    </h3>
+                    {onNavigateToCalendar && (
+                      <button
+                        onClick={onNavigateToCalendar}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-bold"
+                      >
+                        <span>Open Study Calendar</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
-                )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {plannerResult.suggestedSchedule.map((slot, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-xl border bg-slate-950/70 border-white/5 flex items-center justify-between hover:border-white/10 transition-colors"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-white">{slot.activity}</p>
+                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">{slot.time}</p>
+                        </div>
+                        <span className="text-[11px] px-2.5 py-1 rounded-md bg-white/10 text-slate-300 font-mono font-medium">
+                          {slot.duration}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
               </div>
             )}
 
