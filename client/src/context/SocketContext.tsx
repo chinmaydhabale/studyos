@@ -335,16 +335,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (!res.ok) throw new Error(data.error || 'Failed to create group');
 
       const group: StudyGroup = data.group;
+      setPeers([]);
+      setChatMessages([]);
+      setWhiteboardElements([]);
+      setSharedNote(null);
       setRoomId(group.roomId);
       setCurrentGroup(group);
       localStorage.setItem('studyos_current_room_v1', group.roomId);
       setIsRoomModalOpen(false);
-
-      if (socketRef.current?.connected) {
-        socketRef.current.emit('room:join', { roomId: group.roomId, user: currentUser });
-        socketRef.current.emit('video:join', { roomId: group.roomId, userName: currentUser.name || 'Student' });
-        socketRef.current.emit('chat:join', { roomId: group.roomId });
-      }
 
       addToast('Study Group Created!', `Group ID is: ${group.roomId}. Share this ID with study partners to study together.`, 'success');
       return group;
@@ -373,16 +371,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       const group: StudyGroup = data.group;
+      setPeers([]);
+      setChatMessages([]);
+      setWhiteboardElements([]);
+      setSharedNote(null);
       setRoomId(group.roomId);
       setCurrentGroup(group);
       localStorage.setItem('studyos_current_room_v1', group.roomId);
       setIsRoomModalOpen(false);
-
-      if (socketRef.current?.connected) {
-        socketRef.current.emit('room:join', { roomId: group.roomId, user: currentUser });
-        socketRef.current.emit('video:join', { roomId: group.roomId, userName: currentUser.name || 'Student' });
-        socketRef.current.emit('chat:join', { roomId: group.roomId });
-      }
 
       addToast('Joined Study Group!', `Welcome to "${group.name}" (ID: ${group.roomId})`, 'success');
       return { success: true };
@@ -436,10 +432,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.log('Connected to StudyOS real-time server:', newSocket.id);
       const activeRoom = roomIdRef.current;
       const activeUser = userRef.current;
-      if (activeUser.name) {
-        newSocket.emit('room:join', { roomId: activeRoom, user: activeUser });
-      }
-      newSocket.emit('video:join', { roomId: activeRoom, userName: activeUser.name || 'Student' });
+      const effectiveUser = {
+        ...activeUser,
+        name: activeUser.name?.trim() || 'Student Aspirant'
+      };
+      newSocket.emit('room:join', { roomId: activeRoom, user: effectiveUser });
+      newSocket.emit('video:join', { roomId: activeRoom, userName: effectiveUser.name });
       newSocket.emit('chat:join', { roomId: activeRoom });
     });
 
@@ -548,12 +546,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const previousRoom = previousRoomIdRef.current;
     if (previousRoom && previousRoom !== roomId) {
       activeSocket.emit('room:leave', { roomId: previousRoom, userId: currentUser.id });
+      setPeers([]);
+      setChatMessages([]);
+      setWhiteboardElements([]);
+      setSharedNote(null);
     }
     previousRoomIdRef.current = roomId;
 
     if (!roomId) return;
-    activeSocket.emit('room:join', { roomId, user: currentUser });
-    activeSocket.emit('video:join', { roomId, userName: currentUser.name || 'Student' });
+    const effectiveUser = {
+      ...currentUser,
+      name: currentUser.name?.trim() || 'Student Aspirant'
+    };
+    activeSocket.emit('room:join', { roomId, user: effectiveUser });
+    activeSocket.emit('video:join', { roomId, userName: effectiveUser.name });
     activeSocket.emit('chat:join', { roomId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, currentUser.id, currentUser.name]);

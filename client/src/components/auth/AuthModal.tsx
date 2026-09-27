@@ -42,7 +42,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (!isOpen) return;
     if (!justOpened && !authChanged) return;
 
-    setTab(isAuthenticated ? 'login' : 'signup');
+    if (authChanged) {
+      setTab('login');
+    }
     setError(null);
     setName(currentUser.name || '');
     setTargetExam(currentUser.targetExam || 'RRB PO & Clerk');
@@ -117,19 +119,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+      onClick={onClose}
+    >
       <div 
         className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
         onClick={(e) => e.stopPropagation()}
       >
-        {isAuthenticated && (
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+          title="Close"
+        >
+          <X className="w-4 h-4" />
+        </button>
 
         {/* Modal Header */}
         <div className="flex items-center gap-3">
@@ -375,6 +379,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               Already have an account? <button type="button" onClick={() => setTab('login')} className="text-indigo-400 hover:underline">Sign In here</button>
             </p>
           </form>
+        )}
+
+        {!isAuthenticated && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-center text-xs text-slate-500 hover:text-indigo-400 transition-colors py-1 underline decoration-dotted"
+          >
+            Or explore as guest for now →
+          </button>
         )}
       </div>
     </div>

@@ -278,7 +278,10 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="text-[11px] text-slate-400 flex items-center gap-1">
                 {roomId ? (
                   <button
-                    onClick={() => setIsRoomModalOpen(true)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsRoomModalOpen(true);
+                    }}
                     className="flex items-center gap-1 hover:text-white transition-colors"
                     title="Click to Switch or View Group Info"
                   >
@@ -287,7 +290,10 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
                 ) : (
                   <button
-                    onClick={() => setIsRoomModalOpen(true)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsRoomModalOpen(true);
+                    }}
                     className="text-amber-400 font-semibold hover:underline animate-pulse"
                   >
                     No Room Joined (Click to Enter)

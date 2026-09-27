@@ -77,6 +77,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     user: {
       id: string;
       name: string;
+      username?: string;
       avatar: string;
       targetExam?: string;
       college?: string;
@@ -86,7 +87,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       activityStartTime?: number | null;
     }
   }) => {
-    const cleanRoomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+    const cleanRoomId = (data.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
     const oldRoomId = (socket as any).currentStudyRoom;
 
     // Cleanly leave previous room to prevent cross-room leaks
@@ -105,10 +106,13 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     (socket as any).currentStudyRoom = cleanRoomId;
     socket.join(cleanRoomId);
 
+    const effectiveName = data.user.name?.trim() || 'Student Aspirant';
+
     // Save or update user profile in storage and MongoDB
     storage.createOrUpdateUser({
       id: data.user.id,
-      name: data.user.name,
+      name: effectiveName,
+      username: data.user.username,
       avatar: data.user.avatar,
       targetExam: data.user.targetExam || 'RRB PO & IBPS PO',
       college: data.user.college || 'Aspirant'
@@ -122,7 +126,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     const newPeer: RoomPeer = {
       socketId: socket.id,
       userId: data.user.id,
-      name: data.user.name,
+      name: effectiveName,
       avatar: data.user.avatar,
       targetExam: data.user.targetExam || 'RRB PO & IBPS PO',
       college: data.user.college || 'Aspirant',

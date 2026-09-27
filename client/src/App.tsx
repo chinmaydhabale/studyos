@@ -211,7 +211,7 @@ const MainLayout: React.FC = () => {
 
       {/* Study Group Gateway Modal (Strict Unique Room ID Enforcement) */}
       <RoomGatewayModal
-        isOpen={isRoomModalOpen && !isAuthModalOpen && isAuthenticated}
+        isOpen={isRoomModalOpen && !isAuthModalOpen}
         onClose={() => setIsRoomModalOpen(false)}
       />
 

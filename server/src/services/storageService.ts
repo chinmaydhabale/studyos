@@ -41,6 +41,7 @@ export const localDateKey = (date: Date = new Date()): string => {
 
 export class StorageService {
   private users: Map<string, UserProfile> = new Map();
+  private userCredentials: Map<string, { passwordHash: string; salt: string }> = new Map();
   private videoStates: Map<string, VideoSyncState> = new Map();
   private roomChats: Map<string, ChatMessage[]> = new Map();
   private whiteboardElements: Map<string, WhiteboardElement[]> = new Map();
@@ -54,7 +55,26 @@ export class StorageService {
   private documents: Map<string, StudyDocument> = new Map();
 
   constructor() {
-    // Pure zero start - NO fake mock seeds!
+    this.ensureDefaultGroup();
+  }
+
+  public ensureDefaultGroup(): StudyGroup {
+    const existing = this.groups.get('STUDY-ROOM-ALPHA');
+    if (existing) return existing;
+    const defaultAlpha: StudyGroup = {
+      roomId: 'STUDY-ROOM-ALPHA',
+      name: 'Main Alpha Co-Study Theater',
+      description: 'Default 24/7 collaborative banking & competitive study room',
+      targetExam: 'RRB PO & IBPS PO',
+      creatorId: 'system',
+      creatorName: 'StudyOS Official',
+      memberCount: 1,
+      voicePassword: 'study123',
+      isPrivate: false,
+      createdAt: new Date().toISOString()
+    };
+    this.groups.set('STUDY-ROOM-ALPHA', defaultAlpha);
+    return defaultAlpha;
   }
 
   // Clear all mock data from MongoDB Atlas on first startup
@@ -71,6 +91,8 @@ export class StorageService {
     this.activitySessions = [];
     this.groups.clear();
     this.documents.clear();
+    this.userCredentials.clear();
+    this.ensureDefaultGroup();
 
     if (!isDbConnected()) return;
     try {
@@ -99,7 +121,16 @@ export class StorageService {
       // Sync Users
       const dbUsers = await UserModel.find({});
       dbUsers.forEach(u => {
-        this.users.set(u.id, stripDbFields(u.toObject()) as any);
+        const rawUser = stripDbFields(u.toObject()) as any;
+        if (rawUser.username && (u as any).passwordHash && (u as any).salt) {
+          this.userCredentials.set(rawUser.username.toLowerCase(), {
+            passwordHash: (u as any).passwordHash,
+            salt: (u as any).salt
+          });
+        }
+        delete rawUser.passwordHash;
+        delete rawUser.salt;
+        this.users.set(u.id, rawUser);
       });
 
       // Sync Tasks
@@ -137,6 +168,7 @@ export class StorageService {
       dbGroups.forEach(g => {
         this.groups.set(g.roomId, stripDbFields(g.toObject()) as any);
       });
+      this.ensureDefaultGroup();
 
       // Sync Documents
       const dbDocs = await StudyDocumentModel.find({});
@@ -157,41 +189,79 @@ export class StorageService {
   }
 
   public createOrUpdateUser(profile: Partial<UserProfile> & { id: string }): UserProfile {
-    const existing = this.users.get(profile.id) || {
-      id: profile.id,
-      name: profile.name || 'New Student',
-      avatar: profile.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(profile.name || 'Student')}&backgroundColor=6366f1`,
-      targetExam: profile.targetExam || 'RRB PO & IBPS PO',
-      college: profile.college || 'Aspirant',
-      city: profile.city || 'India',
-      country: 'India',
-      xp: 0,
-      level: 1,
-      coins: 50,
-      streak: 0,
-      bestStreak: 0,
-      totalStudyHours: 0,
-      focusScore: 100,
-      accuracy: 100,
-      tasksCompleted: 0,
-      tasksMissed: 0,
-      badges: ['⚡ New Scholar'],
-      status: 'Ready to Study',
-      isMuted: true,
-      isSpeaking: false,
-      currentActivity: 'Ready to Study',
-      activityCategory: 'study',
-      activityStartTime: null
-    };
+    let existing = this.users.get(profile.id);
+    if (!existing) {
+      existing = {
+        id: profile.id,
+        username: profile.username || '',
+        name: profile.name || 'Student Aspirant',
+        avatar: profile.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(profile.name || profile.id)}&backgroundColor=6366f1`,
+        targetExam: profile.targetExam || 'RRB PO & IBPS PO',
+        college: profile.college || 'Aspirant',
+        city: profile.city || 'India',
+        country: 'India',
+        xp: 0,
+        level: 1,
+        coins: 50,
+        streak: 0,
+        bestStreak: 0,
+        totalStudyHours: 0,
+        focusScore: 100,
+        accuracy: 100,
+        tasksCompleted: 0,
+        tasksMissed: 0,
+        badges: ['⚡ New Scholar'],
+        status: 'Ready to Study',
+        isMuted: true,
+        isSpeaking: false,
+        currentActivity: 'Ready to Study',
+        activityCategory: 'study',
+        activityStartTime: null
+      };
+    }
 
-    const username = profile.username || existing.username || (profile.name ? profile.name.toLowerCase().replace(/[^a-z0-9_]/g, '') + '_' + profile.id.slice(-4) : `user_${profile.id.slice(-6)}`);
-    const updated = { ...existing, ...profile, username };
+    // Preserve registered username if exists; do not generate fake usernames for guest accounts
+    const username = profile.username || existing.username || '';
+    const updated: UserProfile = { ...existing, ...profile, username };
     this.users.set(profile.id, updated);
 
     if (isDbConnected()) {
+      // Safe update - update profile fields without wiping stats or password hash
+      const updateData: any = {
+        name: updated.name,
+        avatar: updated.avatar,
+        targetExam: updated.targetExam,
+        college: updated.college,
+        city: updated.city,
+        country: updated.country,
+        status: updated.status,
+        updatedAt: new Date()
+      };
+      if (username) {
+        updateData.username = username;
+      }
       UserModel.findOneAndUpdate(
         { id: profile.id },
-        { $set: stripDbFields(updated) },
+        { 
+          $set: updateData,
+          $setOnInsert: {
+            id: profile.id,
+            xp: existing.xp || 0,
+            level: existing.level || 1,
+            coins: existing.coins || 50,
+            streak: existing.streak || 0,
+            bestStreak: existing.bestStreak || 0,
+            totalStudyHours: existing.totalStudyHours || 0,
+            focusScore: existing.focusScore || 100,
+            accuracy: existing.accuracy || 100,
+            tasksCompleted: existing.tasksCompleted || 0,
+            tasksMissed: existing.tasksMissed || 0,
+            badges: existing.badges || ['⚡ New Scholar'],
+            currentActivity: 'Ready to Study',
+            activityCategory: 'study',
+            activityStartTime: null
+          }
+        },
         { upsert: true, returnDocument: 'after' }
       ).catch(e => console.warn('MongoDB User save error:', e.message));
     }
@@ -202,6 +272,7 @@ export class StorageService {
   // --- Permanent Account Authentication (Username & Password) ---
 
   public getUserByUsername(username: string): UserProfile | undefined {
+    if (!username || typeof username !== 'string') return undefined;
     const cleanUsername = username.trim().toLowerCase();
     for (const user of this.users.values()) {
       if (user.username && user.username.toLowerCase() === cleanUsername) {
@@ -219,11 +290,18 @@ export class StorageService {
     city?: string;
     avatar?: string;
   }): Promise<{ user: UserProfile; token: string }> {
+    if (!data.username || typeof data.username !== 'string') {
+      throw new Error('Username is required.');
+    }
+    if (!data.password || typeof data.password !== 'string') {
+      throw new Error('Password is required.');
+    }
+
     const cleanUsername = data.username.trim().toLowerCase();
     if (!cleanUsername || cleanUsername.length < 3) {
       throw new Error('Username must be at least 3 characters');
     }
-    if (!data.password || data.password.length < 4) {
+    if (data.password.length < 4) {
       throw new Error('Password must be at least 4 characters');
     }
 
@@ -243,10 +321,13 @@ export class StorageService {
     const passwordHash = crypto.pbkdf2Sync(data.password, salt, 100000, 64, 'sha512').toString('hex');
     const newUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
+    // Store in dedicated in-memory credentials map
+    this.userCredentials.set(cleanUsername, { passwordHash, salt });
+
     const newUser: UserProfile = {
       id: newUserId,
       username: cleanUsername,
-      name: data.name.trim() || cleanUsername,
+      name: (data.name && typeof data.name === 'string') ? data.name.trim() : cleanUsername,
       avatar: data.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}&backgroundColor=6366f1`,
       targetExam: data.targetExam || 'RRB PO & IBPS PO',
       college: 'Competitive Aspirant',
@@ -275,55 +356,67 @@ export class StorageService {
 
     if (isDbConnected()) {
       await UserModel.create({
-        ...newUser,
+        ...stripDbFields(newUser),
         passwordHash,
         salt
       });
     }
 
     const token = `token_${newUserId}_${Date.now()}`;
-    return { user: newUser, token };
+    return { user: stripDbFields(newUser), token };
   }
 
   public async authenticateUser(username: string, password: string): Promise<{ user: UserProfile; token: string }> {
+    if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
+      throw new Error('Username and password are required.');
+    }
     const cleanUsername = username.trim().toLowerCase();
-    let dbUser: any = null;
+    if (!cleanUsername) {
+      throw new Error('Username cannot be blank.');
+    }
 
+    let dbUser: any = null;
     if (isDbConnected()) {
       dbUser = await UserModel.findOne({ username: cleanUsername });
     }
 
-    if (!dbUser) {
-      // Check in memory fallback — credentials must still be verified!
-      const inMemoryUser = this.getUserByUsername(cleanUsername) as UserProfile & { passwordHash?: string; salt?: string };
-      if (!inMemoryUser) {
+    if (dbUser) {
+      const salt = dbUser.salt || '';
+      const expectedHash = dbUser.passwordHash || '';
+      const inputHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+      if (inputHash !== expectedHash) {
         throw new Error('Invalid username or password.');
       }
-      if (!inMemoryUser.passwordHash || !inMemoryUser.salt) {
-        // No credentials stored for this account — reject instead of logging anyone in.
-        throw new Error('Invalid username or password.');
-      }
-      const inputHash = crypto.pbkdf2Sync(password, inMemoryUser.salt, 100000, 64, 'sha512').toString('hex');
-      if (inputHash !== inMemoryUser.passwordHash) {
-        throw new Error('Invalid username or password.');
-      }
-      const { passwordHash, salt, ...safeUser } = inMemoryUser;
-      this.users.set((safeUser as any).id, safeUser as any);
-      return { user: safeUser as UserProfile, token: `token_${(safeUser as any).id}_${Date.now()}` };
+
+      // Cache credentials in memory for resiliency
+      this.userCredentials.set(cleanUsername, { passwordHash: expectedHash, salt });
+
+      const safeUser = stripDbFields(dbUser.toObject()) as any;
+      delete safeUser.passwordHash;
+      delete safeUser.salt;
+
+      this.users.set(safeUser.id, safeUser);
+      return { user: safeUser as UserProfile, token: `token_${safeUser.id}_${Date.now()}` };
     }
 
-    // Verify hash
-    const inputHash = crypto.pbkdf2Sync(password, dbUser.salt || '', 100000, 64, 'sha512').toString('hex');
-    if (inputHash !== dbUser.passwordHash) {
+    // Fallback: Check in-memory credentials & user
+    const inMemoryUser = this.getUserByUsername(cleanUsername);
+    const inMemoryCreds = this.userCredentials.get(cleanUsername);
+
+    if (!inMemoryUser || !inMemoryCreds?.passwordHash || !inMemoryCreds?.salt) {
       throw new Error('Invalid username or password.');
     }
 
-    const userObj = dbUser.toObject();
-    delete userObj.passwordHash;
-    delete userObj.salt;
+    const inputHash = crypto.pbkdf2Sync(password, inMemoryCreds.salt, 100000, 64, 'sha512').toString('hex');
+    if (inputHash !== inMemoryCreds.passwordHash) {
+      throw new Error('Invalid username or password.');
+    }
 
-    this.users.set(userObj.id, userObj);
-    return { user: userObj, token: `token_${userObj.id}_${Date.now()}` };
+    const safeUser = stripDbFields(inMemoryUser) as any;
+    delete safeUser.passwordHash;
+    delete safeUser.salt;
+
+    return { user: safeUser as UserProfile, token: `token_${safeUser.id}_${Date.now()}` };
   }
 
   // --- Unique Study Group Rooms ---
@@ -341,8 +434,12 @@ export class StorageService {
     let generatedId = groupData.roomId?.trim().toUpperCase();
     if (!generatedId) {
       const prefix = (groupData.targetExam?.includes('RRB') ? 'RRB' : groupData.targetExam?.includes('IBPS') ? 'IBPS' : 'STUDY');
-      const randomDigits = Math.floor(1000 + Math.random() * 9000);
-      generatedId = `${prefix}-${randomDigits}`;
+      let attempts = 0;
+      do {
+        const randomDigits = Math.floor(1000 + Math.random() * 9000);
+        generatedId = `${prefix}-${randomDigits}`;
+        attempts++;
+      } while (this.groups.has(generatedId) && attempts < 20);
     }
 
     const newGroup: StudyGroup = {
@@ -372,18 +469,25 @@ export class StorageService {
   }
 
   public async getStudyGroup(roomId: string): Promise<StudyGroup | undefined> {
-    const cleanId = roomId.trim().toUpperCase();
+    const cleanId = (roomId || '').trim().toUpperCase();
+    if (!cleanId) return undefined;
+
     const inMem = this.groups.get(cleanId);
     if (inMem) return inMem;
 
     if (isDbConnected()) {
       const doc = await StudyGroupModel.findOne({ roomId: cleanId });
       if (doc) {
-        const obj = doc.toObject() as any;
+        const obj = stripDbFields(doc.toObject()) as any;
         this.groups.set(cleanId, obj);
         return obj;
       }
     }
+
+    if (cleanId === 'STUDY-ROOM-ALPHA') {
+      return this.ensureDefaultGroup();
+    }
+
     return undefined;
   }
 

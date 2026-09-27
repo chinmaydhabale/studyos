@@ -103,7 +103,16 @@ app.post('/api/user/profile', (req, res) => {
 // --- PERMANENT AUTHENTICATION (Username & Password) ---
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, password, name, targetExam, city, avatar } = req.body;
+    const { username, password, name, targetExam, city, avatar } = req.body || {};
+    if (!username || typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ error: 'Username is required and must be at least 3 characters.' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 4) {
+      return res.status(400).json({ error: 'Password is required and must be at least 4 characters.' });
+    }
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Full name is required.' });
+    }
     const result = await storage.registerUser({ username, password, name, targetExam, city, avatar });
     res.json(result);
   } catch (err: any) {
@@ -113,7 +122,10 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
+    if (!username || typeof username !== 'string' || !username.trim() || !password || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Please enter both username and password.' });
+    }
     const result = await storage.authenticateUser(username, password);
     res.json(result);
   } catch (err: any) {
@@ -369,7 +381,7 @@ app.post('/api/activity/session', (req, res) => {
 
 // Verify Voice Room Password
 app.post('/api/voice/verify-password', async (req, res) => {
-  const { roomId, password } = req.body;
+  const { roomId, password } = req.body || {};
   const cleanId = (roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
   const expected = await getExpectedVoicePassword(cleanId);
   if (!expected) {
@@ -378,7 +390,7 @@ app.post('/api/voice/verify-password', async (req, res) => {
       message: `No voice password is configured for study group "${cleanId}". Create or join the group first.`
     });
   }
-  if (password === expected) {
+  if (password && typeof password === 'string' && password.trim() === expected.trim()) {
     res.json({ success: true, message: 'Voice room unlocked.' });
   } else {
     res.status(401).json({ success: false, message: 'Incorrect Voice Room Password' });
