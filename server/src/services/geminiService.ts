@@ -44,9 +44,14 @@ export interface GeminiTextRequest {
 }
 
 export class GeminiService {
-  private getApiKey(): string | undefined {
-    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    return key && key.trim() ? key.trim() : undefined;
+  private currentKeyIndex = 0;
+
+  private getApiKeys(): string[] {
+    const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    return raw
+      .split(',')
+      .map(k => k.trim())
+      .filter(k => k.length > 0);
   }
 
   public getModel(): string {
@@ -54,7 +59,7 @@ export class GeminiService {
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.getApiKey());
+    return this.getApiKeys().length > 0;
   }
 
   /** Pulls the concatenated text out of the first candidate, skipping thought parts. */
@@ -74,8 +79,8 @@ export class GeminiService {
     tier?: GeminiModelTier,
     customModel?: string
   ): Promise<string | null> {
-    const apiKey = this.getApiKey();
-    if (!apiKey) return null;
+    const keys = this.getApiKeys();
+    if (!keys.length) return null;
 
     let modelsToTry: string[] = [];
     if (customModel) {
@@ -97,44 +102,51 @@ export class GeminiService {
       if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
     }
 
-    for (const model of modelsToTry) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const keyAttempts = Math.min(keys.length, 3);
+    for (let k = 0; k < keyAttempts; k++) {
+      const activeKey = keys[(this.currentKeyIndex + k) % keys.length];
 
-      try {
-        const res = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            // Header auth keeps the key out of URLs and logs.
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
+      for (const model of modelsToTry) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
-          console.warn(`[gemini] ${model} returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
-          if (res.status === 503 || res.status === 429) {
-            continue; // Fallback to alternative model if Google experiences high demand
+        try {
+          const res = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              // Header auth keeps the key out of URLs and logs.
+              'x-goog-api-key': activeKey
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            console.warn(`[gemini] ${model} (key ...${activeKey.slice(-6)}) returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
+            if (res.status === 503 || res.status === 429 || res.status === 403) {
+              // Rotate key and retry
+              this.currentKeyIndex = (this.currentKeyIndex + 1) % keys.length;
+              continue; // Fallback to alternative model or next key
+            }
+            return null;
           }
-          return null;
-        }
 
-        const data = await res.json();
-        const text = this.extractText(data);
-        if (!text) {
-          const reason = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason || 'empty response';
-          console.warn(`[gemini] ${model} no usable content (${reason})`);
-          continue;
+          const data = await res.json();
+          const text = this.extractText(data);
+          if (!text) {
+            const reason = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason || 'empty response';
+            console.warn(`[gemini] ${model} no usable content (${reason})`);
+            continue;
+          }
+          return text;
+        } catch (err: any) {
+          const reason = err?.name === 'AbortError' ? `timed out after ${REQUEST_TIMEOUT_MS}ms` : err?.message || err;
+          console.warn(`[gemini] ${model} request failed:`, reason);
+        } finally {
+          clearTimeout(timer);
         }
-        return text;
-      } catch (err: any) {
-        const reason = err?.name === 'AbortError' ? `timed out after ${REQUEST_TIMEOUT_MS}ms` : err?.message || err;
-        console.warn(`[gemini] ${model} request failed:`, reason);
-      } finally {
-        clearTimeout(timer);
       }
     }
     return null;

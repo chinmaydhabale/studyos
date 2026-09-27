@@ -102,7 +102,7 @@ export interface NotebookStudyPack {
 // Keeps prompts (and therefore cost/latency) bounded on large or dense pages.
 const MAX_PAGE_CHARS = 6000;
 const MAX_SELECTION_CHARS = 1500;
-const MAX_NOTEBOOK_SOURCE_CHARS = 24000;
+const MAX_NOTEBOOK_SOURCE_CHARS = 120000;
 
 const EXAM_COACH_PERSONA =
   'You are StudyOS AI Coach, a patient expert tutor for Indian competitive exams ' +
