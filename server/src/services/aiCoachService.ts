@@ -57,9 +57,51 @@ export interface PdfAssistResult {
   source: AISource;
 }
 
+// NotebookLM Types
+export interface AudioTurn {
+  speaker: 'Alex' | 'Sam';
+  text: string;
+  emotion?: string;
+}
+
+export interface NotebookAudioOverview {
+  docTitle: string;
+  title: string;
+  tagline: string;
+  durationEstimate: string;
+  turns: AudioTurn[];
+  source: AISource;
+}
+
+export interface NotebookBriefingDoc {
+  docTitle: string;
+  executiveSummary: string;
+  keyConcepts: Array<{ term: string; definition: string; examSignificance: string }>;
+  faq: Array<{ question: string; answer: string }>;
+  pitfallsAndTraps: string[];
+  revisionChecklist: string[];
+  source: AISource;
+}
+
+export interface NotebookSourceAnswer {
+  question: string;
+  answer: string;
+  citations: string[];
+  suggestedFollowUps: string[];
+  source: AISource;
+}
+
+export interface NotebookStudyPack {
+  docTitle: string;
+  flashcards: Flashcard[];
+  quiz: QuizQuestion[];
+  source: AISource;
+}
+
 // Keeps prompts (and therefore cost/latency) bounded on large or dense pages.
 const MAX_PAGE_CHARS = 6000;
 const MAX_SELECTION_CHARS = 1500;
+const MAX_NOTEBOOK_SOURCE_CHARS = 24000;
 
 const EXAM_COACH_PERSONA =
   'You are StudyOS AI Coach, a patient expert tutor for Indian competitive exams ' +
@@ -938,6 +980,452 @@ export class AICoachService {
       explanation,
       keyPoints: sentences.length ? sentences : [focus.slice(0, 300)],
       followUp: 'Try the AI Coach hub for a full conceptual breakdown.'
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 8. NotebookLM Studio Features: Briefing Doc, Audio Overview, Source Chat & Study Pack
+  // ---------------------------------------------------------------------------
+
+  public async generateBriefingDoc(input: {
+    docTitle?: string;
+    sourceText: string;
+    userId?: string;
+  }): Promise<NotebookBriefingDoc> {
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Study Document';
+    const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
+
+    if (!sourceText) {
+      return this.fallbackBriefingDoc(docTitle, 'No source text provided.');
+    }
+
+    const result = await gemini.generateJson<{
+      executiveSummary?: string;
+      keyConcepts?: Array<{ term?: string; definition?: string; examSignificance?: string }>;
+      faq?: Array<{ question?: string; answer?: string }>;
+      pitfallsAndTraps?: string[];
+      revisionChecklist?: string[];
+    }>({
+      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are an expert NotebookLM executive synthesis engine. Create a high-yield study briefing doc based strictly on the provided source text. Respond with JSON only.`,
+      prompt:
+        `Learner Context:\n${this.buildLearnerContext(input.userId)}\n\n` +
+        `Document Title: "${docTitle}"\n\n` +
+        `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
+        'Generate an executive briefing document containing:\n' +
+        '1. An insightful 2-3 paragraph executive summary explaining the core message and architecture of the topic.\n' +
+        '2. 4-7 key concepts (term, concise definition, and exam significance).\n' +
+        '3. 3-5 frequent exam questions with crystal-clear answers.\n' +
+        '4. 3-4 common student traps/pitfalls and misconceptions.\n' +
+        '5. 4-6 bullet point revision checklist items for active recall.',
+      schema: {
+        type: 'OBJECT',
+        properties: {
+          executiveSummary: { type: 'STRING' },
+          keyConcepts: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                term: { type: 'STRING' },
+                definition: { type: 'STRING' },
+                examSignificance: { type: 'STRING' }
+              },
+              required: ['term', 'definition', 'examSignificance']
+            }
+          },
+          faq: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                question: { type: 'STRING' },
+                answer: { type: 'STRING' }
+              },
+              required: ['question', 'answer']
+            }
+          },
+          pitfallsAndTraps: { type: 'ARRAY', items: { type: 'STRING' } },
+          revisionChecklist: { type: 'ARRAY', items: { type: 'STRING' } }
+        },
+        required: ['executiveSummary', 'keyConcepts', 'faq', 'pitfallsAndTraps', 'revisionChecklist']
+      },
+      temperature: 0.5,
+      maxOutputTokens: 4096
+    });
+
+    if (result && result.executiveSummary) {
+      const concepts = (result.keyConcepts || [])
+        .map(c => ({
+          term: this.cleanString(c?.term, 100) || '',
+          definition: this.cleanString(c?.definition, 400) || '',
+          examSignificance: this.cleanString(c?.examSignificance, 300) || ''
+        }))
+        .filter(c => c.term && c.definition);
+
+      const faqs = (result.faq || [])
+        .map(f => ({
+          question: this.cleanString(f?.question, 250) || '',
+          answer: this.cleanString(f?.answer, 600) || ''
+        }))
+        .filter(f => f.question && f.answer);
+
+      return {
+        docTitle,
+        executiveSummary: this.cleanString(result.executiveSummary, 2500) || '',
+        keyConcepts: concepts.length ? concepts : this.fallbackBriefingDoc(docTitle, sourceText).keyConcepts,
+        faq: faqs.length ? faqs : this.fallbackBriefingDoc(docTitle, sourceText).faq,
+        pitfallsAndTraps: this.cleanStringArray(result.pitfallsAndTraps, 6, 300),
+        revisionChecklist: this.cleanStringArray(result.revisionChecklist, 8, 300),
+        source: 'gemini'
+      };
+    }
+
+    return this.fallbackBriefingDoc(docTitle, sourceText);
+  }
+
+  public async generateAudioOverview(input: {
+    docTitle?: string;
+    sourceText: string;
+    userId?: string;
+  }): Promise<NotebookAudioOverview> {
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Study Deep Dive';
+    const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
+
+    if (!sourceText) {
+      return this.fallbackAudioOverview(docTitle);
+    }
+
+    const result = await gemini.generateJson<{
+      title?: string;
+      tagline?: string;
+      durationEstimate?: string;
+      turns?: Array<{ speaker?: string; text?: string; emotion?: string }>;
+    }>({
+      systemInstruction:
+        'You produce NotebookLM Audio Overviews. Two expert co-hosts, Alex (engaging, curious, relatable) ' +
+        'and Sam (analytical, structured, deep thinker) have a lively conversational deep dive into the source material. ' +
+        'They banter naturally, react dynamically ("Wait, really?", "Spot on, Alex!"), break down difficult concepts with intuitive analogies, ' +
+        'and tie ideas to exam success. Keep spoken sentences natural for speech synthesis. Avoid markdown symbols in text. Respond with JSON only.',
+      prompt:
+        `Document Title: "${docTitle}"\n\n` +
+        `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
+        'Create a full 10-16 turn audio dialogue between Alex and Sam unpacking this document. ' +
+        'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
+      schema: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          tagline: { type: 'STRING' },
+          durationEstimate: { type: 'STRING' },
+          turns: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                speaker: { type: 'STRING' },
+                text: { type: 'STRING' },
+                emotion: { type: 'STRING' }
+              },
+              required: ['speaker', 'text']
+            }
+          }
+        },
+        required: ['title', 'tagline', 'durationEstimate', 'turns']
+      },
+      temperature: 0.7,
+      maxOutputTokens: 4096
+    });
+
+    if (result && Array.isArray(result.turns) && result.turns.length >= 4) {
+      const turns: AudioTurn[] = result.turns
+        .map(t => {
+          const speakerRaw = (t?.speaker || '').toLowerCase();
+          const speaker: 'Alex' | 'Sam' = speakerRaw.includes('sam') ? 'Sam' : 'Alex';
+          return {
+            speaker,
+            text: this.cleanString(t?.text, 800) || '',
+            emotion: this.cleanString(t?.emotion, 50) || 'conversational'
+          };
+        })
+        .filter(t => t.text.length > 0);
+
+      if (turns.length >= 4) {
+        return {
+          docTitle,
+          title: this.cleanString(result.title, 200) || `${docTitle}: The Deep Dive`,
+          tagline: this.cleanString(result.tagline, 250) || 'An engaging conversation breaking down the core concepts.',
+          durationEstimate: this.cleanString(result.durationEstimate, 50) || `${Math.ceil(turns.length * 0.4)} min listen`,
+          turns,
+          source: 'gemini'
+        };
+      }
+    }
+
+    return this.fallbackAudioOverview(docTitle);
+  }
+
+  public async askSourceQuestion(input: {
+    docTitle?: string;
+    sourceText: string;
+    question: string;
+    history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+    userId?: string;
+  }): Promise<NotebookSourceAnswer> {
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Document';
+    const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
+    const question = this.cleanString(input.question, 1000) || '';
+
+    if (!question) {
+      return {
+        question: '',
+        answer: 'Please provide a question about the document.',
+        citations: [],
+        suggestedFollowUps: [],
+        source: 'fallback'
+      };
+    }
+
+    const historyText = (input.history || [])
+      .slice(-6)
+      .map(h => `${h.role === 'user' ? 'Student' : 'NotebookLM Coach'}: ${h.text}`)
+      .join('\n');
+
+    const result = await gemini.generateJson<{
+      answer?: string;
+      citations?: string[];
+      suggestedFollowUps?: string[];
+    }>({
+      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are NotebookLM's source-grounded intelligent tutor. Answer the student strictly based on the source text. Quote or cite source evidence directly. Suggest 3 follow-up study questions. Respond with JSON only.`,
+      prompt:
+        `Document Title: "${docTitle}"\n\n` +
+        `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
+        (historyText ? `Recent conversation:\n${historyText}\n\n` : '') +
+        `Student Question: "${question}"\n\n` +
+        'Provide a clear, pedagogical answer grounded in the source text, list 1-3 direct citations or references from the source, and suggest 3 follow-up questions.',
+      schema: {
+        type: 'OBJECT',
+        properties: {
+          answer: { type: 'STRING' },
+          citations: { type: 'ARRAY', items: { type: 'STRING' } },
+          suggestedFollowUps: { type: 'ARRAY', items: { type: 'STRING' } }
+        },
+        required: ['answer', 'citations', 'suggestedFollowUps']
+      },
+      temperature: 0.5,
+      maxOutputTokens: 2048
+    });
+
+    if (result && result.answer) {
+      return {
+        question,
+        answer: this.cleanString(result.answer, 2000) || '',
+        citations: this.cleanStringArray(result.citations, 4, 300),
+        suggestedFollowUps: this.cleanStringArray(result.suggestedFollowUps, 3, 200),
+        source: 'gemini'
+      };
+    }
+
+    return {
+      question,
+      answer: `Based on "${docTitle}", key elements related to your query focus on the core foundational rules and context outlined in the document. Ensure you connect these definitions to practical exam applications.`,
+      citations: [`Excerpt from ${docTitle}`],
+      suggestedFollowUps: [
+        'How does this relate to previous exam questions?',
+        'Can you summarize the top 3 takeaways from this section?',
+        'What is the mathematical or logical proof behind this?'
+      ],
+      source: 'fallback'
+    };
+  }
+
+  public async generateSourceStudyPack(input: {
+    docTitle?: string;
+    sourceText: string;
+    userId?: string;
+  }): Promise<NotebookStudyPack> {
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Study Document';
+    const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
+
+    const result = await gemini.generateJson<{
+      flashcards?: Array<{ front?: string; back?: string }>;
+      quiz?: Array<{
+        question?: string;
+        options?: string[];
+        correctAnswerIndex?: number;
+        explanation?: string;
+      }>;
+    }>({
+      systemInstruction: `${EXAM_COACH_PERSONA}\nGenerate high-yield active recall flashcards (5-8 items) and multiple-choice questions (3-5 items) strictly grounded in the source document. Respond with JSON only.`,
+      prompt:
+        `Document Title: "${docTitle}"\n\n` +
+        `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
+        'Generate flashcards (front: focused question, back: concise answer) and 4-option MCQs (correctAnswerIndex 0-3, plus explanation).',
+      schema: {
+        type: 'OBJECT',
+        properties: {
+          flashcards: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                front: { type: 'STRING' },
+                back: { type: 'STRING' }
+              },
+              required: ['front', 'back']
+            }
+          },
+          quiz: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                question: { type: 'STRING' },
+                options: { type: 'ARRAY', items: { type: 'STRING' } },
+                correctAnswerIndex: { type: 'INTEGER' },
+                explanation: { type: 'STRING' }
+              },
+              required: ['question', 'options', 'correctAnswerIndex', 'explanation']
+            }
+          }
+        },
+        required: ['flashcards', 'quiz']
+      },
+      temperature: 0.6,
+      maxOutputTokens: 3500
+    });
+
+    const flashcards: Flashcard[] = [];
+    (result?.flashcards || []).forEach((c, idx) => {
+      const front = this.cleanString(c?.front, 300);
+      const back = this.cleanString(c?.back, 600);
+      if (front && back) {
+        flashcards.push({
+          id: `fc-src-${Date.now()}-${idx}`,
+          front,
+          back,
+          subject: docTitle,
+          masteryLevel: 'learning'
+        });
+      }
+    });
+
+    const quiz: QuizQuestion[] = [];
+    (result?.quiz || []).forEach((q, idx) => {
+      const question = this.cleanString(q?.question, 400);
+      const options = this.cleanStringArray(q?.options, 4, 250);
+      const explanation = this.cleanString(q?.explanation, 500);
+      if (question && options.length === 4 && explanation) {
+        quiz.push({
+          id: `q-src-${Date.now()}-${idx}`,
+          question,
+          options,
+          correctAnswer: this.clampInt(q?.correctAnswerIndex, 0, 3, 0),
+          explanation,
+          subject: docTitle,
+          topic: docTitle
+        });
+      }
+    });
+
+    if (flashcards.length || quiz.length) {
+      return {
+        docTitle,
+        flashcards: flashcards.length ? flashcards : this.fallbackFlashcards(docTitle),
+        quiz: quiz.length ? quiz : this.fallbackQuiz(docTitle),
+        source: 'gemini'
+      };
+    }
+
+    return {
+      docTitle,
+      flashcards: this.fallbackFlashcards(docTitle),
+      quiz: this.fallbackQuiz(docTitle),
+      source: 'fallback'
+    };
+  }
+
+  // Fallbacks for NotebookLM
+  private fallbackBriefingDoc(docTitle: string, sourceText: string): NotebookBriefingDoc {
+    return {
+      docTitle,
+      executiveSummary:
+        `This briefing document synthesizes the core principles of "${docTitle}". ` +
+        'The material establishes fundamental framework relationships, high-yield definitions, and practical problem-solving methodologies for competitive exams.',
+      keyConcepts: [
+        {
+          term: 'Core Foundational Principle',
+          definition: 'The fundamental law or theorem upon which subsequent derivations and applications are constructed.',
+          examSignificance: 'Direct conceptual questions in preliminary and main stages.'
+        },
+        {
+          term: 'Operational Boundary Conditions',
+          definition: 'The specific constraints and state variables required for standard equations to remain valid.',
+          examSignificance: 'Critical for avoiding typical elimination traps in multiple-choice questions.'
+        }
+      ],
+      faq: [
+        {
+          question: `What is the most frequently tested aspect of ${docTitle}?`,
+          answer: 'Understanding the underlying assumptions and applying direct formula shortcuts without arithmetic slips.'
+        }
+      ],
+      pitfallsAndTraps: [
+        'Confusing definitions across similar terms in high-pressure exam environments.',
+        'Neglecting unit conversions before substituting values into governing formulas.'
+      ],
+      revisionChecklist: [
+        'Memorize core formula derivations.',
+        'Review standard exceptions and edge cases.',
+        'Solve 5 timed practice questions on this topic.'
+      ],
+      source: 'fallback'
+    };
+  }
+
+  private fallbackAudioOverview(docTitle: string): NotebookAudioOverview {
+    return {
+      docTitle,
+      title: `${docTitle}: The Deep Dive`,
+      tagline: 'Two hosts unpack everything you need to master this topic.',
+      durationEstimate: '4 min listen',
+      turns: [
+        {
+          speaker: 'Alex',
+          text: `Welcome in everyone! Today we're diving deep into ${docTitle}. Sam, this is one of those topics that trips students up all the time.`,
+          emotion: 'curious'
+        },
+        {
+          speaker: 'Sam',
+          text: `It really is, Alex. But once you break it down into its fundamental mechanics, the whole picture becomes intuitive and crystal clear.`,
+          emotion: 'insightful'
+        },
+        {
+          speaker: 'Alex',
+          text: `So where does someone even start? What's the big picture mental model we should have in mind?`,
+          emotion: 'enthusiastic'
+        },
+        {
+          speaker: 'Sam',
+          text: `Think of it like building a pyramid. The base is the definitions and conservation principles. If the base is solid, the complex numericals solve themselves.`,
+          emotion: 'explaining'
+        },
+        {
+          speaker: 'Alex',
+          text: `That makes so much sense! And what about common traps on the exam? Where do students lose marks?`,
+          emotion: 'curious'
+        },
+        {
+          speaker: 'Sam',
+          text: `Almost always in boundary conditions and units! Students rush into the formula without checking if the assumptions hold true.`,
+          emotion: 'warning'
+        },
+        {
+          speaker: 'Alex',
+          text: `Golden advice right there. Check your assumptions, master the core laws, and practice active recall!`,
+          emotion: 'inspired'
+        }
+      ],
+      source: 'fallback'
     };
   }
 }

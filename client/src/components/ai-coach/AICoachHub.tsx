@@ -23,6 +23,7 @@ import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
 import { Flashcard, QuizQuestion } from '../../types.js';
 import { API_BASE_URL } from '../../config.js';
+import { NotebookStudio } from './NotebookStudio.js';
 
 interface AICoachHubProps {
   initialPrompt?: string;
@@ -40,7 +41,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const { addToast, currentUser } = useSocket();
   const { addXp, triggerCelebration } = useStudy();
 
-  const [activeSubTab, setActiveSubTab] = useState<'planner' | 'doubts' | 'handwritten' | 'quiz' | 'flashcards' | 'summarize'>('planner');
+  const [activeSubTab, setActiveSubTab] = useState<'notebook' | 'planner' | 'doubts' | 'handwritten' | 'quiz' | 'flashcards' | 'summarize'>('notebook');
   const [promptInput, setPromptInput] = useState(initialPrompt || 'Tomorrow should include 30 minutes of Current Affairs.');
   const [isLoading, setIsLoading] = useState(false);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
@@ -344,6 +345,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
           {/* Sub-tab Navigation */}
           <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/10 overflow-x-auto">
             {[
+              { id: 'notebook', label: '🎙️ NotebookLM Studio', icon: Sparkles },
               { id: 'planner', label: '📅 AI Schedule Planner', icon: Calendar },
               { id: 'doubts', label: '💡 Doubt Solver', icon: HelpCircle },
               { id: 'handwritten', label: '✍️ Handwritten Notes', icon: FileText },
@@ -374,6 +376,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       {/* Main Feature Content Container */}
       <div className="flex-1 overflow-y-auto">
         
+        {/* SUBTAB 0: NotebookLM Studio */}
+        {activeSubTab === 'notebook' && (
+          <NotebookStudio />
+        )}
+
         {/* SUBTAB 1: AI Schedule Planner */}
         {activeSubTab === 'planner' && (
           <div className="space-y-4">

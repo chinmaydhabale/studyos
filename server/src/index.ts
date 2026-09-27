@@ -555,6 +555,55 @@ app.post('/api/ai/pdf-assist', async (req, res) => {
   }
 });
 
+// NotebookLM Studio Endpoints
+app.post('/api/ai/notebook/briefing', async (req, res) => {
+  const { docTitle, sourceText, userId } = req.body || {};
+  if (!sourceText) return res.status(400).json({ error: 'sourceText is required' });
+  try {
+    const result = await aiCoach.generateBriefingDoc({ docTitle, sourceText, userId });
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] notebook/briefing failed:', err);
+    res.status(500).json({ error: 'Failed to generate briefing document' });
+  }
+});
+
+app.post('/api/ai/notebook/audio-overview', async (req, res) => {
+  const { docTitle, sourceText, userId } = req.body || {};
+  if (!sourceText) return res.status(400).json({ error: 'sourceText is required' });
+  try {
+    const result = await aiCoach.generateAudioOverview({ docTitle, sourceText, userId });
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] notebook/audio-overview failed:', err);
+    res.status(500).json({ error: 'Failed to generate audio overview' });
+  }
+});
+
+app.post('/api/ai/notebook/ask', async (req, res) => {
+  const { docTitle, sourceText, question, history, userId } = req.body || {};
+  if (!sourceText || !question) return res.status(400).json({ error: 'sourceText and question are required' });
+  try {
+    const result = await aiCoach.askSourceQuestion({ docTitle, sourceText, question, history, userId });
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] notebook/ask failed:', err);
+    res.status(500).json({ error: 'Failed to answer question' });
+  }
+});
+
+app.post('/api/ai/notebook/study-pack', async (req, res) => {
+  const { docTitle, sourceText, userId } = req.body || {};
+  if (!sourceText) return res.status(400).json({ error: 'sourceText is required' });
+  try {
+    const result = await aiCoach.generateSourceStudyPack({ docTitle, sourceText, userId });
+    res.json(result);
+  } catch (err) {
+    console.error('[ai] notebook/study-pack failed:', err);
+    res.status(500).json({ error: 'Failed to generate study pack' });
+  }
+});
+
 // In production, serve the compiled client from client/dist if present
 const clientDistPath = fs.existsSync(path.resolve(process.cwd(), 'client/dist'))
   ? path.resolve(process.cwd(), 'client/dist')

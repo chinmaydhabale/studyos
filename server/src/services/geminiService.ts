@@ -8,11 +8,9 @@
  */
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// Verified against https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite
-// `gemini-3.5-flash-lite` is a stable model code with text output and
-// structured-output support, which this client relies on for JSON mode.
-// Override with GEMINI_MODEL (e.g. `gemini-3.8-flash` for higher quality).
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+// Verified against https://ai.google.dev/gemini-api/docs/models
+// Primary model is set to gemini-3.8-flash for high quality, fast inference.
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 const REQUEST_TIMEOUT_MS = 25000;
 
@@ -64,8 +62,10 @@ export class GeminiService {
 
     const primaryModel = this.getModel();
     const modelsToTry = [primaryModel];
-    if (primaryModel !== 'gemini-3.6-flash') modelsToTry.push('gemini-3.6-flash');
-    if (primaryModel !== 'gemini-3.5-flash-lite') modelsToTry.push('gemini-3.5-flash-lite');
+    if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
+    if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
+    if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
+    if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
 
     for (const model of modelsToTry) {
       const controller = new AbortController();
