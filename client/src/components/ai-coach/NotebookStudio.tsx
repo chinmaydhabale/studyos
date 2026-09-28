@@ -207,10 +207,10 @@ export const NotebookStudio: React.FC = () => {
 
   // Speaker Voice Selection & Settings
   const [alexVoiceName, setAlexVoiceName] = useState<string>(() => {
-    return localStorage.getItem('studyos_voice_alex') || 'hi-IN-SwaraNeural';
+    return localStorage.getItem('studyos_voice_alex') || 'google-tts';
   });
   const [samVoiceName, setSamVoiceName] = useState<string>(() => {
-    return localStorage.getItem('studyos_voice_sam') || 'hi-IN-MadhurNeural';
+    return localStorage.getItem('studyos_voice_sam') || 'google-tts';
   });
   const [hinglishEngine, setHinglishEngine] = useState<'hi-IN' | 'en-IN'>(() => {
     return (localStorage.getItem('studyos_hinglish_engine') as 'hi-IN' | 'en-IN') || 'hi-IN';
@@ -295,9 +295,7 @@ export const NotebookStudio: React.FC = () => {
 
     const isAlex = speaker === 'Alex';
     const activeLang = audioLanguage;
-    const neuralVoice = isAlex
-      ? (alexVoiceName.includes('Neural') ? alexVoiceName : activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
-      : (samVoiceName.includes('Neural') ? samVoiceName : activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
+    const neuralVoice = isAlex ? (alexVoiceName || 'google-tts') : (samVoiceName || 'google-tts');
 
     const sampleText = isAlex
       ? (activeLang === 'english'
@@ -629,18 +627,10 @@ export const NotebookStudio: React.FC = () => {
     const isAlex = turn.speaker === 'Alex';
     const activeLang = audioOverview?.language || audioLanguage;
 
-    // Resolve Neural Voice ID
-    let neuralVoice = isAlex
-      ? (activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
-      : (activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
+    // Resolve TTS Voice ID (Defaults to Google Text-to-Speech)
+    const neuralVoice = isAlex ? (alexVoiceName || 'google-tts') : (samVoiceName || 'google-tts');
 
-    if (alexVoiceName && isAlex && alexVoiceName.includes('Neural')) {
-      neuralVoice = alexVoiceName;
-    } else if (samVoiceName && !isAlex && samVoiceName.includes('Neural')) {
-      neuralVoice = samVoiceName;
-    }
-
-    // Try high-fidelity Neural TTS first
+    // Try high-fidelity Google / Neural TTS first
     try {
       setIsAudioBuffering(true);
       const cacheKey = `${neuralVoice}|${playbackRate}|${turn.text}`;
@@ -673,7 +663,9 @@ export const NotebookStudio: React.FC = () => {
 
       const audio = new Audio(audioBlobUrl);
       audioRef.current = audio;
-      audio.playbackRate = playbackRate;
+      // Alex is slightly more energetic, Sam slightly calmer and deeper
+      const speakerRate = isAlex ? playbackRate * 1.02 : playbackRate * 0.98;
+      audio.playbackRate = speakerRate;
 
       audio.onended = () => {
         if (turnIndex + 1 < currentTurns.length) {
@@ -697,9 +689,7 @@ export const NotebookStudio: React.FC = () => {
       if (turnIndex + 1 < currentTurns.length) {
         const nextTurn = currentTurns[turnIndex + 1];
         const nextIsAlex = nextTurn.speaker === 'Alex';
-        const nextVoice = nextIsAlex
-          ? (activeLang === 'english' ? 'en-IN-NeerjaExpressiveNeural' : 'hi-IN-SwaraNeural')
-          : (activeLang === 'english' ? 'en-IN-PrabhatNeural' : 'hi-IN-MadhurNeural');
+        const nextVoice = nextIsAlex ? (alexVoiceName || 'google-tts') : (samVoiceName || 'google-tts');
         const nextKey = `${nextVoice}|${playbackRate}|${nextTurn.text}`;
         if (!audioCacheRef.current.has(nextKey)) {
           fetch(`${API_BASE_URL}/api/ai/tts`, {
@@ -713,7 +703,7 @@ export const NotebookStudio: React.FC = () => {
               rate: playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%'
             })
           })
-            .then(r => r.ok ? r.blob() : null)
+            .then(r => (r.ok ? r.blob() : null))
             .then(b => {
               if (b) audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
             })
@@ -1189,8 +1179,12 @@ export const NotebookStudio: React.FC = () => {
                         onChange={(e) => handleSelectAlexVoice(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-violet-400"
                       >
-                        <optgroup label="🌟 Studio Neural Voices (Google NotebookLM Quality)">
-                          <option value="hi-IN-SwaraNeural">🇮🇳 Swara Neural (Natural Hindi / Hinglish Female - Recommended)</option>
+                        <optgroup label="🌐 Google Text-to-Speech (Official - Recommended)">
+                          <option value="google-tts">🌐 Google Text-to-Speech (Official Indian Hindi / Hinglish - Recommended)</option>
+                          <option value="google-cloud-neural">🌟 Google Cloud Neural2 (Alex Host 1)</option>
+                        </optgroup>
+                        <optgroup label="🎙️ Studio Neural Voices">
+                          <option value="hi-IN-SwaraNeural">🇮🇳 Swara Neural (Natural Hindi / Hinglish Female)</option>
                           <option value="en-IN-NeerjaExpressiveNeural">🇮🇳 Neerja Expressive (Natural Indian English Female)</option>
                           <option value="en-US-JennyNeural">🌐 Jenny Neural (Studio Global English Female)</option>
                         </optgroup>
@@ -1254,8 +1248,12 @@ export const NotebookStudio: React.FC = () => {
                         onChange={(e) => handleSelectSamVoice(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
                       >
-                        <optgroup label="🌟 Studio Neural Voices (Google NotebookLM Quality)">
-                          <option value="hi-IN-MadhurNeural">🇮🇳 Madhur Neural (Studio Hindi / Hinglish Male - Recommended)</option>
+                        <optgroup label="🌐 Google Text-to-Speech (Official - Recommended)">
+                          <option value="google-tts">🌐 Google Text-to-Speech (Official Indian Hindi / Hinglish - Recommended)</option>
+                          <option value="google-cloud-neural">🌟 Google Cloud Neural2 (Sam Host 2)</option>
+                        </optgroup>
+                        <optgroup label="🎙️ Studio Neural Voices">
+                          <option value="hi-IN-MadhurNeural">🇮🇳 Madhur Neural (Studio Hindi / Hinglish Male)</option>
                           <option value="en-IN-PrabhatNeural">🇮🇳 Prabhat Neural (Confident Indian English Male)</option>
                           <option value="en-US-GuyNeural">🌐 Guy Neural (Studio Global English Male)</option>
                         </optgroup>
