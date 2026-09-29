@@ -437,9 +437,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsConnected(true);
       const activeRoom = roomIdRef.current;
       const activeUser = userRef.current;
+      const storedActivity = getStoredActivity();
       const effectiveUser = {
         ...activeUser,
-        name: activeUser.name?.trim() || 'Student Aspirant'
+        name: activeUser.name?.trim() || 'Student Aspirant',
+        currentActivity: storedActivity.isRunning ? storedActivity.activityName : (activeUser.currentActivity || 'Ready to Study'),
+        activityCategory: storedActivity.isRunning ? storedActivity.category : (activeUser.activityCategory || 'study'),
+        activityStartTime: storedActivity.isRunning ? storedActivity.startTime : (activeUser.activityStartTime || null),
+        status: storedActivity.isRunning ? storedActivity.activityName : (activeUser.status || 'Ready to Study')
       };
       newSocket.emit('room:join', { roomId: activeRoom, user: effectiveUser });
       newSocket.emit('video:join', { roomId: activeRoom, userName: effectiveUser.name });
@@ -499,7 +504,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('chat:message', (msg: ChatMessage) => {
-      setChatMessages(prev => [...prev, msg]);
+      setChatMessages(prev => {
+        // Skip duplicate by id
+        if (prev.some(m => m.id === msg.id)) return prev;
+        // Replace matching optimistic local message if present
+        const localIdx = prev.findIndex(m => m.id.startsWith('local-') && m.userId === msg.userId && m.text === msg.text);
+        if (localIdx !== -1) {
+          const updated = [...prev];
+          updated[localIdx] = msg;
+          return updated;
+        }
+        return [...prev, msg];
+      });
     });
 
     newSocket.on('wb:history', (elements: WhiteboardElement[]) => {
@@ -597,9 +613,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   const updateStatus = useCallback((status: string) => {
-    setCurrentUser(prev => ({ ...prev, status }));
-    socketRef.current?.emit('user:status_change', { roomId, status });
-  }, [roomId]);
+    setCurrentUser(prev => ({ ...prev, status, currentActivity: status }));
+    socketRef.current?.emit('user:status_change', { roomId, status, userId: currentUser.id });
+  }, [roomId, currentUser.id]);
 
   const toggleMic = useCallback(() => {
     if (!isVoiceUnlocked) {
@@ -622,18 +638,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     extraMeta?: { pdfPage?: number; pdfDocTitle?: string }
   ) => {
     if (!text.trim()) return;
+    const cleanText = text.trim();
+    const optimisticMsg: ChatMessage = {
+      id: `local-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      roomId,
+      userId: currentUser.id,
+      userName: currentUser.name || 'Student',
+      userAvatar: currentUser.avatar,
+      text: cleanText,
+      videoTimestamp,
+      pdfPage: extraMeta?.pdfPage,
+      pdfDocTitle: extraMeta?.pdfDocTitle,
+      isAiDoubt,
+      createdAt: new Date().toISOString()
+    };
+
+    // Optimistically show message immediately so the user experiences zero lag
+    setChatMessages(prev => [...prev, optimisticMsg]);
+
+    if (!socketRef.current?.connected) {
+      addToast('Connecting to Room...', 'Reconnecting to live chat server. Your message will deliver momentarily.', 'warning');
+    }
+
     socketRef.current?.emit('chat:send', {
       roomId,
       userId: currentUser.id,
       userName: currentUser.name || 'Student',
       userAvatar: currentUser.avatar,
-      text,
+      text: cleanText,
       videoTimestamp,
       pdfPage: extraMeta?.pdfPage,
       pdfDocTitle: extraMeta?.pdfDocTitle,
       isAiDoubt
     });
-  }, [roomId, currentUser]);
+  }, [roomId, currentUser, addToast]);
 
   const sendVideoChange = useCallback((videoUrl: string, videoId: string) => {
     socketRef.current?.emit('video:change_url', {
@@ -783,6 +821,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       startTime: now
     };
     setActiveActivity(nextActivity);
+    setCurrentUser(prev => ({
+      ...prev,
+      currentActivity: activityName,
+      activityCategory: category,
+      activityStartTime: now,
+      status: activityName
+    }));
+    userRef.current = {
+      ...userRef.current,
+      currentActivity: activityName,
+      activityCategory: category,
+      activityStartTime: now,
+      status: activityName
+    };
 
     socketRef.current?.emit('activity:start', {
       roomId: roomIdRef.current,
@@ -812,6 +864,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       category: 'study',
       startTime: null
     });
+    setCurrentUser(prev => ({
+      ...prev,
+      currentActivity: 'Idle 💤',
+      activityCategory: 'study',
+      activityStartTime: null,
+      status: 'Idle 💤'
+    }));
+    userRef.current = {
+      ...userRef.current,
+      currentActivity: 'Idle 💤',
+      activityCategory: 'study',
+      activityStartTime: null,
+      status: 'Idle 💤'
+    };
 
     const localDate = new Date().toLocaleDateString('en-CA');
     socketRef.current?.emit('activity:stop', {

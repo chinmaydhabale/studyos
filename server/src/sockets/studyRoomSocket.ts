@@ -105,6 +105,8 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
 
     (socket as any).currentStudyRoom = cleanRoomId;
     socket.join(cleanRoomId);
+    socket.join(`chat_${cleanRoomId}`);
+    socket.join(`video_${cleanRoomId}`);
 
     const effectiveName = data.user.name?.trim() || 'Student Aspirant';
 
@@ -208,13 +210,17 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   });
 
   // User manual status change
-  socket.on('user:status_change', (data: { roomId: string; status: string }) => {
+  socket.on('user:status_change', (data: { roomId: string; status: string; userId?: string }) => {
     const roomId = cleanRoomId(data.roomId);
     const peers = activeRoomPeers.get(roomId) || [];
-    const peer = peers.find(p => p.socketId === socket.id);
+    const peer = peers.find(p => (data.userId && p.userId === data.userId) || p.socketId === socket.id);
     if (peer) {
       peer.status = data.status;
+      peer.currentActivity = data.status;
       io.to(roomId).emit('room:peers', peers);
+    }
+    if (data.userId) {
+      storage.createOrUpdateUser({ id: data.userId, status: data.status, currentActivity: data.status });
     }
   });
 

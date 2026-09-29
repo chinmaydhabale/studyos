@@ -34,11 +34,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
   // Join Room Chat & Voice Channel
   socket.on('chat:join', (data: { roomId: string }) => {
     const roomId = cleanRoomId(data.roomId);
-    const oldChatRoom = (socket as any).currentChatRoom;
-    if (oldChatRoom && oldChatRoom !== `chat_${roomId}`) {
-      socket.leave(oldChatRoom);
-    }
-    (socket as any).currentChatRoom = `chat_${roomId}`;
+    socket.join(roomId);
     socket.join(`chat_${roomId}`);
     
     // Return existing chat history
@@ -75,7 +71,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
 
     // Store and broadcast user message
     storage.addChatMessage(roomId, newMsg);
-    io.to(`chat_${roomId}`).emit('chat:message', newMsg);
+    io.to(roomId).to(`chat_${roomId}`).emit('chat:message', newMsg);
 
     // If it's a doubt for AI
     if (newMsg.isAiDoubt) {
@@ -108,7 +104,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       };
 
       storage.addChatMessage(roomId, aiReply);
-      io.to(`chat_${roomId}`).emit('chat:message', aiReply);
+      io.to(roomId).to(`chat_${roomId}`).emit('chat:message', aiReply);
     }
   });
 

@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { Users, Plus, LogIn, Key, Copy, Check, AlertCircle, X, Sparkles, Shield } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Users, Plus, LogIn, Key, Copy, Check, AlertCircle, X, Sparkles, Compass, RefreshCw, ArrowRight } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
+import { API_BASE_URL } from '../../config.js';
+import { StudyGroup } from '../../types.js';
 
 interface RoomGatewayModalProps {
   isOpen: boolean;
@@ -12,7 +14,11 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
   onClose
 }) => {
   const { roomId, createGroup, joinGroup, addToast } = useSocket();
-  const [tab, setTab] = useState<'join' | 'create'>('join');
+  const [tab, setTab] = useState<'browse' | 'join' | 'create'>('browse');
+
+  // Browse state
+  const [availableRooms, setAvailableRooms] = useState<StudyGroup[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(false);
 
   // Join state
   const [inputRoomId, setInputRoomId] = useState('');
@@ -26,7 +32,42 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const fetchRooms = async () => {
+    try {
+      setLoadingRooms(true);
+      const res = await fetch(`${API_BASE_URL}/api/rooms`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.groups)) {
+          setAvailableRooms(data.groups);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load study rooms:', err);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchRooms();
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleQuickJoin = async (targetId: string) => {
+    setError(null);
+    setLoading(true);
+    const result = await joinGroup(targetId);
+    setLoading(false);
+    if (!result.success) {
+      setError(result.message || `Failed to enter group ${targetId}`);
+    } else {
+      if (onClose) onClose();
+    }
+  };
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,11 +140,11 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
             <h2 className="text-base font-extrabold text-white flex items-center gap-1.5">
               Study Group Gateway
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
-                Unique IDs
+                Live Groups
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              Each study room is strictly protected by a unique ID. No one can join without your Room ID.
+              Join active study rooms with fellow banking aspirants or create your own room.
             </p>
           </div>
         </div>
@@ -125,31 +166,43 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
           </div>
         )}
 
-        {/* Tabs: Join by ID vs Create New Group */}
-        <div className="flex p-1 bg-slate-950/70 border border-white/10 rounded-2xl">
+        {/* Tabs: Browse vs Join by ID vs Create New Group */}
+        <div className="flex p-1 bg-slate-950/70 border border-white/10 rounded-2xl gap-1">
+          <button
+            type="button"
+            onClick={() => { setTab('browse'); setError(null); fetchRooms(); }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+              tab === 'browse'
+                ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Browse Groups</span>
+          </button>
           <button
             type="button"
             onClick={() => { setTab('join'); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
               tab === 'join'
                 ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <LogIn className="w-3.5 h-3.5" />
-            <span>Join Group by ID</span>
+            <span>Join by ID</span>
           </button>
           <button
             type="button"
             onClick={() => { setTab('create'); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
               tab === 'create'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Create New Group</span>
+            <span>Create New</span>
           </button>
         </div>
 
@@ -158,6 +211,90 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
           <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* TAB 0: BROWSE ACTIVE GROUPS */}
+        {tab === 'browse' && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+              <span>Available Study Rooms ({availableRooms.length})</span>
+              <button
+                type="button"
+                onClick={fetchRooms}
+                disabled={loadingRooms}
+                className="flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingRooms ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            <div className="max-h-56 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {loadingRooms && availableRooms.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-500">
+                  <RefreshCw className="w-5 h-5 mx-auto mb-2 animate-spin text-cyan-400" />
+                  Loading active groups...
+                </div>
+              ) : availableRooms.length === 0 ? (
+                <div className="py-8 text-center bg-slate-950/40 rounded-2xl border border-white/5 p-4">
+                  <p className="text-xs text-slate-400 mb-2">No active groups found yet.</p>
+                  <button
+                    type="button"
+                    onClick={() => setTab('create')}
+                    className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-colors"
+                  >
+                    Create First Group
+                  </button>
+                </div>
+              ) : (
+                availableRooms.map((room) => {
+                  const isCurrent = room.roomId === roomId;
+                  return (
+                    <div
+                      key={room.roomId}
+                      className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                        isCurrent
+                          ? 'bg-cyan-500/10 border-cyan-500/40'
+                          : 'bg-slate-950/60 border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h4 className="text-xs font-bold text-white truncate">{room.name}</h4>
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 font-semibold shrink-0">
+                            {room.roomId}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                          <span className="truncate">{room.targetExam || 'Banking'}</span>
+                          <span>•</span>
+                          <span className="truncate">By {room.creatorName || 'Aspirant'}</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        {isCurrent ? (
+                          <span className="text-[11px] font-bold text-cyan-400 px-2.5 py-1 rounded-xl bg-cyan-400/10 border border-cyan-400/30">
+                            Current
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => handleQuickJoin(room.roomId)}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-cyan-600/20 transition-all disabled:opacity-50"
+                          >
+                            <span>Join</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         )}
 
@@ -175,14 +312,14 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. RRB-7225 or IBPS-8419"
+                  placeholder="e.g. STUDY-ROOM-ALPHA or RRB-7225"
                   value={inputRoomId}
                   onChange={(e) => setInputRoomId(e.target.value.toUpperCase().trim())}
                   className="w-full bg-slate-950/80 border border-white/10 rounded-2xl pl-9 pr-3.5 py-3 text-white font-mono text-sm tracking-wider uppercase placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
                 />
               </div>
               <p className="text-[11px] text-slate-500 mt-1.5">
-                🔒 You can only enter this room if your partner gave you their exact Group ID.
+                🔒 Enter any Group ID shared by your study partner or coach.
               </p>
             </div>
 
@@ -249,7 +386,7 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
               disabled={loading}
               className="w-full mt-2 py-3 bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white font-bold rounded-2xl shadow-xl shadow-indigo-500/25 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
             >
-              {loading ? 'Creating Group...' : 'Generate Unique Group ID & Enter'}
+              {loading ? 'Creating Group...' : 'Generate Group & Enter'}
               <Sparkles className="w-4 h-4" />
             </button>
           </form>

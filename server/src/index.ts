@@ -185,6 +185,15 @@ app.post('/api/rooms/join', async (req, res) => {
   }
 });
 
+app.get('/api/rooms', async (req, res) => {
+  try {
+    const groups = await storage.getStudyGroups();
+    res.json({ success: true, groups });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to list study groups' });
+  }
+});
+
 app.get('/api/rooms/:roomId', async (req, res) => {
   const cleanId = req.params.roomId.trim().toUpperCase();
   const group = await storage.getStudyGroup(cleanId);

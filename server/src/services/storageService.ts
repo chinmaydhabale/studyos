@@ -30,6 +30,9 @@ import { StudyDocumentModel } from '../models/StudyDocument.js';
 // $set updates that touch the immutable `_id`, so always strip them before writing.
 const stripDbFields = <T extends object>(obj: T): T => {
   const { _id, __v, ...rest } = obj as any;
+  if (!rest.username || typeof rest.username !== 'string' || !rest.username.trim()) {
+    delete rest.username;
+  }
   return rest as T;
 };
 
@@ -521,8 +524,8 @@ export class StorageService {
         status: updated.status,
         updatedAt: new Date()
       };
-      if (username) {
-        updateData.username = username;
+      if (username && typeof username === 'string' && username.trim()) {
+        updateData.username = username.trim().toLowerCase();
       }
       UserModel.findOneAndUpdate(
         { id: profile.id },
@@ -875,6 +878,20 @@ export class StorageService {
     }
 
     return undefined;
+  }
+
+  public async getStudyGroups(): Promise<StudyGroup[]> {
+    this.ensureDefaultGroup();
+    if (isDbConnected()) {
+      try {
+        const docs = await StudyGroupModel.find({}).sort({ createdAt: -1 });
+        docs.forEach(doc => {
+          const obj = stripDbFields(doc.toObject()) as any;
+          this.groups.set(obj.roomId, obj);
+        });
+      } catch (e) {}
+    }
+    return Array.from(this.groups.values());
   }
 
   // --- Study Documents & Notes (Telegram Backed) ---
