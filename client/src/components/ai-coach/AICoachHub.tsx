@@ -1,932 +1,1797 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Sparkles,
-  Send,
-  HelpCircle,
-  FileQuestion,
+  Mic,
+  FileText,
+  MessageSquare,
   Layers,
+  Play,
+  Pause,
+  RotateCcw,
+  SkipForward,
+  SkipBack,
+  Copy,
+  Check,
+  Upload,
+  BookOpen,
+  HelpCircle,
+  AlertTriangle,
+  CheckSquare,
+  Square,
+  Volume2,
+  VolumeX,
+  Radio,
+  FileUp,
+  Headphones,
+  ChevronRight,
+  ChevronLeft,
+  Send,
+  ArrowRight,
   Clock,
   Calendar,
-  CheckCircle,
-  ArrowRight,
-  BookOpen,
-  Award,
   Zap,
-  ChevronRight,
-  Cpu,
-  Brain,
-  Lightbulb,
-  Check,
-  RotateCcw,
-  Target,
+  Award,
   Flame,
-  Radio,
-  FileText,
-  Volume2
+  Languages,
+  Download,
+  RefreshCw,
+  Edit3,
+  X,
+  ExternalLink,
+  Brain,
+  FileCheck,
+  Sliders,
+  CheckCircle2,
+  ListChecks,
+  Target,
+  Compass
 } from 'lucide-react';
+import { API_BASE_URL } from '../../config.js';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
 import { Flashcard, QuizQuestion } from '../../types.js';
-import { API_BASE_URL } from '../../config.js';
-import { NotebookStudio } from './NotebookStudio.js';
+import { pdfjsLib, extractPageText } from '../../lib/pdfjs.js';
+
+// Types for AI Coach Features
+interface AudioTurn {
+  speaker: 'Alex' | 'Sam';
+  text: string;
+  emotion?: string;
+}
+
+interface AudioDiscussion {
+  docTitle: string;
+  title: string;
+  tagline: string;
+  durationEstimate: string;
+  language?: 'hinglish' | 'hindi' | 'english';
+  turns: AudioTurn[];
+  source?: 'gemini' | 'fallback';
+}
+
+interface ConceptCheatSheet {
+  docTitle: string;
+  executiveSummary: string;
+  keyConcepts: Array<{ term: string; definition: string; examSignificance: string }>;
+  faq: Array<{ question: string; answer: string }>;
+  pitfallsAndTraps: string[];
+  revisionChecklist: string[];
+  source?: 'gemini' | 'fallback';
+}
+
+interface ChatMessageItem {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: string[];
+  suggestedFollowUps?: string[];
+  timestamp: string;
+}
+
+interface StudyPlanResult {
+  message: string;
+  task: any;
+  suggestedSchedule: Array<{ time: string; activity: string; duration: string }>;
+}
+
+// Curated High-Yield Exam Topics
+const PRESET_TOPICS = [
+  {
+    title: 'RBI Monetary Policy & Inflation Framework',
+    domain: 'Banking & Economics',
+    content: `The Reserve Bank of India (RBI) is the central bank responsible for monetary stability in India.
+Monetary Policy Committee (MPC):
+Formed under Section 45ZB of the amended RBI Act, 1934, the MPC consists of 6 members: 3 from RBI (including Governor as ex-officio chairperson) and 3 external government appointees.
+Mandate: Flexible inflation target of 4% Consumer Price Index (CPI) with a tolerance band of +/- 2% (2% to 6%).
+Key Policy Instruments:
+1. Policy Repo Rate: Rate at which RBI lends short-term liquidity to commercial banks against government securities. Increasing repo cools inflation.
+2. Standing Deposit Facility (SDF): Absorbs liquidity without requiring collateral securities, priced slightly below repo.
+3. Cash Reserve Ratio (CRR): Percentage of Net Demand and Time Liabilities (NDTL) banks must park with RBI as liquid cash (no interest paid).
+4. Statutory Liquidity Ratio (SLR): Mandatory percentage of NDTL banks must invest in approved securities (chiefly central/state govt bonds), gold, or cash before extending credit.
+5. Marginal Standing Facility (MSF): Emergency borrowing window for scheduled banks to borrow overnight funds up to a specified percentage of NDTL at higher rate.`
+  },
+  {
+    title: 'Thermodynamics & Heat Engines',
+    domain: 'Physics / General Science',
+    content: `Thermodynamics deals with heat, work, temperature, and energy transformations.
+First Law of Thermodynamics:
+ΔU = Q - W (Internal energy change equals heat supplied minus work done by system). Energy cannot be created or destroyed. In cyclic processes, ΔU = 0, so Q_net = W_net.
+Second Law of Thermodynamics:
+- Kelvin-Planck statement: Impossible to construct an engine operating in a cycle that absorbs heat from a single reservoir and produces 100% equivalent work.
+- Clausius statement: Heat cannot spontaneously transfer from cooler to warmer body without external work.
+- Entropy (S) of an isolated system always increases in irreversible processes (ΔS ≥ 0).
+Carnot Cycle & Efficiency:
+Theoretical upper ceiling for any heat engine operating between two thermal reservoirs:
+η = 1 - (T_C / T_H) = (T_H - T_C) / T_H.
+Critical Exam Rule: Both reservoir temperatures T_C and T_H must strictly be in Kelvin (K = °C + 273.15). Real engines have lower efficiency due to friction and heat loss.`
+  },
+  {
+    title: 'Indian Constitution: Fundamental Rights',
+    domain: 'Indian Polity & Law',
+    content: `Part III of the Constitution of India (Articles 12 to 35) guarantees Fundamental Rights (Magna Carta of India).
+Key Categories:
+1. Right to Equality (Articles 14–18): Article 14 (Equality before law), Article 15 (No discrimination), Article 16 (Equal opportunity in public employment), Article 17 (Abolition of Untouchability), Article 18 (Abolition of titles).
+2. Right to Freedom (Articles 19–22): Article 19 (6 fundamental freedoms), Article 21 (Protection of life & personal liberty, includes privacy & dignity), Article 21A (Right to free education for 6-14 years).
+3. Right against Exploitation (Articles 23–24): Prohibition of trafficking, forced labor, and child labor in hazardous factories.
+4. Right to Freedom of Religion (Articles 25–28).
+5. Cultural & Educational Rights (Articles 29–30).
+6. Right to Constitutional Remedies (Article 32): Dr. Ambedkar called Article 32 the "Heart and Soul of the Constitution". Empowers approaching Supreme Court directly via writs: Habeas Corpus, Mandamus, Prohibition, Certiorari, and Quo-Warranto.`
+  },
+  {
+    title: 'Quant Speed Math & Data Interpretation',
+    domain: 'Banking Aptitude',
+    content: `Speed Math principles for RRB PO, IBPS, and SBI:
+1. Fractional Equivalents: 1/6 = 16.66%, 1/7 = 14.28%, 1/8 = 12.5%, 1/9 = 11.11%, 1/11 = 9.09%, 1/12 = 8.33%, 1/14 = 7.14%. Use these for fast percentage calculations.
+2. Vedic Multiplication Shortcuts: Base method for numbers close to 100, and cross-multiplication for 2-digit numbers (ab × cd).
+3. Approximation Rules: Round off decimals only at final stage when options are distant. If options differ by < 2%, calculate accurately.
+4. Quadratic Equations Sign Rule:
+- ax² + bx + c = 0 → Roots are (- , -)
+- ax² - bx + c = 0 → Roots are (+ , +)
+- ax² + bx - c = 0 → Roots are (- , +)
+- ax² - bx - c = 0 → Roots are (+ , -)
+If constant terms in both equations are negative (-c), relationship is always "Cannot be Determined (CND)".`
+  },
+  {
+    title: 'Reasoning: Syllogism & Critical Logic',
+    domain: 'Banking Reasoning',
+    content: `Mastering Syllogisms for Competitive Exams:
+1. Standard Venn Diagram Representations:
+- All A are B: A is completely inside B.
+- Some A are B: Overlapping circle.
+- No A is B: Separate circles with cross-line.
+- Some A are not B: Specific portion of A outside B.
+2. "Only a few" vs "Only":
+- "Only a few A are B" means BOTH "Some A are B" AND "Some A are NOT B" are 100% definitely true.
+- "Only A are B" translates to "All B are A", and B can NEVER intersect with any other entity.
+3. Possibility Rules:
+- If a direct negative relation exists, no positive possibility can follow.
+- If no direct relation is mentioned, ANY possibility without violating given premises is TRUE.
+- Complimentary Pairs (Either / Or): (Some + No) or (All + Some Not) with same subject and predicate.`
+  }
+];
+
+type WorkspaceTab = 'audio' | 'chat' | 'flashcards' | 'quiz' | 'cheatsheet' | 'planner';
 
 interface AICoachHubProps {
   initialPrompt?: string;
   onNavigateToCalendar?: () => void;
 }
 
-interface AIStatus {
-  enabled: boolean;
-  provider: string;
-  model: string;
-  defaultModel: string;
-}
-
-type SubTabId = 'notebook' | 'doubts' | 'flashcards' | 'quiz' | 'planner';
-
 export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNavigateToCalendar }) => {
-  const { addToast, currentUser } = useSocket();
-  const { addXp, triggerCelebration } = useStudy();
+  const { addToast } = useSocket();
+  const { addXp } = useStudy();
 
-  const [activeSubTab, setActiveSubTab] = useState<SubTabId>('notebook');
-  const [isLoading, setIsLoading] = useState(false);
-  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  // Active Study Context State
+  const [activeTopic, setActiveTopic] = useState(PRESET_TOPICS[0].title);
+  const [activeDomain, setActiveDomain] = useState(PRESET_TOPICS[0].domain);
+  const [sourceMaterial, setSourceMaterial] = useState(PRESET_TOPICS[0].content);
 
-  // Planner States
-  const [promptInput, setPromptInput] = useState(initialPrompt || 'Tomorrow should include 45 minutes of Physics Thermodynamics focus block.');
-  const [plannerResult, setPlannerResult] = useState<{
-    message: string;
-    task: any;
-    suggestedSchedule: Array<{ time: string; activity: string; duration: string }>;
-    source?: 'gemini' | 'fallback';
-  } | null>(null);
+  // Active Workspace Tab
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('audio');
 
-  // Doubt Solver States
-  const [doubtQuestion, setDoubtQuestion] = useState('Why does Carnot engine have maximum theoretical efficiency?');
-  const [doubtSubject, setDoubtSubject] = useState('Physics');
-  const [doubtSolution, setDoubtSolution] = useState<{
-    explanation: string;
-    steps: string[];
-    keyFormula?: string;
-    practiceTip: string;
-    source?: 'gemini' | 'fallback';
-  } | null>(null);
+  // Modals
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [tempEditorTitle, setTempEditorTitle] = useState(activeTopic);
+  const [tempEditorText, setTempEditorText] = useState(sourceMaterial);
+  const [isUploading, setIsUploading] = useState(false);
 
-  // Flashcards States
-  const [flashcardTopic, setFlashcardTopic] = useState('Thermodynamics & Heat Engines');
-  const [flashcardCount, setFlashcardCount] = useState<number>(8);
-  const [flashcards, setFlashcards] = useState<Flashcard[]>([
+  // Loading States
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+
+  // ----------------------------------------------------
+  // 1. Audio Deep Dive State & Audio Player
+  // ----------------------------------------------------
+  const [audioDiscussion, setAudioDiscussion] = useState<AudioDiscussion | null>(null);
+  const [audioLang, setAudioLang] = useState<'hinglish' | 'hindi' | 'english'>('hinglish');
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [audioBuffering, setAudioBuffering] = useState(false);
+
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCacheRef = useRef<Map<string, string>>(new Map());
+  const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // ----------------------------------------------------
+  // 2. Chat / Doubt Assistant State
+  // ----------------------------------------------------
+  const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([
     {
-      id: 'fc-1',
-      front: 'What is the Second Law of Thermodynamics in terms of entropy?',
-      back: 'In an isolated system, total entropy never decreases over time: ΔS_total ≥ 0. Entropy remains constant in reversible processes and increases in irreversible ones.',
-      subject: 'Physics',
-      masteryLevel: 'reviewing'
-    },
-    {
-      id: 'fc-2',
-      front: 'What is the Carnot efficiency formula and critical unit constraint?',
-      back: 'η = 1 - (T_C / T_H). Both reservoir temperatures T_C and T_H must strictly be in Kelvin (K = °C + 273.15).',
-      subject: 'Physics',
-      masteryLevel: 'learning'
-    },
-    {
-      id: 'fc-3',
-      front: 'What is the Monetary Policy Committee (MPC) inflation target in India?',
-      back: 'Flexible inflation target of 4% Consumer Price Index (CPI) with a tolerance band of ±2% (2% to 6%), under Section 45ZB of the RBI Act.',
-      subject: 'Economics',
-      masteryLevel: 'mastered'
+      id: 'welcome-msg',
+      role: 'assistant',
+      content: `Namaste! Main aapka personal AI Study Coach hoon. Aapke active study material ("${activeTopic}") par koi bhi doubt ya concept poochhiye — main simple Hinglish aur exam tricks ke sath step-by-step explain karunga!`,
+      timestamp: 'Just now',
+      suggestedFollowUps: [
+        'Explain the core concept in simple terms',
+        'What are the most common exam traps?',
+        'Give me a mnemonic to remember this',
+        'Derive key formula step-by-step'
+      ]
     }
   ]);
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [isFlipped, setIsFlipped] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
-  // Quiz States
-  const [quizTopic, setQuizTopic] = useState('Thermodynamics & Carnot Cycle');
-  const [quizList, setQuizList] = useState<QuizQuestion[]>([
-    {
-      id: 'q-1',
-      question: 'Which of the following processes in a Carnot cycle involves heat absorption at high temperature?',
-      options: [
-        'Reversible Isothermal Expansion',
-        'Reversible Adiabatic Expansion',
-        'Reversible Isothermal Compression',
-        'Reversible Adiabatic Compression'
-      ],
-      correctAnswer: 0,
-      explanation: 'In stage 1 of the Carnot cycle, the working gas expands isothermally at high temperature T_H, absorbing heat Q_H from the source.',
-      subject: 'Physics',
-      topic: 'Thermodynamics'
-    },
-    {
-      id: 'q-2',
-      question: 'For an adiabatic reversible expansion of an ideal gas, which relationship holds true?',
-      options: ['P · V = constant', 'P · V^γ = constant', 'T / P = constant', 'V / T^γ = constant'],
-      correctAnswer: 1,
-      explanation: 'In an adiabatic reversible process with no heat exchange (dQ = 0), the state equation is P · V^γ = constant.',
-      subject: 'Physics',
-      topic: 'Thermodynamics'
-    }
-  ]);
-  const [selectedAnswers, setSelectedAnswers] = useState<{ [qId: string]: number }>({});
-  const [showQuizResults, setShowQuizResults] = useState(false);
+  // ----------------------------------------------------
+  // 3. Flashcards State
+  // ----------------------------------------------------
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
+  const [isCardFlipped, setIsCardFlipped] = useState(false);
 
-  // Sync initialPrompt changes (e.g. from SyncTheater "Ask AI at timestamp")
+  // ----------------------------------------------------
+  // 4. Practice Quiz State
+  // ----------------------------------------------------
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
+  const [submittedQuiz, setSubmittedQuiz] = useState(false);
+
+  // ----------------------------------------------------
+  // 5. Concept Cheat Sheet State
+  // ----------------------------------------------------
+  const [cheatSheet, setCheatSheet] = useState<ConceptCheatSheet | null>(null);
+  const [checkedChecklist, setCheckedChecklist] = useState<Record<number, boolean>>({});
+
+  // ----------------------------------------------------
+  // 6. Smart Study Planner State
+  // ----------------------------------------------------
+  const [studyPlan, setStudyPlan] = useState<StudyPlanResult | null>(null);
+  const [planGoal, setPlanGoal] = useState('');
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatLoading]);
+
+  // Handle external initialPrompt (from Video or PDF Reader)
   useEffect(() => {
     if (initialPrompt && initialPrompt.trim()) {
-      setPromptInput(initialPrompt);
-      setDoubtQuestion(initialPrompt);
-      setActiveSubTab('doubts');
+      setActiveTab('chat');
+      handleSendChatMessage(initialPrompt);
     }
   }, [initialPrompt]);
 
-  // Report which backend is actively answering: live Gemini or offline templates.
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE_URL}/api/ai/status`)
-      .then(res => res.json())
-      .then((data: AIStatus) => {
-        if (!cancelled) setAiStatus(data);
-      })
-      .catch(() => {
-        if (!cancelled) setAiStatus({ enabled: false, provider: 'gemini', model: 'unavailable', defaultModel: '' });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Switch Preset Topic
+  const handleSelectPreset = (preset: typeof PRESET_TOPICS[0]) => {
+    stopAudio();
+    setActiveTopic(preset.title);
+    setActiveDomain(preset.domain);
+    setSourceMaterial(preset.content);
+    // Reset generated content for new topic
+    setAudioDiscussion(null);
+    setFlashcards([]);
+    setQuizQuestions([]);
+    setCheatSheet(null);
+    setStudyPlan(null);
+    setChatMessages([
+      {
+        id: `welcome-${Date.now()}`,
+        role: 'assistant',
+        content: `Active topic changed to: "${preset.title}". Ab is topic se judha koi bhi doubt poochhiye, podcast suniye, ya flashcards practice kijiye!`,
+        timestamp: 'Just now',
+        suggestedFollowUps: [
+          'Explain the core concept in simple terms',
+          'What are the most common exam traps?',
+          'Give me a mnemonic to remember this',
+          'Derive key formula step-by-step'
+        ]
+      }
+    ]);
+    addToast('Study Topic Updated', `Switched to ${preset.title}`, 'info');
+  };
 
-  // Handler: Run Schedule Prompt
-  const handleRunSchedulePrompt = async (textToRun?: string) => {
-    const text = textToRun || promptInput;
-    if (!text.trim()) return;
-    setIsLoading(true);
+  // Upload PDF Handler
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
+    setIsUploading(true);
+    stopAudio();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/schedule-prompt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, userId: currentUser?.id })
-      });
-      const data = await res.json();
-      setPlannerResult(data);
-      addToast('Schedule Updated by AI Coach', data.message, 'success');
-      addXp(50, 'Organized Daily Schedule');
-    } catch (e) {
-      console.error(e);
-      addToast('Error', 'Could not parse schedule prompt', 'alert');
+      if (file.type === 'application/pdf') {
+        const arrayBuffer = await file.arrayBuffer();
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const pdf = await loadingTask.promise;
+        let fullText = '';
+        const pagesToRead = Math.min(pdf.numPages, 10); // read up to first 10 pages
+        for (let i = 1; i <= pagesToRead; i++) {
+          const pageText = await extractPageText(pdf, i);
+          fullText += `\n--- Page ${i} ---\n` + pageText;
+        }
+
+        const cleanTitle = file.name.replace(/\.pdf$/i, '');
+        setActiveTopic(cleanTitle);
+        setActiveDomain('Uploaded Document');
+        setSourceMaterial(fullText.trim() || 'No selectable text found in this PDF.');
+        setAudioDiscussion(null);
+        setFlashcards([]);
+        setQuizQuestions([]);
+        setCheatSheet(null);
+        addToast('PDF Processed!', `Extracted text from ${pagesToRead} pages of "${cleanTitle}"`, 'success');
+      } else {
+        const text = await file.text();
+        const cleanTitle = file.name.replace(/\.[^/.]+$/, '');
+        setActiveTopic(cleanTitle);
+        setActiveDomain('Custom File');
+        setSourceMaterial(text);
+        setAudioDiscussion(null);
+        setFlashcards([]);
+        setQuizQuestions([]);
+        setCheatSheet(null);
+        addToast('File Loaded!', `Loaded contents of "${cleanTitle}"`, 'success');
+      }
+    } catch (err: any) {
+      console.error('File parsing error:', err);
+      addToast('Upload Error', 'Failed to read document text. Please try another file.', 'alert');
     } finally {
-      setIsLoading(false);
+      setIsUploading(false);
+      if (e.target) e.target.value = '';
     }
   };
 
-  // Handler: Solve Doubt
-  const handleSolveDoubt = async (customQ?: string) => {
-    const q = customQ || doubtQuestion;
-    if (!q.trim()) return;
-    setIsLoading(true);
+  // Save Custom Note / Paste Material
+  const handleSaveCustomNotes = () => {
+    if (!tempEditorText.trim()) return;
+    stopAudio();
+    setActiveTopic(tempEditorTitle.trim() || 'Custom Study Notes');
+    setActiveDomain('Student Notes');
+    setSourceMaterial(tempEditorText.trim());
+    setAudioDiscussion(null);
+    setFlashcards([]);
+    setQuizQuestions([]);
+    setCheatSheet(null);
+    setIsEditorOpen(false);
+    addToast('Notes Saved!', 'AI Coach is now analyzing your custom study material.', 'success');
+  };
+
+  // =========================================================================
+  // 1. Audio Deep Dive Engine (Google TTS + Native Speech)
+  // =========================================================================
+
+  const generateAudioDiscussion = async () => {
+    setLoadingAction('Generating Audio Discussion...');
+    stopAudio();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/doubt`, {
+      const res = await fetch(`${API_BASE_URL}/api/ai/notebook/audio-overview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          question: q.trim(),
-          context: {
-            subject: doubtSubject,
-            userId: currentUser?.id
-          }
+          docTitle: activeTopic,
+          sourceText: sourceMaterial,
+          language: audioLang
         })
       });
-      const data = await res.json();
-      setDoubtSolution(data);
-      addToast('Doubt Solved', 'AI Coach provided complete conceptual breakdown.', 'info');
-      addXp(25, 'Solved Concept Doubt');
-    } catch (e) {
-      console.error(e);
-      addToast('Failed', 'Could not reach AI doubt service', 'alert');
+      if (!res.ok) throw new Error('Audio generation failed');
+      const data: AudioDiscussion = await res.json();
+      setAudioDiscussion(data);
+      setCurrentTurnIndex(0);
+      addToast('Podcast Generated!', `Created ${data.turns.length}-turn deep dive discussion.`, 'success');
+    } catch (err: any) {
+      console.error('Failed to generate audio overview:', err);
+      addToast('Audio Error', 'Could not generate discussion. Please try again.', 'alert');
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   };
 
-  // Handler: Generate AI Flashcards
-  const handleGenerateFlashcards = async () => {
-    if (!flashcardTopic.trim()) return;
-    setIsLoading(true);
+  const stopAudio = () => {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
+    }
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlaying(false);
+    setAudioBuffering(false);
+  };
+
+  const playTurn = useCallback(async (index: number) => {
+    if (!audioDiscussion || !audioDiscussion.turns || index >= audioDiscussion.turns.length) {
+      stopAudio();
+      return;
+    }
+
+    stopAudio();
+    setCurrentTurnIndex(index);
+    setIsPlaying(true);
+    setAudioBuffering(true);
+
+    const turn = audioDiscussion.turns[index];
+    const isAlex = turn.speaker === 'Alex';
+
+    // Auto-scroll transcript to active turn
+    setTimeout(() => {
+      const turnEl = document.getElementById(`turn-${index}`);
+      if (turnEl && transcriptContainerRef.current) {
+        turnEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 50);
+
+    const cacheKey = `${turn.speaker}|${audioLang}|${playbackRate}|${turn.text}`;
+    let blobUrl = audioCacheRef.current.get(cacheKey);
+
+    // Try Google Neural TTS endpoint first
+    if (!blobUrl) {
+      try {
+        const rateParam = playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%';
+        const res = await fetch(`${API_BASE_URL}/api/ai/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: turn.text,
+            speaker: turn.speaker,
+            language: audioLang,
+            voice: 'google-tts',
+            rate: rateParam
+          })
+        });
+
+        if (res.ok) {
+          const blob = await res.blob();
+          blobUrl = URL.createObjectURL(blob);
+          audioCacheRef.current.set(cacheKey, blobUrl);
+        }
+      } catch (err) {
+        console.warn('Neural TTS failed, falling back to Web Speech:', err);
+      }
+    }
+
+    setAudioBuffering(false);
+
+    if (blobUrl) {
+      // Play Neural Audio
+      const audio = new Audio(blobUrl);
+      activeAudioRef.current = audio;
+      audio.playbackRate = playbackRate;
+      audio.onended = () => {
+        playTurn(index + 1);
+      };
+      audio.onerror = () => {
+        fallbackWebSpeech(turn, index);
+      };
+      audio.play().catch(() => {
+        fallbackWebSpeech(turn, index);
+      });
+
+      // Preload next turn in background
+      if (index + 1 < audioDiscussion.turns.length) {
+        const nextTurn = audioDiscussion.turns[index + 1];
+        const nextKey = `${nextTurn.speaker}|${audioLang}|${playbackRate}|${nextTurn.text}`;
+        if (!audioCacheRef.current.has(nextKey)) {
+          fetch(`${API_BASE_URL}/api/ai/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: nextTurn.text,
+              speaker: nextTurn.speaker,
+              language: audioLang,
+              voice: 'google-tts',
+              rate: playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%'
+            })
+          })
+            .then(r => r.ok ? r.blob() : null)
+            .then(b => {
+              if (b) audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
+            })
+            .catch(() => {});
+        }
+      }
+    } else {
+      // Fallback to Web Speech API
+      fallbackWebSpeech(turn, index);
+    }
+  }, [audioDiscussion, audioLang, playbackRate]);
+
+  const fallbackWebSpeech = (turn: AudioTurn, index: number) => {
+    if (!('speechSynthesis' in window)) {
+      setIsPlaying(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(turn.text);
+    utterance.rate = playbackRate;
+    utterance.pitch = turn.speaker === 'Alex' ? 1.0 : 1.15;
+    utterance.lang = audioLang === 'hindi' ? 'hi-IN' : audioLang === 'hinglish' ? 'hi-IN' : 'en-IN';
+
+    utterance.onend = () => {
+      playTurn(index + 1);
+    };
+    utterance.onerror = () => {
+      setIsPlaying(false);
+    };
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const togglePlayPause = () => {
+    if (isPlaying) {
+      stopAudio();
+    } else {
+      if (!audioDiscussion) {
+        generateAudioDiscussion();
+      } else {
+        playTurn(currentTurnIndex);
+      }
+    }
+  };
+
+  // =========================================================================
+  // 2. Doubt Solver & Chat Assistant
+  // =========================================================================
+
+  const handleSendChatMessage = async (overridePrompt?: string) => {
+    const textToSend = overridePrompt || chatInput;
+    if (!textToSend.trim() || chatLoading) return;
+
+    const userMsg: ChatMessageItem = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: textToSend.trim(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setChatMessages(prev => [...prev, userMsg]);
+    if (!overridePrompt) setChatInput('');
+    setChatLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/notebook/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docTitle: activeTopic,
+          sourceText: sourceMaterial,
+          question: textToSend.trim()
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to solve doubt');
+      const data = await res.json();
+
+      const assistantMsg: ChatMessageItem = {
+        id: `reply-${Date.now()}`,
+        role: 'assistant',
+        content: data.answer || 'Concept explained.',
+        citations: data.citations || [],
+        suggestedFollowUps: data.suggestedFollowUps || [],
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setChatMessages(prev => [...prev, assistantMsg]);
+    } catch (err: any) {
+      console.error('Chat error:', err);
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: 'Maaf kijiye, doubt process karne me thodi problem aayi. Please dobara try karein.',
+          timestamp: 'Just now'
+        }
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  // =========================================================================
+  // 3. Flashcards Engine
+  // =========================================================================
+
+  const generateFlashcards = async () => {
+    setLoadingAction('Generating Flashcards...');
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/flashcards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: flashcardTopic.trim(), count: flashcardCount })
+        body: JSON.stringify({
+          topic: activeTopic,
+          count: 8
+        })
       });
-      const data: Flashcard[] = await res.json();
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error('AI returned no cards');
+      if (!res.ok) throw new Error('Flashcard generation failed');
+      const data = await res.json();
+      if (Array.isArray(data.flashcards) && data.flashcards.length > 0) {
+        setFlashcards(data.flashcards);
+        setActiveCardIndex(0);
+        setIsCardFlipped(false);
+        addToast('Flashcards Ready!', `Created ${data.flashcards.length} revision cards.`, 'success');
       }
-      setFlashcards(data);
-      setCurrentCardIndex(0);
-      setIsFlipped(false);
-      addToast('Flashcards Ready', `Generated ${data.length} high-yield cards via Gemini 3.7 Flash.`, 'success');
-      addXp(40, 'Generated Flashcard Deck');
-    } catch (e) {
-      console.error(e);
-      addToast('Flashcards Failed', 'Could not generate flashcards right now.', 'alert');
+    } catch (err) {
+      console.error('Flashcard error:', err);
+      addToast('Error', 'Failed to generate flashcards.', 'alert');
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   };
 
-  // Handler: Generate AI Quiz
-  const handleGenerateQuiz = async () => {
-    if (!quizTopic.trim()) return;
-    setIsLoading(true);
+  const handleCardMastery = (level: 'learning' | 'reviewing' | 'mastered') => {
+    if (!flashcards.length) return;
+    const updated = [...flashcards];
+    updated[activeCardIndex].masteryLevel = level;
+    setFlashcards(updated);
+    addXp(15);
+
+    // Auto next card
+    if (activeCardIndex < flashcards.length - 1) {
+      setIsCardFlipped(false);
+      setActiveCardIndex(activeCardIndex + 1);
+    } else {
+      addToast('Deck Completed!', 'Great job! You revised all flashcards.', 'success');
+    }
+  };
+
+  // =========================================================================
+  // 4. Practice Quiz Engine
+  // =========================================================================
+
+  const generateQuiz = async () => {
+    setLoadingAction('Generating Exam Quiz...');
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: quizTopic.trim(), count: 4 })
+        body: JSON.stringify({
+          topic: activeTopic,
+          numQuestions: 5
+        })
       });
-      const data: QuizQuestion[] = await res.json();
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error('AI returned no questions');
+      if (!res.ok) throw new Error('Quiz generation failed');
+      const data = await res.json();
+      if (Array.isArray(data.questions) && data.questions.length > 0) {
+        setQuizQuestions(data.questions);
+        setSelectedAnswers({});
+        setSubmittedQuiz(false);
+        addToast('Quiz Ready!', `Created 5 MCQs on ${activeTopic}.`, 'success');
       }
-      setQuizList(data);
-      setSelectedAnswers({});
-      setShowQuizResults(false);
-      addToast('Quiz Generated', `${data.length} diagnostic questions on ${quizTopic}.`, 'success');
-      addXp(30, 'Generated Diagnostic Quiz');
-    } catch (e) {
-      console.error(e);
-      addToast('Quiz Failed', 'Could not generate a quiz right now.', 'alert');
+    } catch (err) {
+      console.error('Quiz error:', err);
+      addToast('Error', 'Failed to generate quiz.', 'alert');
     } finally {
-      setIsLoading(false);
+      setLoadingAction(null);
     }
   };
 
-  const quizScore = quizList.reduce(
-    (score, q) => (selectedAnswers[q.id] === q.correctAnswer ? score + 1 : score),
-    0
-  );
+  const calculateScore = () => {
+    let score = 0;
+    quizQuestions.forEach((q, idx) => {
+      if (selectedAnswers[idx] === q.correctAnswer) score++;
+    });
+    return score;
+  };
 
-  const masteredCount = flashcards.filter(f => f.masteryLevel === 'mastered').length;
-  const reviewingCount = flashcards.filter(f => f.masteryLevel === 'reviewing').length;
+  // =========================================================================
+  // 5. Concept Cheat Sheet Engine
+  // =========================================================================
+
+  const generateCheatSheet = async () => {
+    setLoadingAction('Generating Cheat Sheet & Traps...');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/notebook/briefing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docTitle: activeTopic,
+          sourceText: sourceMaterial
+        })
+      });
+      if (!res.ok) throw new Error('Cheat sheet generation failed');
+      const data = await res.json();
+      setCheatSheet(data);
+      setCheckedChecklist({});
+      addToast('Cheat Sheet Ready!', 'Synthesized summary, definitions, traps & checklist.', 'success');
+    } catch (err) {
+      console.error('Cheat sheet error:', err);
+      addToast('Error', 'Failed to generate cheat sheet.', 'alert');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // =========================================================================
+  // 6. Smart Study Planner Engine
+  // =========================================================================
+
+  const generateStudyPlan = async () => {
+    setLoadingAction('Creating Revision Roadmap...');
+    try {
+      const prompt = planGoal.trim() || `Tomorrow should include dedicated focus blocks for ${activeTopic}.`;
+      const res = await fetch(`${API_BASE_URL}/api/ai/schedule-prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+      if (!res.ok) throw new Error('Plan generation failed');
+      const data = await res.json();
+      setStudyPlan(data);
+      addToast('Plan Created!', 'Actionable time-blocked schedule ready.', 'success');
+    } catch (err) {
+      console.error('Planner error:', err);
+      addToast('Error', 'Failed to generate study plan.', 'alert');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-3 sm:p-4 flex flex-col h-[calc(100vh-4.5rem)]">
+    <div className="h-full flex flex-col bg-[#090d16] text-slate-100 overflow-hidden select-none">
       
-      {/* ========================================================================= */}
-      {/* 1. TOP COMMAND BAR: StudyOS AI Coach 2.0 Glassmorphic Header */}
-      {/* ========================================================================= */}
-      <div className="bg-slate-900/90 backdrop-blur-2xl border border-white/10 rounded-2xl p-3 sm:p-4 mb-3 shadow-2xl relative overflow-hidden">
-        {/* Subtle background glow */}
-        <div className="absolute -top-12 -left-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 relative z-10">
-          
-          {/* Brand & Status */}
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/30 shrink-0">
-              <Sparkles className="w-5 h-5 text-white animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
-                  <span>StudyOS AI Coach</span>
-                  <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-indigo-500 to-cyan-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm">
-                    2.0 Pro
-                  </span>
-                </h1>
-
-                {/* Model Indicator Pill */}
-                <div
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex items-center gap-1.5 transition-all ${
-                    aiStatus?.enabled
-                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                      : 'bg-slate-800 text-slate-300 border-white/10'
-                  }`}
-                  title={
-                    aiStatus?.enabled
-                      ? 'Connected to Gemini API & Microsoft Edge Neural TTS'
-                      : 'GEMINI_API_KEY not detected, using intelligent built-in templates'
-                  }
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                  <span>
-                    {aiStatus === null
-                      ? 'Connecting AI...'
-                      : aiStatus.enabled
-                      ? `Gemini ${aiStatus.model} · Neural Studio`
-                      : 'Offline Engine Active'}
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-400 hidden sm:block mt-0.5">
-                Google NotebookLM Studio, Neural Audio Podcast, Step-by-Step Doubt Solver & Flashcards
-              </p>
-            </div>
+      {/* =================================================================== */}
+      {/* 1. TOP CONTEXT HEADER: Active Study Material & Topic Switcher */}
+      {/* =================================================================== */}
+      <header className="px-6 py-4 border-b border-white/10 bg-slate-950/70 backdrop-blur-md flex flex-wrap items-center justify-between gap-4 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/25 shrink-0">
+            <Brain className="w-5 h-5 text-white" />
           </div>
-
-          {/* Quick Metrics & Subtab Navigation */}
-          <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-white/10 overflow-x-auto scrollbar-none">
-            {[
-              { id: 'notebook', label: '🎙️ NotebookLM Studio', badge: 'Flagship' },
-              { id: 'doubts', label: '⚡ Doubt Solver', badge: '' },
-              { id: 'flashcards', label: '🎴 Flashcard Vault', badge: 'SM-2' },
-              { id: 'quiz', label: '🎯 Diagnostic Drill', badge: '' },
-              { id: 'planner', label: '📅 AI Daily Planner', badge: '' }
-            ].map((tab) => {
-              const isActive = activeSubTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveSubTab(tab.id as SubTabId)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
-                    isActive
-                      ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-md shadow-indigo-500/30 scale-[1.02]'
-                      : 'text-slate-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  {tab.badge && (
-                    <span
-                      className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase tracking-wider ${
-                        isActive
-                          ? 'bg-white/20 text-white'
-                          : 'bg-indigo-500/20 text-indigo-300'
-                      }`}
-                    >
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base font-extrabold text-white tracking-tight truncate max-w-md">
+                {activeTopic}
+              </h1>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                {activeDomain}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+              <span>{sourceMaterial.split(/\s+/).length} words</span>
+              <span>•</span>
+              <span>~{Math.max(1, Math.ceil(sourceMaterial.split(/\s+/).length / 180))} min read</span>
+              <span>•</span>
+              <span className="text-indigo-400">All tools synced to this topic</span>
+            </p>
           </div>
-
         </div>
-      </div>
 
-      {/* ========================================================================= */}
-      {/* 2. MAIN ACTIVE VIEW CONTAINER */}
-      {/* ========================================================================= */}
-      <div className="flex-1 overflow-y-auto pr-1">
-        
-        {/* SUBTAB 0: Flagship NotebookLM Studio */}
-        {activeSubTab === 'notebook' && (
-          <NotebookStudio />
+        {/* Quick Action Buttons for Changing Context */}
+        <div className="flex items-center gap-2">
+          {/* Preset Selector Dropdown */}
+          <div className="relative group">
+            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 transition-colors">
+              <Compass className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Presets</span>
+            </button>
+            <div className="absolute right-0 mt-1 w-64 p-1.5 bg-slate-900 border border-white/15 rounded-2xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-50">
+              <p className="text-[10px] font-bold text-slate-500 uppercase px-2.5 py-1">Exam Topics</p>
+              {PRESET_TOPICS.map((p, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSelectPreset(p)}
+                  className={`w-full text-left px-2.5 py-2 rounded-xl text-xs flex flex-col transition-colors ${
+                    activeTopic === p.title ? 'bg-indigo-600/30 text-white font-bold' : 'text-slate-300 hover:bg-white/5'
+                  }`}
+                >
+                  <span className="truncate">{p.title}</span>
+                  <span className="text-[10px] text-slate-500">{p.domain}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Upload PDF / Document */}
+          <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 cursor-pointer transition-colors">
+            <Upload className={`w-3.5 h-3.5 text-purple-400 ${isUploading ? 'animate-bounce' : ''}`} />
+            <span>{isUploading ? 'Reading...' : 'Upload PDF'}</span>
+            <input
+              type="file"
+              accept=".pdf,.txt,.md"
+              onChange={handleFileUpload}
+              className="hidden"
+              disabled={isUploading}
+            />
+          </label>
+
+          {/* Edit / Paste Notes */}
+          <button
+            onClick={() => {
+              setTempEditorTitle(activeTopic);
+              setTempEditorText(sourceMaterial);
+              setIsEditorOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 transition-colors"
+          >
+            <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Edit Notes</span>
+          </button>
+        </div>
+      </header>
+
+      {/* =================================================================== */}
+      {/* 2. UNIFIED WORKSPACE NAVIGATION BAR (6 Integrated Tools) */}
+      {/* =================================================================== */}
+      <nav className="px-6 py-2.5 bg-slate-950/40 border-b border-white/5 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar shrink-0">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setActiveTab('audio')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'audio'
+                ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-lg shadow-cyan-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Headphones className="w-3.5 h-3.5 text-cyan-300" />
+            <span>Audio Discussion</span>
+            {audioDiscussion && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('chat')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'chat'
+                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-indigo-300" />
+            <span>Doubt & Q&A</span>
+            {chatMessages.length > 1 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                {chatMessages.length - 1}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('flashcards');
+              if (!flashcards.length) generateFlashcards();
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'flashcards'
+                ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg shadow-amber-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-300" />
+            <span>Flashcards</span>
+            {flashcards.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                {flashcards.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('quiz');
+              if (!quizQuestions.length) generateQuiz();
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'quiz'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Exam Quiz</span>
+            {quizQuestions.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                {quizQuestions.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('cheatsheet');
+              if (!cheatSheet) generateCheatSheet();
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'cheatsheet'
+                ? 'bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white shadow-lg shadow-fuchsia-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-fuchsia-300" />
+            <span>Cheat Sheet & Traps</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('planner');
+              if (!studyPlan) generateStudyPlan();
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'planner'
+                ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg shadow-blue-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5 text-blue-300" />
+            <span>Study Plan</span>
+          </button>
+        </div>
+
+        {/* Global Loading Indicator */}
+        {loadingAction && (
+          <div className="flex items-center gap-2 text-xs font-semibold text-cyan-300 px-3 py-1 bg-cyan-500/10 rounded-xl border border-cyan-500/20 animate-pulse">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            <span>{loadingAction}</span>
+          </div>
         )}
+      </nav>
 
-        {/* SUBTAB 1: Smart Doubt Solver */}
-        {activeSubTab === 'doubts' && (
-          <div className="max-w-4xl mx-auto space-y-4">
+      {/* =================================================================== */}
+      {/* 3. MAIN WORKSPACE VIEWPORT */}
+      {/* =================================================================== */}
+      <main className="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
+
+        {/* ================================================================= */}
+        {/* TAB 1: 🎙️ AUDIO DEEP DIVE / PODCAST */}
+        {/* ================================================================= */}
+        {activeTab === 'audio' && (
+          <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-200">
             
-            {/* Input Card */}
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
-                  <Brain className="w-4 h-4 text-cyan-300" />
-                  <span>Ask Your Conceptual Doubt (Formulas, Derivations, Proofs):</span>
-                </label>
-                <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                  <span className="font-semibold text-slate-500">Subject:</span>
-                  <select
-                    value={doubtSubject}
-                    onChange={(e) => setDoubtSubject(e.target.value)}
-                    className="bg-slate-950 border border-white/10 rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none"
-                  >
-                    <option value="Physics">Physics</option>
-                    <option value="Mathematics">Mathematics</option>
-                    <option value="Banking & Economy">Banking & Economy</option>
-                    <option value="Indian Polity">Indian Polity</option>
-                    <option value="Chemistry">Chemistry</option>
-                  </select>
+            {/* Player Hero Card */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/40 border border-white/10 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
+                {/* Host Avatars */}
+                <div className="flex items-center gap-6">
+                  {/* Host Alex */}
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={`w-16 h-16 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all ${
+                        isPlaying && audioDiscussion?.turns[currentTurnIndex]?.speaker === 'Alex'
+                          ? 'bg-gradient-to-tr from-cyan-500 to-blue-600 ring-4 ring-cyan-400/50 scale-105'
+                          : 'bg-slate-800 text-slate-400 border border-white/10'
+                      }`}
+                    >
+                      👨‍🏫
+                    </div>
+                    <span className="text-xs font-bold text-white mt-1.5">Alex</span>
+                    <span className="text-[10px] text-cyan-400 font-medium">Curious Host</span>
+                  </div>
+
+                  {/* VS / Soundwave indicator */}
+                  <div className="flex flex-col items-center justify-center px-2">
+                    <div className="flex items-center gap-1 h-6">
+                      <span className={`w-1 rounded-full bg-cyan-400 transition-all ${isPlaying ? 'h-6 animate-pulse' : 'h-2'}`} />
+                      <span className={`w-1 rounded-full bg-indigo-400 transition-all ${isPlaying ? 'h-4 animate-pulse delay-75' : 'h-1.5'}`} />
+                      <span className={`w-1 rounded-full bg-purple-400 transition-all ${isPlaying ? 'h-5 animate-pulse delay-150' : 'h-3'}`} />
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-1 font-mono">2-Host AI</span>
+                  </div>
+
+                  {/* Host Sam */}
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={`w-16 h-16 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all ${
+                        isPlaying && audioDiscussion?.turns[currentTurnIndex]?.speaker === 'Sam'
+                          ? 'bg-gradient-to-tr from-indigo-500 to-purple-600 ring-4 ring-indigo-400/50 scale-105'
+                          : 'bg-slate-800 text-slate-400 border border-white/10'
+                      }`}
+                    >
+                      👩‍🎓
+                    </div>
+                    <span className="text-xs font-bold text-white mt-1.5">Sam</span>
+                    <span className="text-[10px] text-indigo-400 font-medium">Exam Topper</span>
+                  </div>
+                </div>
+
+                {/* Episode Meta & Language Controls */}
+                <div className="flex-1 text-center md:text-left min-w-0">
+                  <div className="flex items-center justify-center md:justify-start gap-2 mb-1 flex-wrap">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-semibold border border-cyan-500/30">
+                      Podcast Deep Dive
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {audioDiscussion ? audioDiscussion.durationEstimate || '~8 min' : '~8-10 min discussion'}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-extrabold text-white truncate">
+                    {audioDiscussion?.title || `${activeTopic} - In-Depth Conversation`}
+                  </h3>
+                  <p className="text-xs text-slate-400 line-clamp-2 mt-1">
+                    {audioDiscussion?.tagline || 'Alex and Sam break down every concept, derivation, and exam trick in natural dialogue.'}
+                  </p>
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={doubtQuestion}
-                  onChange={(e) => setDoubtQuestion(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSolveDoubt()}
-                  placeholder="e.g. Why does entropy increase in irreversible thermodynamic processes?"
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/90 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
-                />
-                <button
-                  onClick={() => handleSolveDoubt()}
-                  disabled={isLoading}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all shrink-0"
-                >
-                  <Sparkles className="w-4 h-4 text-cyan-300" />
-                  <span>{isLoading ? 'Breaking Down...' : 'Solve Doubt'}</span>
-                </button>
-              </div>
-
-              {/* Quick Doubt Chips */}
-              <div className="flex items-center gap-2 overflow-x-auto text-[11px] pt-1">
-                <span className="font-semibold text-slate-500 whitespace-nowrap">Try asking:</span>
-                {[
-                  'Why does Carnot engine have maximum theoretical efficiency?',
-                  'Explain Repo Rate vs Reverse Repo Rate impact on inflation.',
-                  'Difference between Fundamental Rights and DPSP in Indian Constitution.',
-                  'Why is work done in a cyclic process equal to enclosed area on P-V diagram?'
-                ].map((sample, idx) => (
+              {/* Player Controls Bar */}
+              <div className="mt-6 pt-5 border-t border-white/10 flex flex-wrap items-center justify-between gap-4">
+                
+                {/* Language Picker */}
+                <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10">
+                  <Languages className="w-3.5 h-3.5 text-slate-400 ml-2" />
                   <button
-                    key={idx}
-                    onClick={() => {
-                      setDoubtQuestion(sample);
-                      handleSolveDoubt(sample);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-xs transition-colors shrink-0"
+                    onClick={() => { setAudioLang('hinglish'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      audioLang === 'hinglish' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
                   >
-                    {sample}
+                    Hinglish (Natural)
                   </button>
-                ))}
+                  <button
+                    onClick={() => { setAudioLang('hindi'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      audioLang === 'hindi' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Hindi (हिंदी)
+                  </button>
+                  <button
+                    onClick={() => { setAudioLang('english'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      audioLang === 'english' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+
+                {/* Primary Play / Pause / Skip Buttons */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      if (currentTurnIndex > 0) playTurn(currentTurnIndex - 1);
+                    }}
+                    disabled={!audioDiscussion || currentTurnIndex === 0}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 disabled:opacity-40 transition-colors"
+                    title="Previous Turn"
+                  >
+                    <SkipBack className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={togglePlayPause}
+                    disabled={Boolean(loadingAction)}
+                    className="px-6 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-extrabold text-sm shadow-xl shadow-cyan-500/25 flex items-center gap-2 transition-all scale-100 hover:scale-105 active:scale-95 disabled:opacity-50"
+                  >
+                    {audioBuffering ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : isPlaying ? (
+                      <Pause className="w-4 h-4 fill-white" />
+                    ) : (
+                      <Play className="w-4 h-4 fill-white" />
+                    )}
+                    <span>
+                      {audioBuffering ? 'Loading Audio...' : isPlaying ? 'Pause Discussion' : audioDiscussion ? 'Play Discussion' : 'Generate & Play'}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (audioDiscussion && currentTurnIndex < audioDiscussion.turns.length - 1) {
+                        playTurn(currentTurnIndex + 1);
+                      }
+                    }}
+                    disabled={!audioDiscussion || currentTurnIndex >= (audioDiscussion?.turns.length || 0) - 1}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 disabled:opacity-40 transition-colors"
+                    title="Next Turn"
+                  >
+                    <SkipForward className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Speed & Re-generate */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const rates = [0.75, 1.0, 1.25, 1.5];
+                      const next = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+                      setPlaybackRate(next);
+                      if (activeAudioRef.current) activeAudioRef.current.playbackRate = next;
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-mono font-bold border border-white/10 transition-colors"
+                  >
+                    {playbackRate}x
+                  </button>
+
+                  <button
+                    onClick={generateAudioDiscussion}
+                    disabled={Boolean(loadingAction)}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                    title="Regenerate Discussion"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingAction ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Solution Display */}
-            {doubtSolution && (
-              <div className="p-6 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
-                
-                {/* Header */}
-                <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-emerald-400" />
-                    <span>Conceptual Breakdown & Solution</span>
-                  </h3>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                    {doubtSolution.source === 'gemini' ? '⚡ Gemini 3.8 Live Solution' : 'Verified Knowledge Template'}
-                  </span>
+            {/* Transcript Card */}
+            <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-xl flex flex-col">
+              <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Interactive Transcript ({audioDiscussion?.turns?.length || 0} Turns)
+                  </h4>
                 </div>
-
-                {/* Core Conceptual Explanation */}
-                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 space-y-1">
-                  <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Big Picture Intuition</h4>
-                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-sans">
-                    {doubtSolution.explanation}
-                  </p>
-                </div>
-
-                {/* Step-by-Step Logic */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Step-by-Step Derivation & Logic:</h4>
-                  <div className="space-y-2">
-                    {doubtSolution.steps.map((step, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 rounded-xl bg-slate-950/70 border border-white/5 text-xs text-slate-300 flex items-start gap-3 hover:border-white/10 transition-colors"
-                      >
-                        <span className="w-5 h-5 rounded-full bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 font-mono text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <span className="leading-relaxed">{step}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Governing Formula */}
-                {doubtSolution.keyFormula && (
-                  <div className="p-4 rounded-xl bg-slate-950 border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider">Governing Mathematical Law:</span>
-                      <p className="text-base font-mono font-bold text-white mt-1 select-all">{doubtSolution.keyFormula}</p>
-                    </div>
-                    <span className="text-[10px] px-2.5 py-1 rounded bg-white/5 text-slate-400 border border-white/5 whitespace-nowrap self-start sm:self-auto">
-                      LaTeX Standard
-                    </span>
-                  </div>
-                )}
-
-                {/* Exam Tip & Trap */}
-                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-start gap-2.5">
-                  <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div className="leading-relaxed">
-                    <strong className="text-amber-200">Topper Exam Tip & Pitfall:</strong> {doubtSolution.practiceTip}
-                  </div>
-                </div>
-
+                <span className="text-[11px] text-slate-400">
+                  Click any dialogue line to jump audio immediately
+                </span>
               </div>
-            )}
 
+              {!audioDiscussion ? (
+                <div className="py-16 text-center text-slate-500 space-y-3">
+                  <Headphones className="w-10 h-10 mx-auto text-slate-600" />
+                  <p className="text-xs">No discussion script generated yet for this topic.</p>
+                  <button
+                    onClick={generateAudioDiscussion}
+                    disabled={Boolean(loadingAction)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
+                  >
+                    Generate Audio Script Now
+                  </button>
+                </div>
+              ) : (
+                <div
+                  ref={transcriptContainerRef}
+                  className="space-y-3 max-h-[480px] overflow-y-auto pr-2 custom-scrollbar"
+                >
+                  {audioDiscussion.turns.map((turn, idx) => {
+                    const isCurrent = idx === currentTurnIndex;
+                    const isAlex = turn.speaker === 'Alex';
+                    return (
+                      <div
+                        id={`turn-${idx}`}
+                        key={idx}
+                        onClick={() => playTurn(idx)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                          isCurrent
+                            ? isAlex
+                              ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-500/10'
+                              : 'bg-indigo-950/40 border-indigo-500/60 shadow-lg shadow-indigo-500/10'
+                            : 'bg-slate-950/40 border-white/5 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-[11px] font-bold px-2 py-0.5 rounded-lg ${
+                                isAlex
+                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                                  : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                              }`}
+                            >
+                              {turn.speaker}
+                            </span>
+                            {turn.emotion && (
+                              <span className="text-[10px] text-slate-500 italic">
+                                ({turn.emotion})
+                              </span>
+                            )}
+                          </div>
+                          {isCurrent && (
+                            <span className="text-[10px] font-bold text-cyan-400 flex items-center gap-1">
+                              <Radio className="w-3 h-3 animate-ping" />
+                              Speaking Now
+                            </span>
+                          )}
+                        </div>
+                        <p className={`text-xs leading-relaxed ${isCurrent ? 'text-white font-medium' : 'text-slate-300'}`}>
+                          {turn.text}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* SUBTAB 2: Flashcard Vault (Spaced Repetition SM-2) */}
-        {activeSubTab === 'flashcards' && (
-          <div className="max-w-2xl mx-auto space-y-4 pt-2">
-            
-            {/* Top Deck Generator Bar */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                    <Layers className="w-4 h-4 text-indigo-400" />
-                    <span>Spaced Repetition Flashcard Vault</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    Active recall calibrated with SM-2 spaced repetition intervals
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono text-[10px]">
-                    Mastered: {masteredCount}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono text-[10px]">
-                    Reviewing: {reviewingCount}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={flashcardTopic}
-                  onChange={(e) => setFlashcardTopic(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleGenerateFlashcards()}
-                  placeholder="Enter topic e.g. Thermodynamics, Indian Polity Articles..."
-                  className="flex-1 min-w-[220px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
-                />
-                <select
-                  value={flashcardCount}
-                  onChange={(e) => setFlashcardCount(parseInt(e.target.value, 10))}
-                  className="px-2.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-slate-300 focus:outline-none"
-                >
-                  <option value={6}>6 Cards</option>
-                  <option value={10}>10 Cards</option>
-                  <option value={16}>16 Cards</option>
-                </select>
-                <button
-                  onClick={handleGenerateFlashcards}
-                  disabled={isLoading}
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all shrink-0"
-                >
-                  {isLoading ? 'Generating Cards...' : 'Generate with Gemini 3.7'}
-                </button>
-              </div>
-            </div>
-
-            {/* Flashcard Player */}
-            {flashcards.length > 0 ? (
-              <div className="space-y-3">
-                
-                {/* Progress Indicator */}
-                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                  <span>Card {currentCardIndex + 1} of {flashcards.length}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 text-[11px] font-mono">
-                      {flashcards[currentCardIndex]?.subject || 'General'}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-bold tracking-wider ${
-                        flashcards[currentCardIndex]?.masteryLevel === 'mastered'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : flashcards[currentCardIndex]?.masteryLevel === 'reviewing'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-indigo-500/20 text-indigo-300'
+        {/* ================================================================= */}
+        {/* TAB 2: 💬 DOUBT SOLVER & INTERACTIVE CHAT */}
+        {/* ================================================================= */}
+        {activeTab === 'chat' && (
+          <div className="max-w-4xl mx-auto h-full flex flex-col gap-4 animate-in fade-in duration-200">
+            {/* Messages Scroll Area */}
+            <div className="flex-1 min-h-[400px] max-h-[560px] overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+              {chatMessages.map((msg) => {
+                const isUser = msg.role === 'user';
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-3xl p-4 shadow-lg ${
+                        isUser
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-br-none'
+                          : 'bg-slate-900 border border-white/10 text-slate-200 rounded-bl-none'
                       }`}
                     >
-                      {flashcards[currentCardIndex]?.masteryLevel || 'learning'}
-                    </span>
+                      {!isUser && (
+                        <div className="flex items-center gap-2 mb-2 text-[11px] font-bold text-cyan-400">
+                          <Brain className="w-3.5 h-3.5" />
+                          <span>AI Study Coach</span>
+                        </div>
+                      )}
+
+                      <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+
+                      {/* Citations if any */}
+                      {msg.citations && msg.citations.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-white/10 text-[10px] text-slate-400">
+                          <span className="font-semibold text-slate-300">Grounded Source Citations:</span>
+                          <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                            {msg.citations.map((c, i) => (
+                              <li key={i} className="truncate">{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Suggested Follow-Ups */}
+                      {msg.suggestedFollowUps && msg.suggestedFollowUps.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-white/10">
+                          <p className="text-[10px] font-semibold text-slate-400 mb-1.5">Suggested Next Steps:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {msg.suggestedFollowUps.map((q, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => handleSendChatMessage(q)}
+                                className="text-[10px] px-2.5 py-1 rounded-xl bg-white/5 hover:bg-cyan-500/20 text-cyan-300 hover:text-white border border-cyan-500/30 transition-colors text-left"
+                              >
+                                {q} →
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-1 px-2">{msg.timestamp}</span>
                   </div>
+                );
+              })}
+
+              {chatLoading && (
+                <div className="flex items-center gap-2 p-3.5 rounded-2xl bg-slate-900 border border-white/10 w-fit text-xs text-slate-400 animate-pulse">
+                  <Brain className="w-4 h-4 text-cyan-400 animate-spin" />
+                  <span>AI Coach analyzing source material & preparing solution...</span>
+                </div>
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+
+            {/* Input Form */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendChatMessage();
+              }}
+              className="p-2 bg-slate-900 border border-white/15 rounded-2xl shadow-xl flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder={`Ask any doubt or question about "${activeTopic}"...`}
+                className="flex-1 bg-transparent px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={!chatInput.trim() || chatLoading}
+                className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white disabled:opacity-40 transition-all shadow-md shadow-indigo-600/25"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TAB 3: ⚡ FLASHCARDS ARENA */}
+        {/* ================================================================= */}
+        {activeTab === 'flashcards' && (
+          <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-200">
+            {flashcards.length === 0 ? (
+              <div className="py-20 text-center bg-slate-900 border border-white/10 rounded-3xl p-8 space-y-3">
+                <Zap className="w-10 h-10 mx-auto text-amber-400" />
+                <h3 className="text-sm font-bold text-white">No Flashcards Generated Yet</h3>
+                <p className="text-xs text-slate-400">Generate high-yield active recall flashcards directly from this topic.</p>
+                <button
+                  onClick={generateFlashcards}
+                  disabled={Boolean(loadingAction)}
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-amber-600/30"
+                >
+                  Generate 8 Flashcards
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Progress Bar */}
+                <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                  <span>Card {activeCardIndex + 1} of {flashcards.length}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-emerald-400 font-semibold">
+                      {flashcards.filter(c => c.masteryLevel === 'mastered').length} Mastered
+                    </span>
+                    <button
+                      onClick={generateFlashcards}
+                      className="text-amber-400 hover:underline text-[11px]"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </div>
+
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-amber-400 h-full transition-all duration-300"
+                    style={{ width: `${((activeCardIndex + 1) / flashcards.length) * 100}%` }}
+                  />
                 </div>
 
                 {/* 3D Flip Card */}
                 <div
-                  onClick={() => setIsFlipped(!isFlipped)}
-                  className="w-full min-h-[260px] sm:min-h-[290px] rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/60 border border-white/15 p-6 sm:p-8 flex flex-col items-center justify-center text-center cursor-pointer shadow-2xl relative select-none hover:border-indigo-400/50 transition-all group"
+                  onClick={() => setIsCardFlipped(!isCardFlipped)}
+                  className="min-h-[280px] p-8 rounded-3xl bg-gradient-to-br from-slate-900 to-slate-950 border border-white/15 shadow-2xl flex flex-col justify-between cursor-pointer transition-all duration-300 hover:border-amber-500/40 relative overflow-hidden"
                 >
-                  <div className="absolute top-4 left-5 flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">
-                      {isFlipped ? '💡 Answer (Click to flip back)' : '❓ Question (Click to reveal answer)'}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
+                      {isCardFlipped ? 'Answer / Explanation' : 'Question / Concept'}
                     </span>
+                    <span className="text-[10px] text-slate-500">Click card or space to flip</span>
                   </div>
 
-                  <p className="text-base sm:text-lg font-semibold text-white px-2 leading-relaxed">
-                    {isFlipped ? flashcards[currentCardIndex]?.back : flashcards[currentCardIndex]?.front}
-                  </p>
+                  <div className="my-6 text-center">
+                    <p className={`text-base font-semibold leading-relaxed ${isCardFlipped ? 'text-amber-200' : 'text-white'}`}>
+                      {isCardFlipped ? flashcards[activeCardIndex].back : flashcards[activeCardIndex].front}
+                    </p>
+                  </div>
 
-                  <div className="absolute bottom-4 flex items-center gap-1.5 text-xs text-slate-500 group-hover:text-slate-400 transition-colors">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Click anywhere to flip</span>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 pt-4 border-t border-white/5">
+                    <span>{flashcards[activeCardIndex].subject || activeDomain}</span>
+                    <span className="capitalize text-amber-400 font-medium">Status: {flashcards[activeCardIndex].masteryLevel}</span>
                   </div>
                 </div>
 
-                {/* SM-2 Spaced Repetition Grading */}
-                {isFlipped && (
-                  <div className="grid grid-cols-3 gap-2.5 animate-in fade-in duration-200">
+                {/* Rating & Navigation Buttons */}
+                <div className="flex items-center justify-between gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      if (activeCardIndex > 0) {
+                        setIsCardFlipped(false);
+                        setActiveCardIndex(activeCardIndex - 1);
+                      }
+                    }}
+                    disabled={activeCardIndex === 0}
+                    className="p-2.5 rounded-xl bg-slate-900 border border-white/10 text-slate-300 disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => {
-                        setIsFlipped(false);
-                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
-                        addToast('Review Scheduled', 'Marked Hard: Repeated in 10 minutes.', 'info');
-                      }}
-                      className="py-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
+                      onClick={() => handleCardMastery('learning')}
+                      className="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-bold transition-colors"
                     >
-                      <span>🔴 Hard</span>
-                      <span className="text-[10px] text-rose-400 font-mono">Repeat in 10m</span>
+                      Hard (Review Soon)
                     </button>
                     <button
-                      onClick={() => {
-                        setIsFlipped(false);
-                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
-                        addXp(20);
-                        addToast('Progress Saved', 'Marked Good: Scheduled for tomorrow.', 'success');
-                      }}
-                      className="py-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
+                      onClick={() => handleCardMastery('reviewing')}
+                      className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition-colors"
                     >
-                      <span>🟡 Good</span>
-                      <span className="text-[10px] text-amber-400 font-mono">Next: Tomorrow</span>
+                      Good
                     </button>
                     <button
-                      onClick={() => {
-                        setIsFlipped(false);
-                        flashcards[currentCardIndex].masteryLevel = 'mastered';
-                        setCurrentCardIndex((i) => (flashcards.length > 0 ? (i + 1) % flashcards.length : 0));
-                        addXp(40);
-                        triggerCelebration();
-                        addToast('Card Mastered! 🎉', 'Marked Easy: Scheduled in 4 days (+40 XP)', 'success');
-                      }}
-                      className="py-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex flex-col items-center gap-0.5 transition-colors"
+                      onClick={() => handleCardMastery('mastered')}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-colors"
                     >
-                      <span>🟢 Easy</span>
-                      <span className="text-[10px] text-emerald-400 font-mono">Next: 4 Days</span>
+                      Mastered (+15 XP)
                     </button>
                   </div>
-                )}
 
-                {/* Card Navigation */}
-                <div className="flex items-center justify-between pt-1">
                   <button
                     onClick={() => {
-                      setIsFlipped(false);
-                      setCurrentCardIndex((i) => (i > 0 ? i - 1 : flashcards.length - 1));
+                      if (activeCardIndex < flashcards.length - 1) {
+                        setIsCardFlipped(false);
+                        setActiveCardIndex(activeCardIndex + 1);
+                      }
                     }}
-                    className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition-colors"
+                    disabled={activeCardIndex === flashcards.length - 1}
+                    className="p-2.5 rounded-xl bg-slate-900 border border-white/10 text-slate-300 disabled:opacity-30 transition-colors"
                   >
-                    ← Previous
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsFlipped(false);
-                      setCurrentCardIndex((i) => (i + 1) % flashcards.length);
-                    }}
-                    className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition-colors"
-                  >
-                    Next →
+                    <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
-
-              </div>
-            ) : (
-              <div className="p-8 rounded-3xl bg-slate-900 border border-white/10 text-center space-y-3">
-                <p className="text-xs text-slate-400">Generate a deck above to begin your active recall session.</p>
-              </div>
+              </>
             )}
-
           </div>
         )}
 
-        {/* SUBTAB 3: Diagnostic Quiz Drill */}
-        {activeSubTab === 'quiz' && (
-          <div className="max-w-2xl mx-auto space-y-4 pt-2">
-            
-            {/* Top Config Card */}
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                    <Target className="w-4 h-4 text-cyan-400" />
-                    <span>Diagnostic Exam Drill & Mock Test</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    Real-time calibrated MCQs with detailed explanations
-                  </p>
-                </div>
-                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-300 font-mono text-xs font-bold border border-indigo-500/20">
-                  +100 XP On Completion
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={quizTopic}
-                  onChange={(e) => setQuizTopic(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleGenerateQuiz()}
-                  placeholder="Enter exam topic e.g. Union Budget 2026, Thermodynamics..."
-                  className="flex-1 min-w-[200px] px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
-                />
+        {/* ================================================================= */}
+        {/* TAB 4: 📝 EXAM QUIZ ARENA */}
+        {/* ================================================================= */}
+        {activeTab === 'quiz' && (
+          <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-200">
+            {quizQuestions.length === 0 ? (
+              <div className="py-20 text-center bg-slate-900 border border-white/10 rounded-3xl p-8 space-y-3">
+                <Award className="w-10 h-10 mx-auto text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">No Active Quiz</h3>
+                <p className="text-xs text-slate-400">Test your mastery with 5 exam-style MCQs generated for this topic.</p>
                 <button
-                  onClick={handleGenerateQuiz}
-                  disabled={isLoading}
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-500/25 transition-all shrink-0"
+                  onClick={generateQuiz}
+                  disabled={Boolean(loadingAction)}
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-emerald-600/30"
                 >
-                  {isLoading ? 'Crafting Questions...' : 'Generate New Drill'}
+                  Generate 5 Exam MCQs
                 </button>
               </div>
-            </div>
-
-            {/* Questions List */}
-            {quizList.map((q, idx) => (
-              <div key={q.id} className="p-5 rounded-2xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
-                <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span className="font-bold text-indigo-400">Question {idx + 1} of {quizList.length}</span>
-                  <span className="px-2 py-0.5 rounded bg-white/5 font-mono text-[10px] text-slate-300">{q.subject}</span>
+            ) : (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white">Exam Practice: {activeTopic}</h3>
+                    <p className="text-xs text-slate-400">Answer all questions and submit to view explanations.</p>
+                  </div>
+                  <button
+                    onClick={generateQuiz}
+                    className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    New Questions
+                  </button>
                 </div>
-                
-                <h4 className="text-sm font-semibold text-white leading-relaxed">{q.question}</h4>
 
-                <div className="space-y-2 pt-1">
-                  {q.options.map((opt, optIdx) => {
-                    const isSelected = selectedAnswers[q.id] === optIdx;
-                    const isCorrect = q.correctAnswer === optIdx;
-
-                    let btnStyle = 'bg-slate-950 border-white/10 hover:border-indigo-500/50 text-slate-300';
-                    if (showQuizResults) {
-                      if (isCorrect) btnStyle = 'bg-emerald-500/20 border-emerald-500 text-emerald-200';
-                      else if (isSelected && !isCorrect) btnStyle = 'bg-rose-500/20 border-rose-500 text-rose-200';
-                    } else if (isSelected) {
-                      btnStyle = 'bg-indigo-600/30 border-indigo-500 text-white';
-                    }
-
+                {/* Question List */}
+                <div className="space-y-4">
+                  {quizQuestions.map((q, qIdx) => {
+                    const selected = selectedAnswers[qIdx];
+                    const isAnswered = selected !== undefined;
                     return (
-                      <button
-                        key={optIdx}
-                        disabled={showQuizResults}
-                        onClick={() => setSelectedAnswers(prev => ({ ...prev, [q.id]: optIdx }))}
-                        className={`w-full text-left p-3.5 rounded-xl border text-xs font-medium transition-all ${btnStyle}`}
+                      <div
+                        key={q.id || qIdx}
+                        className="p-5 rounded-2xl bg-slate-900 border border-white/10 space-y-3 shadow-lg"
                       >
-                        <span className="font-mono font-bold mr-2 text-indigo-400">{String.fromCharCode(65 + optIdx)}.</span>
-                        <span>{opt}</span>
-                      </button>
+                        <div className="flex items-center justify-between text-xs text-slate-400">
+                          <span className="font-bold text-emerald-400">Question {qIdx + 1}</span>
+                          <span className="text-[10px] text-slate-500">{q.subject || activeDomain}</span>
+                        </div>
+
+                        <p className="text-xs font-semibold text-white leading-relaxed">{q.question}</p>
+
+                        <div className="space-y-2 pt-1">
+                          {q.options.map((opt, optIdx) => {
+                            const isChosen = selected === optIdx;
+                            const isCorrectOpt = optIdx === q.correctAnswer;
+                            let style = 'bg-slate-950/60 border-white/10 hover:border-white/20 text-slate-300';
+                            if (submittedQuiz) {
+                              if (isCorrectOpt) {
+                                style = 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-bold';
+                              } else if (isChosen && !isCorrectOpt) {
+                                style = 'bg-red-500/20 border-red-500/60 text-red-300 font-bold';
+                              }
+                            } else if (isChosen) {
+                              style = 'bg-indigo-600/30 border-indigo-500 text-white font-bold';
+                            }
+
+                            return (
+                              <button
+                                key={optIdx}
+                                disabled={submittedQuiz}
+                                onClick={() => setSelectedAnswers({ ...selectedAnswers, [qIdx]: optIdx })}
+                                className={`w-full p-2.5 rounded-xl border text-xs text-left transition-all flex items-center gap-2.5 ${style}`}
+                              >
+                                <span className="w-5 h-5 rounded-lg bg-white/10 flex items-center justify-center font-bold text-[10px] shrink-0">
+                                  {String.fromCharCode(65 + optIdx)}
+                                </span>
+                                <span className="flex-1">{opt}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Explanation on Submit */}
+                        {submittedQuiz && (
+                          <div className="mt-3 p-3 rounded-xl bg-slate-950/80 border border-white/10 text-xs text-slate-300">
+                            <span className="font-bold text-emerald-400 block mb-1">Explanation:</span>
+                            {q.explanation}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
 
-                {showQuizResults && (
-                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/5 text-xs text-slate-300 mt-2 leading-relaxed">
-                    💡 <strong className="text-indigo-300">Explanation:</strong> {q.explanation}
+                {/* Submit / Score Action */}
+                {!submittedQuiz ? (
+                  <button
+                    onClick={() => {
+                      setSubmittedQuiz(true);
+                      const score = calculateScore();
+                      addXp(score * 20);
+                      addToast('Quiz Submitted!', `Score: ${score}/${quizQuestions.length}. Earned ${score * 20} XP!`, 'success');
+                    }}
+                    disabled={Object.keys(selectedAnswers).length < quizQuestions.length}
+                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-xl shadow-emerald-600/25 transition-all disabled:opacity-50"
+                  >
+                    Submit Quiz & View Explanations
+                  </button>
+                ) : (
+                  <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
+                    <p className="text-sm font-extrabold text-emerald-400">
+                      Final Score: {calculateScore()} / {quizQuestions.length} ({Math.round((calculateScore() / quizQuestions.length) * 100)}%)
+                    </p>
+                    <button
+                      onClick={generateQuiz}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all"
+                    >
+                      Try Another Quiz
+                    </button>
                   </div>
                 )}
               </div>
-            ))}
-
-            {/* Submit or Score Bar */}
-            {!showQuizResults ? (
-              <button
-                onClick={() => {
-                  setShowQuizResults(true);
-                  const percent = Math.round((quizScore / Math.max(1, quizList.length)) * 100);
-                  addXp(100);
-                  if (percent >= 75) triggerCelebration();
-                  addToast(
-                    'Drill Completed!',
-                    `You scored ${quizScore}/${quizList.length} (${percent}%). +100 XP awarded!`,
-                    percent >= 75 ? 'success' : 'info'
-                  );
-                }}
-                disabled={Object.keys(selectedAnswers).length < quizList.length}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 disabled:opacity-40 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all"
-              >
-                Submit Answers & Evaluate Performance
-              </button>
-            ) : (
-              <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 text-center space-y-3 shadow-xl">
-                <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Your Score</p>
-                <p className="text-3xl font-extrabold text-white">
-                  {quizScore} / {quizList.length}
-                  <span className="text-base text-indigo-300 ml-2 font-mono">
-                    ({Math.round((quizScore / Math.max(1, quizList.length)) * 100)}%)
-                  </span>
-                </p>
-                <button
-                  onClick={() => {
-                    setShowQuizResults(false);
-                    setSelectedAnswers({});
-                  }}
-                  className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors"
-                >
-                  Try Another Drill
-                </button>
-              </div>
             )}
-
           </div>
         )}
 
-        {/* SUBTAB 4: Intelligent Daily Planner */}
-        {activeSubTab === 'planner' && (
-          <div className="max-w-4xl mx-auto space-y-4">
-            
-            {/* NLP Schedule Bar */}
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 shadow-2xl space-y-3">
-              <label className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-cyan-300" />
-                <span>Tell your AI Coach what to organize in your schedule:</span>
-              </label>
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={promptInput}
-                  onChange={(e) => setPromptInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleRunSchedulePrompt()}
-                  placeholder='Try: "Tomorrow should include 45 minutes of Physics Thermodynamics Focus Block."'
-                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950/90 border border-white/15 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-colors"
-                />
+        {/* ================================================================= */}
+        {/* TAB 5: 📋 CONCEPT CHEAT SHEET & TRAPS */}
+        {/* ================================================================= */}
+        {activeTab === 'cheatsheet' && (
+          <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-200">
+            {!cheatSheet ? (
+              <div className="py-20 text-center bg-slate-900 border border-white/10 rounded-3xl p-8 space-y-3">
+                <FileText className="w-10 h-10 mx-auto text-fuchsia-400" />
+                <h3 className="text-sm font-bold text-white">No Cheat Sheet Generated Yet</h3>
+                <p className="text-xs text-slate-400">Generate executive summary, high-yield definitions, exam traps & revision checklist.</p>
                 <button
-                  onClick={() => handleRunSchedulePrompt()}
-                  disabled={isLoading}
-                  className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition-all shrink-0"
+                  onClick={generateCheatSheet}
+                  disabled={Boolean(loadingAction)}
+                  className="px-5 py-2.5 bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-fuchsia-600/30"
                 >
-                  <Sparkles className="w-4 h-4 text-cyan-300" />
-                  <span>{isLoading ? 'Planning...' : 'Schedule with AI'}</span>
+                  Generate Cheat Sheet
                 </button>
               </div>
-
-              {/* Quick Prompts */}
-              <div className="flex items-center gap-2 overflow-x-auto text-[11px] pt-1">
-                <span className="font-semibold text-slate-500 whitespace-nowrap">Quick Prompts:</span>
-                {[
-                  'Tomorrow should include 45 minutes of Physics Thermodynamics focus block.',
-                  'Schedule 30 minutes of Current Affairs revision for tomorrow morning.',
-                  'Add 1 hour of Banking Aptitude problem solving today at 3 PM.'
-                ].map((sample, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setPromptInput(sample);
-                      handleRunSchedulePrompt(sample);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-xs transition-colors shrink-0"
-                  >
-                    "{sample}"
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Generated Timetable */}
-            {plannerResult && (
-              <div className="p-6 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl space-y-4 animate-in fade-in duration-200">
-                <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-start gap-3">
-                  <div className="p-2 rounded-lg bg-indigo-600 text-white mt-0.5">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Coach Confirmation</h3>
-                    <div className="text-xs text-indigo-200 mt-1 leading-relaxed whitespace-pre-wrap">
-                      {plannerResult.message}
-                    </div>
-                  </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Executive Summary */}
+                <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-xl space-y-2">
+                  <h3 className="text-sm font-bold text-fuchsia-400 flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    Executive Summary & Core Architecture
+                  </h3>
+                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+                    {cheatSheet.executiveSummary}
+                  </p>
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-cyan-400" />
-                      <span>Optimized Daily Schedule</span>
-                    </h3>
-                    {onNavigateToCalendar && (
-                      <button
-                        onClick={onNavigateToCalendar}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-bold"
-                      >
-                        <span>Open Study Calendar</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
+                {/* Key Concepts Grid */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    High-Yield Key Concepts ({cheatSheet.keyConcepts.length})
+                  </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {plannerResult.suggestedSchedule.map((slot, idx) => (
+                    {cheatSheet.keyConcepts.map((item, idx) => (
                       <div
                         key={idx}
-                        className="p-3.5 rounded-xl border bg-slate-950/70 border-white/5 flex items-center justify-between hover:border-white/10 transition-colors"
+                        className="p-4 rounded-2xl bg-slate-950/60 border border-white/10 space-y-2 shadow-md"
                       >
-                        <div>
-                          <p className="text-xs font-semibold text-white">{slot.activity}</p>
-                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">{slot.time}</p>
+                        <h5 className="text-xs font-bold text-cyan-300">{item.term}</h5>
+                        <p className="text-xs text-slate-300 leading-relaxed">{item.definition}</p>
+                        <div className="pt-2 border-t border-white/5 text-[10px] text-amber-300">
+                          <span className="font-semibold text-slate-400">Exam Note: </span>
+                          {item.examSignificance}
                         </div>
-                        <span className="text-[11px] px-2.5 py-1 rounded-md bg-white/10 text-slate-300 font-mono font-medium">
-                          {slot.duration}
-                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
 
+                {/* Pitfalls & Traps */}
+                {cheatSheet.pitfallsAndTraps && cheatSheet.pitfallsAndTraps.length > 0 && (
+                  <div className="p-5 rounded-2xl bg-red-500/10 border border-red-500/30 space-y-2">
+                    <h4 className="text-xs font-bold text-red-400 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      Common Exam Pitfalls & Misconceptions
+                    </h4>
+                    <ul className="space-y-1.5 text-xs text-red-200">
+                      {cheatSheet.pitfallsAndTraps.map((trap, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-red-400 shrink-0 font-bold">•</span>
+                          <span>{trap}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Revision Checklist */}
+                {cheatSheet.revisionChecklist && cheatSheet.revisionChecklist.length > 0 && (
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 space-y-3">
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <ListChecks className="w-4 h-4 text-emerald-400" />
+                      Active Recall Revision Checklist
+                    </h4>
+                    <div className="space-y-2">
+                      {cheatSheet.revisionChecklist.map((item, idx) => {
+                        const checked = checkedChecklist[idx];
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => setCheckedChecklist({ ...checkedChecklist, [idx]: !checked })}
+                            className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer p-2 rounded-xl hover:bg-white/5 transition-colors"
+                          >
+                            {checked ? (
+                              <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-500 shrink-0" />
+                            )}
+                            <span className={checked ? 'line-through text-slate-500' : ''}>{item}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-
           </div>
         )}
 
-      </div>
+        {/* ================================================================= */}
+        {/* TAB 6: 📅 SMART STUDY PLANNER */}
+        {/* ================================================================= */}
+        {activeTab === 'planner' && (
+          <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-200">
+            {/* Prompt input card */}
+            <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-xl space-y-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Target className="w-4 h-4 text-blue-400" />
+                Plan Revision for "{activeTopic}"
+              </h3>
+              <p className="text-xs text-slate-400">
+                AI Coach will build a customized time-blocked study schedule with targeted review blocks and active recall.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={planGoal}
+                  onChange={(e) => setPlanGoal(e.target.value)}
+                  placeholder={`e.g. 2 hours of deep revision on ${activeTopic} with mock practice`}
+                  className="flex-1 bg-slate-950/80 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={generateStudyPlan}
+                  disabled={Boolean(loadingAction)}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/25 transition-all"
+                >
+                  Generate Plan
+                </button>
+              </div>
+            </div>
+
+            {/* Generated Plan */}
+            {studyPlan && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-xl space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                  <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+                    Recommended Study Schedule
+                  </h4>
+                  {onNavigateToCalendar && (
+                    <button
+                      onClick={onNavigateToCalendar}
+                      className="text-xs text-cyan-400 hover:underline flex items-center gap-1"
+                    >
+                      <span>Open Calendar</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <p className="text-xs text-slate-300">{studyPlan.message}</p>
+
+                <div className="space-y-2.5">
+                  {studyPlan.suggestedSchedule.map((block, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-xs font-bold text-blue-300 px-2.5 py-1 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                          {block.time}
+                        </span>
+                        <span className="text-xs font-semibold text-white">{block.activity}</span>
+                      </div>
+                      <span className="text-xs text-slate-400 shrink-0 font-medium">
+                        ⏱️ {block.duration}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* =================================================================== */}
+      {/* 4. MODAL: Edit Notes / Paste Custom Material */}
+      {/* =================================================================== */}
+      {isEditorOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-xl bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-white">Edit Active Study Material</h3>
+              </div>
+              <button
+                onClick={() => setIsEditorOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  Topic / Chapter Title:
+                </label>
+                <input
+                  type="text"
+                  value={tempEditorTitle}
+                  onChange={(e) => setTempEditorTitle(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                  Paste Study Material / Notes:
+                </label>
+                <textarea
+                  rows={10}
+                  value={tempEditorText}
+                  onChange={(e) => setTempEditorText(e.target.value)}
+                  placeholder="Paste any textbook notes, coaching material, or formula sheet here..."
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-3.5 text-xs text-white leading-relaxed focus:outline-none focus:border-amber-400 resize-none custom-scrollbar"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-[11px] text-slate-500">
+                {tempEditorText.split(/\s+/).filter(Boolean).length} words
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIsEditorOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveCustomNotes}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold shadow-lg shadow-amber-500/25 transition-all"
+                >
+                  Save & Sync All Tools
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
