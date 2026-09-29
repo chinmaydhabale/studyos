@@ -21,16 +21,24 @@ export interface TTSRequest {
 
 export const NEURAL_VOICES = {
   hindi: {
-    Alex: 'google-tts-hi',
-    Sam: 'google-tts-hi'
+    Alex: 'hi-IN-MadhurNeural',
+    Sam: 'hi-IN-SwaraNeural'
   },
   hinglish: {
-    Alex: 'google-tts-hi',
-    Sam: 'google-tts-hi'
+    Alex: 'hi-IN-MadhurNeural',
+    Sam: 'hi-IN-SwaraNeural'
   },
   english: {
-    Alex: 'google-tts-en-in',
-    Sam: 'google-tts-en-in'
+    Alex: 'en-US-ChristopherNeural',
+    Sam: 'en-US-JennyNeural'
+  },
+  notebooklm: {
+    Alex: 'en-US-ChristopherNeural',
+    Sam: 'en-US-JennyNeural'
+  },
+  multilingual: {
+    Alex: 'en-US-AndrewMultilingualNeural',
+    Sam: 'en-US-AvaMultilingualNeural'
   }
 };
 
@@ -243,12 +251,21 @@ export class NeuralTtsService {
 
     const speaker = req.speaker || 'Alex';
     const language = req.language || 'hinglish';
-    const voiceRequested = req.voice || 'google-tts';
+    let voice = req.voice;
 
-    // Unique cache hash for fast replay
+    // Resolve optimal studio voice if generic, default, or auto
+    if (!voice || voice === 'google-tts' || voice === 'default' || voice === 'auto') {
+      if (language === 'english') {
+        voice = speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
+      } else {
+        voice = speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
+      }
+    }
+
+    // Versioned cache key so old flat robotic Google Translate files are never served
     const hash = crypto
       .createHash('sha256')
-      .update(`google_tts|${voiceRequested}|${speaker}|${language}|${cleanedText}`)
+      .update(`neural_v3|${voice}|${speaker}|${language}|${cleanedText}`)
       .digest('hex');
     const cacheFile = path.join(CACHE_DIR, `${hash}.mp3`);
 
@@ -263,16 +280,14 @@ export class NeuralTtsService {
 
     let buffer: Buffer | null = null;
 
-    // 1. If voice explicitly asks for edge-tts
-    if (voiceRequested.includes('Neural') && !voiceRequested.includes('google')) {
-      try {
-        buffer = await this.synthesizeEdgeTts(cleanedText, voiceRequested, req.rate, req.pitch);
-      } catch (e) {
-        console.warn('[tts] edge-tts fallback to Google TTS:', e);
-      }
+    // 1. Priority #1: Studio-grade Neural TTS (Edge-TTS: Christopher, Jenny, Madhur, Swara)
+    try {
+      buffer = await this.synthesizeEdgeTts(cleanedText, voice, req.rate, req.pitch);
+    } catch (e: any) {
+      console.warn(`[tts] edge-tts error for voice "${voice}", falling back to secondary:`, e?.message || e);
     }
 
-    // 2. Try Google Cloud TTS if not yet synthesized
+    // 2. Priority #2: Google Cloud Neural2 TTS if active
     if (!buffer) {
       try {
         buffer = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
@@ -281,7 +296,7 @@ export class NeuralTtsService {
       }
     }
 
-    // 3. Primary Google Text-to-Speech (Official Google Engine)
+    // 3. Priority #3: Google translate_tts fallback
     if (!buffer) {
       buffer = await this.synthesizeGoogle(cleanedText, speaker, language);
     }

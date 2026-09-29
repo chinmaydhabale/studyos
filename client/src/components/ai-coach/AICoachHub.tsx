@@ -203,6 +203,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   // ----------------------------------------------------
   const [audioDiscussion, setAudioDiscussion] = useState<AudioDiscussion | null>(null);
   const [audioLang, setAudioLang] = useState<'hinglish' | 'hindi' | 'english'>('hinglish');
+  const [hostVoiceStyle, setHostVoiceStyle] = useState<'notebooklm' | 'indian' | 'multilingual'>('notebooklm');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
@@ -429,10 +430,21 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       }
     }, 50);
 
-    const cacheKey = `${turn.speaker}|${audioLang}|${playbackRate}|${turn.text}`;
+    const getHostVoice = (speaker: 'Alex' | 'Sam') => {
+      if (hostVoiceStyle === 'notebooklm') {
+        return speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
+      } else if (hostVoiceStyle === 'indian') {
+        return speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
+      } else {
+        return speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
+      }
+    };
+
+    const currentVoice = getHostVoice(turn.speaker);
+    const cacheKey = `${turn.speaker}|${hostVoiceStyle}|${audioLang}|${playbackRate}|${turn.text}`;
     let blobUrl = audioCacheRef.current.get(cacheKey);
 
-    // Try Google Neural TTS endpoint first
+    // Try Neural TTS endpoint first
     if (!blobUrl) {
       try {
         const rateParam = playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%';
@@ -443,7 +455,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
             text: turn.text,
             speaker: turn.speaker,
             language: audioLang,
-            voice: 'google-tts',
+            voice: currentVoice,
             rate: rateParam
           })
         });
@@ -478,7 +490,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       // Preload next turn in background
       if (index + 1 < audioDiscussion.turns.length) {
         const nextTurn = audioDiscussion.turns[index + 1];
-        const nextKey = `${nextTurn.speaker}|${audioLang}|${playbackRate}|${nextTurn.text}`;
+        const nextVoice = getHostVoice(nextTurn.speaker);
+        const nextKey = `${nextTurn.speaker}|${hostVoiceStyle}|${audioLang}|${playbackRate}|${nextTurn.text}`;
         if (!audioCacheRef.current.has(nextKey)) {
           fetch(`${API_BASE_URL}/api/ai/tts`, {
             method: 'POST',
@@ -487,7 +500,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               text: nextTurn.text,
               speaker: nextTurn.speaker,
               language: audioLang,
-              voice: 'google-tts',
+              voice: nextVoice,
               rate: playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%'
             })
           })
@@ -502,7 +515,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       // Fallback to Web Speech API
       fallbackWebSpeech(turn, index);
     }
-  }, [audioDiscussion, audioLang, playbackRate]);
+  }, [audioDiscussion, audioLang, hostVoiceStyle, playbackRate]);
 
   const fallbackWebSpeech = (turn: AudioTurn, index: number) => {
     if (!('speechSynthesis' in window)) {
@@ -960,7 +973,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                     >
                       👨‍🏫
                     </div>
-                    <span className="text-xs font-bold text-white mt-1.5">Alex</span>
+                    <span className="text-xs font-bold text-white mt-1.5">
+                      Alex ({hostVoiceStyle === 'notebooklm' ? 'Christopher' : hostVoiceStyle === 'indian' ? 'Madhur' : 'Andrew'})
+                    </span>
                     <span className="text-[10px] text-cyan-400 font-medium">Curious Host</span>
                   </div>
 
@@ -985,7 +1000,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                     >
                       👩‍🎓
                     </div>
-                    <span className="text-xs font-bold text-white mt-1.5">Sam</span>
+                    <span className="text-xs font-bold text-white mt-1.5">
+                      Sam ({hostVoiceStyle === 'notebooklm' ? 'Jenny' : hostVoiceStyle === 'indian' ? 'Swara' : 'Ava'})
+                    </span>
                     <span className="text-[10px] text-indigo-400 font-medium">Exam Topper</span>
                   </div>
                 </div>
@@ -1012,6 +1029,38 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               {/* Player Controls Bar */}
               <div className="mt-6 pt-5 border-t border-white/10 flex flex-wrap items-center justify-between gap-4">
                 
+                {/* Host Voice Style Switcher */}
+                <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10 flex-wrap">
+                  <Mic className="w-3.5 h-3.5 text-cyan-400 ml-2" />
+                  <button
+                    onClick={() => { setHostVoiceStyle('notebooklm'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      hostVoiceStyle === 'notebooklm' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Signature NotebookLM Podcast Voices (Christopher & Jenny)"
+                  >
+                    🎙️ NotebookLM Style (Christopher & Jenny)
+                  </button>
+                  <button
+                    onClick={() => { setHostVoiceStyle('indian'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      hostVoiceStyle === 'indian' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Warm Conversational Indian Educators (Madhur & Swara)"
+                  >
+                    🇮🇳 Indian Educators
+                  </button>
+                  <button
+                    onClick={() => { setHostVoiceStyle('multilingual'); stopAudio(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      hostVoiceStyle === 'multilingual' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Bilingual Multilingual Studio (Andrew & Ava)"
+                  >
+                    🌐 Multilingual Pro
+                  </button>
+                </div>
+
                 {/* Language Picker */}
                 <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10">
                   <Languages className="w-3.5 h-3.5 text-slate-400 ml-2" />
