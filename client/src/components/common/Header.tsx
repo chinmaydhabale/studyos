@@ -35,7 +35,10 @@ import {
   Calendar,
   Trophy,
   Check,
-  Bot
+  Bot,
+  Laptop,
+  Cast,
+  Radio
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy, AmbientSoundType } from '../../context/StudyContext.js';
@@ -70,6 +73,14 @@ const NAV_GROUPS: NavGroup[] = [
         desc: 'Sync YouTube lectures & live playback',
         icon: Tv,
         color: 'text-rose-400 bg-rose-500/10'
+      },
+      {
+        id: 'mock',
+        label: 'Mock Arena & Web Notes',
+        desc: 'Guidely, Testbook, Oliveboard & live screen sharing',
+        icon: Laptop,
+        badge: 'Live',
+        color: 'text-amber-400 bg-amber-500/10'
       },
       {
         id: 'pdf',
@@ -471,6 +482,20 @@ export const Header: React.FC<HeaderProps> = ({
             <span>AI Coach</span>
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
           </button>
+
+          {/* Peer Live Mock Broadcast alert pill */}
+          {peers.find(p => p.liveScreenShare?.isActive) && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('mock')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white text-xs font-bold animate-pulse shadow-md shadow-red-600/30 transition-all border border-red-400"
+              title="A peer is streaming their mock test live! Click to watch."
+            >
+              <Radio className="w-3.5 h-3.5 text-white animate-spin" />
+              <span className="hidden lg:inline">{peers.find(p => p.liveScreenShare?.isActive)?.name.split(' ')[0]}</span>
+              <span>LIVE Mock</span>
+            </button>
+          )}
         </nav>
 
         {/* Right Controls */}

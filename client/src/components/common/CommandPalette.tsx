@@ -12,7 +12,8 @@ import {
   Volume2,
   BookOpen,
   FolderLock,
-  BarChart3
+  BarChart3,
+  Laptop
 } from 'lucide-react';
 import { useStudy } from '../../context/StudyContext.js';
 
@@ -75,6 +76,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       icon: Video,
       color: 'text-cyan-400 bg-cyan-500/10',
       run: () => onNavigateTab('video')
+    },
+    {
+      id: 'nav-mock',
+      title: 'Open Mock Arena & Web Study Reader',
+      subtitle: 'Guidely, Testbook, Oliveboard mocks, web notes & live screen sharing with friends',
+      icon: Laptop,
+      color: 'text-amber-400 bg-amber-500/10',
+      run: () => onNavigateTab('mock')
     },
     {
       id: 'nav-split',

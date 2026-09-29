@@ -11,7 +11,8 @@ import {
   LeaderboardEntry,
   ActivitySession,
   StudyGroup,
-  StudyDocument
+  StudyDocument,
+  MockTestRecord
 } from '../types.js';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -125,6 +126,7 @@ export class StorageService {
   private activitySessions: ActivitySession[] = [];
   private groups: Map<string, StudyGroup> = new Map();
   private documents: Map<string, StudyDocument> = new Map();
+  private mockTestRecords: MockTestRecord[] = [];
   private dataDir: string;
 
   constructor() {
@@ -289,7 +291,14 @@ export class StorageService {
         }
       }
 
-      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups.`);
+      // 9. Mock Test Records
+      const mocksFile = path.join(this.dataDir, 'mock_tests.json');
+      const mocksData = readJsonSafe<MockTestRecord[]>(mocksFile, []);
+      if (mocksData.length > 0) {
+        this.mockTestRecords = mocksData;
+      }
+
+      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups, ${this.mockTestRecords.length} mock tests.`);
     } catch (err: any) {
       console.warn('[storage] Error loading from disk:', err.message);
     }
@@ -305,6 +314,11 @@ export class StorageService {
     this.saveDocumentsToDisk();
     this.saveNotesToDisk();
     this.saveFlashcardsToDisk();
+    this.saveMockTestRecordsToDisk();
+  }
+
+  public saveMockTestRecordsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'mock_tests.json'), this.mockTestRecords);
   }
 
   public saveCredentialsToDisk(): void {
@@ -1517,6 +1531,37 @@ export class StorageService {
         { subject: 'Reasoning Ability', hours: 0, percentage: 0, color: '#06b6d4' }
       ]
     };
+  }
+
+  public addMockTestRecord(record: Omit<MockTestRecord, 'id' | 'createdAt'>): MockTestRecord {
+    const newRecord: MockTestRecord = {
+      ...record,
+      id: `mock-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString()
+    };
+    this.mockTestRecords.unshift(newRecord);
+    this.saveMockTestRecordsToDisk();
+
+    // Reward XP and coins for completing a mock test
+    const user = this.users.get(record.userId);
+    if (user) {
+      user.xp = (user.xp || 0) + 150;
+      user.coins = (user.coins || 0) + 25;
+      if (record.accuracy) {
+        user.accuracy = Math.round(user.accuracy ? (user.accuracy + record.accuracy) / 2 : record.accuracy);
+      }
+      this.users.set(user.id, user);
+      this.saveUsersToDisk();
+    }
+
+    return newRecord;
+  }
+
+  public getMockTestRecords(userId?: string): MockTestRecord[] {
+    if (userId) {
+      return this.mockTestRecords.filter(m => m.userId === userId);
+    }
+    return this.mockTestRecords;
   }
 }
 

@@ -192,3 +192,33 @@ export interface TelegramConfig {
   isConfigured: boolean;
   lastSyncAt: string;
 }
+
+export interface LiveScreenShareState {
+  roomId: string;
+  presenterSocketId: string;
+  presenterId: string;
+  presenterName: string;
+  presenterAvatar: string;
+  streamType: 'mock' | 'screen' | 'notes';
+  title: string;
+  platformName?: string;
+  isActive: boolean;
+  startedAt: number;
+}
+
+export interface MockTestRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  platform: string; // e.g. 'Guidely', 'Testbook', 'Oliveboard', 'PracticeMock', 'Adda247', 'Smartkeeda', 'Other'
+  testTitle: string; // e.g. 'RRB PO Prelims Mock #5'
+  score: number;
+  totalMarks: number;
+  accuracy: number;
+  percentile?: number;
+  attemptedQuestions?: number;
+  totalQuestions?: number;
+  timeTakenMinutes?: number;
+  createdAt: string;
+}
+

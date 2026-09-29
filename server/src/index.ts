@@ -365,6 +365,120 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
   }
 });
 
+// --- SECURE WEB EMBED PROXY (Mock Test & Web Study Notes) ---
+app.get('/api/proxy/web', async (req, res) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
+    return res.status(400).send('Invalid or missing URL. URL must start with http:// or https://');
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    const parsedTarget = new URL(targetUrl);
+
+    const response = await fetch(targetUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+        'Referer': parsedTarget.origin
+      }
+    });
+
+    clearTimeout(timeout);
+
+    const rawContentType = response.headers.get('content-type') || 'text/html';
+
+    // Remove anti-framing headers
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Content-Security-Policy-Report-Only');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', rawContentType);
+
+    if (rawContentType.includes('text/html')) {
+      let html = await response.text();
+      // Inject <base href="..."> into <head> so relative assets load properly
+      const baseTag = `<base href="${targetUrl}">`;
+      if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head>${baseTag}`);
+      } else if (html.includes('<HEAD>')) {
+        html = html.replace('<HEAD>', `<HEAD>${baseTag}`);
+      } else {
+        html = baseTag + html;
+      }
+      return res.send(html);
+    } else {
+      const arrayBuffer = await response.arrayBuffer();
+      return res.send(Buffer.from(arrayBuffer));
+    }
+  } catch (err: any) {
+    return res.status(502).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><meta charset="utf-8"><title>Portal Notice</title>
+          <style>body{font-family:system-ui,-apple-system,sans-serif;padding:32px 16px;background:#090d16;color:#f8fafc;text-align:center;} .card{max-width:540px;margin:30px auto;background:#131c2e;padding:28px;border-radius:16px;border:1px solid #1e293b;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);} h3{margin-top:0;color:#f59e0b;} p{color:#94a3b8;font-size:14px;line-height:1.6;} .btn{display:inline-block;background:#4f46e5;color:white;text-decoration:none;padding:10px 22px;border-radius:10px;font-weight:600;margin-top:16px;transition:0.2s;} .btn:hover{background:#4338ca;} .url{background:#0f172a;padding:8px 12px;border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all;color:#cbd5e1;margin:12px 0;} </style>
+        </head>
+        <body>
+          <div class="card">
+            <h3>⚠️ Secured Study Portal</h3>
+            <p>This exam portal requires full browser authentication or protected session cookies:</p>
+            <div class="url">${targetUrl}</div>
+            <p>You can launch it in a dedicated companion window with 1 click while your StudyOS Mock Timer & Live Screen Share stay active!</p>
+            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn">Launch in Dual Companion Window ↗</a>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// --- MOCK TEST RECORDS ---
+app.get('/api/mock/records', (req, res) => {
+  const userId = req.query.userId as string | undefined;
+  res.json(storage.getMockTestRecords(userId));
+});
+
+app.post('/api/mock/record', (req, res) => {
+  const { userId, userName, platform, testTitle, score, totalMarks, accuracy, percentile, attemptedQuestions, totalQuestions, timeTakenMinutes } = req.body;
+  if (!userId || !platform || score === undefined || totalMarks === undefined) {
+    return res.status(400).json({ error: 'Missing required mock test fields' });
+  }
+
+  const record = storage.addMockTestRecord({
+    userId,
+    userName: userName || 'Student',
+    platform,
+    testTitle: testTitle || `${platform} Mock Test`,
+    score: Number(score),
+    totalMarks: Number(totalMarks),
+    accuracy: Number(accuracy || 0),
+    percentile: percentile !== undefined ? Number(percentile) : undefined,
+    attemptedQuestions: attemptedQuestions !== undefined ? Number(attemptedQuestions) : undefined,
+    totalQuestions: totalQuestions !== undefined ? Number(totalQuestions) : undefined,
+    timeTakenMinutes: timeTakenMinutes !== undefined ? Number(timeTakenMinutes) : undefined
+  });
+
+  // Notify room peers with a cheerful toast
+  const roomId = (req.body.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
+  io.to(roomId).emit('notification:toast', {
+    title: '🏆 Mock Test Completed!',
+    message: `${userName || 'Student'} completed ${record.testTitle} on ${platform}: Score ${record.score}/${record.totalMarks} (${record.accuracy}% Accuracy)!`,
+    type: 'success'
+  });
+
+  // Also broadcast user profile update so XP/badges update in real-time
+  const updatedUser = storage.getUser(userId);
+  if (updatedUser) {
+    io.emit('user:profile_updated', updatedUser);
+  }
+
+  res.json({ success: true, record });
+});
+
 // Peer Activity Summary (Today's Hours, Subject Breakdown)
 app.get('/api/activity/peer-summary', (req, res) => {
   const userId = req.query.userId as string;

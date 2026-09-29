@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
-import { WhiteboardElement } from '../types.js';
+import { WhiteboardElement, LiveScreenShareState } from '../types.js';
 
 interface RoomPeer {
   socketId: string;
@@ -21,6 +21,12 @@ interface RoomPeer {
   todayStudySeconds?: number;
   todayHours?: number;
   subjectBreakdown?: Record<string, number>;
+  liveScreenShare?: {
+    isActive: boolean;
+    title?: string;
+    platformName?: string;
+    streamType?: 'mock' | 'screen' | 'notes';
+  };
 }
 
 export interface PdfPresentation {
@@ -36,6 +42,7 @@ export interface PdfPresentation {
 
 const activeRoomPeers: Map<string, RoomPeer[]> = new Map();
 const activePdfPresentations: Map<string, PdfPresentation> = new Map();
+const activeScreenShares: Map<string, LiveScreenShareState> = new Map();
 const ROOM_VOICE_PASSWORDS: Map<string, string> = new Map([
   ['STUDY-ROOM-ALPHA', 'study123']
 ]);
@@ -157,6 +164,12 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     if (currentPres && currentPres.isActive) {
       socket.emit('pdf:presentation_state', currentPres);
     }
+
+    // Send active Screen / Mock share state if one is running in this room
+    const currentShare = activeScreenShares.get(cleanRoomId);
+    if (currentShare && currentShare.isActive) {
+      socket.emit('screen:state', currentShare);
+    }
   });
 
   // Explicit Leave Room
@@ -203,6 +216,18 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
         io.to(rId).emit('notification:toast', {
           title: 'PDF Co-Study Ended',
           message: `${departingPeer.name} left the room. PDF presentation ended.`,
+          type: 'info'
+        });
+      }
+
+      // Clean up orphaned screen share if presenter left
+      const currentShare = activeScreenShares.get(rId);
+      if (currentShare && (currentShare.presenterSocketId === socket.id || (departingPeer && currentShare.presenterId === departingPeer.userId))) {
+        activeScreenShares.delete(rId);
+        io.to(rId).emit('screen:state', { isActive: false, roomId: rId });
+        io.to(rId).emit('notification:toast', {
+          title: 'Live Stream Ended',
+          message: `${departingPeer ? departingPeer.name : 'Presenter'} left the room. Live stream ended.`,
           type: 'info'
         });
       }
@@ -386,6 +411,97 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     io.to(roomId).emit('pdf:presentation_state', { isActive: false, roomId });
   });
 
+  // --- Screen / Mock Test Live Sharing ---
+  socket.on('screen:start', (data: {
+    roomId: string;
+    presenterId: string;
+    presenterName: string;
+    presenterAvatar: string;
+    streamType?: 'mock' | 'screen' | 'notes';
+    title?: string;
+    platformName?: string;
+  }) => {
+    const roomId = cleanRoomId(data.roomId);
+    const shareState: LiveScreenShareState = {
+      roomId,
+      presenterSocketId: socket.id,
+      presenterId: data.presenterId,
+      presenterName: data.presenterName,
+      presenterAvatar: data.presenterAvatar,
+      streamType: data.streamType || 'mock',
+      title: data.title || 'Live Mock Test',
+      platformName: data.platformName || 'Mock Arena',
+      isActive: true,
+      startedAt: Date.now()
+    };
+    activeScreenShares.set(roomId, shareState);
+
+    // Update peer in activeRoomPeers roster
+    const peers = activeRoomPeers.get(roomId) || [];
+    const peer = peers.find(p => p.socketId === socket.id || p.userId === data.presenterId);
+    if (peer) {
+      peer.liveScreenShare = {
+        isActive: true,
+        title: shareState.title,
+        platformName: shareState.platformName,
+        streamType: shareState.streamType
+      };
+      io.to(roomId).emit('room:peers', peers);
+    }
+
+    io.to(roomId).emit('screen:state', shareState);
+    io.to(roomId).emit('notification:toast', {
+      title: '🔴 Mock Test Live Stream Started',
+      message: `${data.presenterName} is now live giving a mock test on ${shareState.platformName}!`,
+      type: 'info'
+    });
+  });
+
+  socket.on('screen:stop', (data: { roomId: string }) => {
+    const roomId = cleanRoomId(data.roomId);
+    const current = activeScreenShares.get(roomId);
+    if (current && (current.presenterSocketId === socket.id || current.presenterId === (socket as any).userId)) {
+      activeScreenShares.delete(roomId);
+
+      const peers = activeRoomPeers.get(roomId) || [];
+      const peer = peers.find(p => p.socketId === socket.id);
+      if (peer) {
+        peer.liveScreenShare = undefined;
+        io.to(roomId).emit('room:peers', peers);
+      }
+
+      io.to(roomId).emit('screen:state', { isActive: false, roomId });
+      io.to(roomId).emit('notification:toast', {
+        title: 'Live Stream Ended',
+        message: `${current.presenterName} stopped screen sharing.`,
+        type: 'info'
+      });
+    }
+  });
+
+  socket.on('screen:join_viewer', (data: { roomId: string; viewerName?: string }) => {
+    const roomId = cleanRoomId(data.roomId);
+    const current = activeScreenShares.get(roomId);
+    if (current && current.isActive) {
+      io.to(current.presenterSocketId).emit('screen:viewer_joined', {
+        viewerSocketId: socket.id,
+        viewerName: data.viewerName || 'Room Peer'
+      });
+    }
+  });
+
+  socket.on('screen:offer', (data: { to: string; offer: any }) => {
+    io.to(data.to).emit('screen:offer', { from: socket.id, offer: data.offer });
+  });
+
+  socket.on('screen:answer', (data: { to: string; answer: any }) => {
+    io.to(data.to).emit('screen:answer', { from: socket.id, answer: data.answer });
+  });
+
+  socket.on('screen:ice_candidate', (data: { to: string; candidate: any }) => {
+    io.to(data.to).emit('screen:ice_candidate', { from: socket.id, candidate: data.candidate });
+  });
+
   // Voice Password Verification
   socket.on('voice:verify_password', async (data: { roomId: string; password: string }, callback: (res: { success: boolean; message: string }) => void) => {
     const cleanRoomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
@@ -463,6 +579,18 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
         io.to(roomId).emit('notification:toast', {
           title: 'PDF Co-Study Ended',
           message: `${departingPeer.name} disconnected. PDF presentation ended.`,
+          type: 'info'
+        });
+      }
+
+      // Clean up orphaned screen share if presenter disconnected
+      const currentShare = activeScreenShares.get(roomId);
+      if (currentShare && (currentShare.presenterSocketId === socket.id || (departingPeer && currentShare.presenterId === departingPeer.userId))) {
+        activeScreenShares.delete(roomId);
+        io.to(roomId).emit('screen:state', { isActive: false, roomId });
+        io.to(roomId).emit('notification:toast', {
+          title: 'Live Stream Ended',
+          message: `${departingPeer ? departingPeer.name : 'Presenter'} disconnected. Live stream ended.`,
           type: 'info'
         });
       }

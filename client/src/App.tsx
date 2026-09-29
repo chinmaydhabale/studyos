@@ -17,6 +17,7 @@ import { LeaderboardsView } from './components/gamification/LeaderboardsView.js'
 import { TelegramVaultView } from './components/vault/TelegramVaultView.js';
 import { RoomGatewayModal } from './components/rooms/RoomGatewayModal.js';
 import { PDFReaderView } from './components/pdf-reader/PDFReaderView.js';
+import { MockArenaView } from './components/mock/MockArenaView.js';
 import { PeerActivityDossierModal } from './components/activity/PeerActivityDossierModal.js';
 import { PenTool, FileText, Activity } from 'lucide-react';
 
@@ -80,6 +81,16 @@ const MainLayout: React.FC = () => {
         {/* Telegram Cloud Storage & Study Vault */}
         {activeTab === 'vault' && (
           <TelegramVaultView />
+        )}
+
+        {/* Banking Mock Arena & Web Study Notes (Guidely, Testbook, Oliveboard & Screen Sharing) */}
+        {activeTab === 'mock' && (
+          <MockArenaView
+            onAskAiDoubt={(prompt) => {
+              setAiCoachPresetPrompt(prompt);
+              setActiveTab('ai-coach');
+            }}
+          />
         )}
 
         {/* In-App PDF Reader (Solo reading + Group Co-Study sync) */}
