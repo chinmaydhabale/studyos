@@ -8,15 +8,13 @@
  */
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// Verified against https://ai.google.dev/gemini-api/docs/models
-// Primary model is set to gemini-3.8-flash for high quality, fast inference.
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 
 export type GeminiModelTier = 'heavy' | 'lite' | 'balanced' | 'flashcards';
 
 export const GEMINI_MODELS = {
-  heavy: 'gemini-3.8-flash',
-  flashcards: 'gemini-3.7-flash', // Used for large-batch, high-yield flashcard generation
+  heavy: 'gemini-3.5-flash',
+  flashcards: 'gemini-3.5-flash',
   balanced: 'gemini-3.6-flash',
   lite: 'gemini-3.5-flash-lite'
 };
@@ -95,12 +93,12 @@ export class GeminiService {
       // Default or heavy tier: start with primary model (gemini-3.8-flash)
       const primaryModel = this.getModel();
       modelsToTry = [primaryModel];
-      if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
-      if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
-      if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
       if (!modelsToTry.includes('gemini-3.5-flash')) modelsToTry.push('gemini-3.5-flash');
-      if (!modelsToTry.includes('gemini-flash-latest')) modelsToTry.push('gemini-flash-latest');
+      if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
       if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
+      if (!modelsToTry.includes('gemini-flash-latest')) modelsToTry.push('gemini-flash-latest');
+      if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
+      if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
     }
 
     const keyAttempts = Math.min(keys.length, 3);
