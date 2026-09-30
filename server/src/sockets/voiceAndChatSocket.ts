@@ -1,10 +1,10 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
 import { aiCoach } from '../services/aiCoachService.js';
-import { updateRoomPeerVoiceState } from './studyRoomSocket.js';
+import { updateRoomPeerVoiceState, getExpectedVoicePassword } from './studyRoomSocket.js';
 import { ChatMessage } from '../types.js';
 
-const DEFAULT_ROOM = 'study-room-alpha';
+const DEFAULT_ROOM = 'STUDY-ROOM-ALPHA';
 
 // roomId -> (socketId -> userName) for everyone currently in the voice channel
 const voiceRoomMembers: Map<string, Map<string, string>> = new Map();
@@ -23,7 +23,7 @@ function addVoiceMember(roomId: string, socketId: string, userName: string): Arr
   return existing;
 }
 
-function removeVoiceMember(roomId: string, socketId: string): void {
+export function removeVoiceMember(roomId: string, socketId: string): void {
   const members = voiceRoomMembers.get(roomId);
   if (!members) return;
   members.delete(socketId);
@@ -55,17 +55,18 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     isAiDoubt?: boolean;
   }) => {
     const roomId = cleanRoomId(data.roomId);
+    const safeText = typeof data.text === 'string' ? data.text : '';
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       roomId,
-      userId: data.userId,
-      userName: data.userName,
-      userAvatar: data.userAvatar,
-      text: data.text,
+      userId: data.userId || 'anonymous',
+      userName: data.userName || 'Student',
+      userAvatar: data.userAvatar || '',
+      text: safeText,
       videoTimestamp: data.videoTimestamp,
       pdfPage: data.pdfPage,
       pdfDocTitle: data.pdfDocTitle,
-      isAiDoubt: data.isAiDoubt || data.text.startsWith('/ai'),
+      isAiDoubt: Boolean(data.isAiDoubt || safeText.startsWith('/ai')),
       createdAt: new Date().toISOString()
     };
 
@@ -75,7 +76,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
 
     // If it's a doubt for AI
     if (newMsg.isAiDoubt) {
-      const query = data.text.replace(/^\/ai\s*/i, '');
+      const query = safeText.replace(/^\/ai\s*/i, '');
       const doubtResult = await aiCoach.explainDoubt(query, {
         videoTimestamp: data.videoTimestamp,
         pdfPage: data.pdfPage,
@@ -109,38 +110,52 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
   });
 
   // WebRTC Audio Signaling for real-time voice chat between students.
-  // Every signal must reach exactly one peer, otherwise a 3+ person room
-  // produces overlapping offers/answers (glare) and no call can connect.
+  // Every signal must reach exactly one peer; drop if no target specified to prevent glare.
   socket.on('webrtc:offer', (data: { roomId: string; offer: any; to?: string }) => {
-    const payload = { from: socket.id, offer: data.offer };
-    if (data.to) {
-      io.to(data.to).emit('webrtc:offer', payload);
+    if (!data.to) {
+      console.warn('[webrtc] Drop offer: missing recipient "to"');
       return;
     }
-    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:offer', payload);
+    io.to(data.to).emit('webrtc:offer', { from: socket.id, offer: data.offer });
   });
 
   socket.on('webrtc:answer', (data: { roomId: string; answer: any; to?: string }) => {
-    const payload = { from: socket.id, answer: data.answer };
-    if (data.to) {
-      io.to(data.to).emit('webrtc:answer', payload);
+    if (!data.to) {
+      console.warn('[webrtc] Drop answer: missing recipient "to"');
       return;
     }
-    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:answer', payload);
+    io.to(data.to).emit('webrtc:answer', { from: socket.id, answer: data.answer });
   });
 
   socket.on('webrtc:ice_candidate', (data: { roomId: string; candidate: any; to?: string }) => {
-    const payload = { from: socket.id, candidate: data.candidate };
-    if (data.to) {
-      io.to(data.to).emit('webrtc:ice_candidate', payload);
+    if (!data.to) {
+      console.warn('[webrtc] Drop candidate: missing recipient "to"');
       return;
     }
-    socket.to(`voice_${cleanRoomId(data.roomId)}`).emit('webrtc:ice_candidate', payload);
+    io.to(data.to).emit('webrtc:ice_candidate', { from: socket.id, candidate: data.candidate });
   });
 
-  // Join voice room
-  socket.on('voice:join', (data: { roomId: string; userName?: string }) => {
+  // Join voice room (Password gate strictly enforced on server)
+  socket.on('voice:join', async (data: { roomId: string; userName?: string; password?: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    const expected = await getExpectedVoicePassword(roomId);
+    if (expected) {
+      const isUnlocked = (socket as any).unlockedVoiceRooms?.has(roomId);
+      const matchesPassword = data.password && typeof data.password === 'string' && data.password.trim() === expected.trim();
+      if (!isUnlocked && !matchesPassword) {
+        socket.emit('notification:toast', {
+          title: 'Voice Room Locked',
+          message: 'Voice channel is password-protected. Please unlock with room password.',
+          type: 'warning'
+        });
+        return;
+      }
+      if (matchesPassword) {
+        (socket as any).unlockedVoiceRooms = (socket as any).unlockedVoiceRooms || new Set<string>();
+        (socket as any).unlockedVoiceRooms.add(roomId);
+      }
+    }
+
     const oldVoiceRoom = (socket as any).currentVoiceRoom;
     if (oldVoiceRoom && oldVoiceRoom !== `voice_${roomId}`) {
       socket.leave(oldVoiceRoom);

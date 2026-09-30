@@ -65,8 +65,8 @@ export const useScreenShare = ({
     setIsViewing(false);
   }, []);
 
-  // Stop sharing function
-  const stopSharing = useCallback(() => {
+  // Stop local stream only without emitting socket stop event
+  const stopLocalStreamOnly = useCallback(() => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         try { track.stop(); } catch (e) {}
@@ -77,6 +77,11 @@ export const useScreenShare = ({
     setLocalStream(null);
     setIsSharing(false);
     setHasAudio(false);
+  }, [cleanupPresenterPcs]);
+
+  // Stop sharing function (Presenter initiated)
+  const stopSharing = useCallback(() => {
+    stopLocalStreamOnly();
 
     if (socket && roomId) {
       socket.emit('screen:stop', { roomId });
@@ -84,7 +89,7 @@ export const useScreenShare = ({
     if (onToast) {
       onToast('Screen Share Stopped', 'Your screen is now private.', 'info');
     }
-  }, [socket, roomId, cleanupPresenterPcs, onToast]);
+  }, [socket, roomId, stopLocalStreamOnly, onToast]);
 
   // Start sharing function (Presenter)
   const startSharing = useCallback(async (options?: {
@@ -189,10 +194,13 @@ export const useScreenShare = ({
     }
   }, [socket, roomId, activeShare, currentUserId, currentUserName, cleanupViewerPc]);
 
-  // Leave stream function (Viewer)
+  // Leave stream function (Viewer - Bug 17 fix)
   const leaveStream = useCallback(() => {
+    if (socket && roomId) {
+      socket.emit('screen:leave_viewer', { roomId });
+    }
     cleanupViewerPc();
-  }, [cleanupViewerPc]);
+  }, [socket, roomId, cleanupViewerPc]);
 
   // Socket signaling listeners
   useEffect(() => {
@@ -215,8 +223,9 @@ export const useScreenShare = ({
       } else {
         setActiveShare(null);
         cleanupViewerPc();
-        if (localStreamRef.current && isSharing) {
-          stopSharing();
+        // Bug 18 fix: stop local stream only, do not re-emit screen:stop
+        if (localStreamRef.current || isSharing) {
+          stopLocalStreamOnly();
         }
       }
     };
@@ -253,6 +262,20 @@ export const useScreenShare = ({
         });
       } catch (err) {
         console.error('Failed to create offer for viewer:', err);
+      }
+    };
+
+    // Presenter: Handle viewer left -> Close PC and decrement count (Bug 17 fix)
+    const handleViewerLeft = (data: { viewerSocketId: string }) => {
+      const pc = presenterPcsRef.current.get(data.viewerSocketId);
+      if (pc) {
+        try {
+          pc.onicecandidate = null;
+          pc.ontrack = null;
+          pc.close();
+        } catch (e) {}
+        presenterPcsRef.current.delete(data.viewerSocketId);
+        setViewerCount(presenterPcsRef.current.size);
       }
     };
 
@@ -327,6 +350,7 @@ export const useScreenShare = ({
 
     socket.on('screen:state', handleScreenState);
     socket.on('screen:viewer_joined', handleViewerJoined);
+    socket.on('screen:viewer_left', handleViewerLeft);
     socket.on('screen:offer', handleScreenOffer);
     socket.on('screen:answer', handleScreenAnswer);
     socket.on('screen:ice_candidate', handleScreenIceCandidate);
@@ -334,11 +358,12 @@ export const useScreenShare = ({
     return () => {
       socket.off('screen:state', handleScreenState);
       socket.off('screen:viewer_joined', handleViewerJoined);
+      socket.off('screen:viewer_left', handleViewerLeft);
       socket.off('screen:offer', handleScreenOffer);
       socket.off('screen:answer', handleScreenAnswer);
       socket.off('screen:ice_candidate', handleScreenIceCandidate);
     };
-  }, [socket, currentUserId, isSharing, stopSharing, onToast, cleanupViewerPc]);
+  }, [socket, currentUserId, isSharing, stopLocalStreamOnly, onToast, cleanupViewerPc]);
 
   // Teardown on unmount
   useEffect(() => {

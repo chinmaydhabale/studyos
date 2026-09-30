@@ -143,9 +143,9 @@ const getStoredRoom = (): string => {
     if (roomFromUrl && roomFromUrl.trim()) {
       return roomFromUrl.trim().toUpperCase();
     }
-    return localStorage.getItem('studyos_current_room_v1') || 'STUDY-ROOM-ALPHA';
+    return localStorage.getItem('studyos_current_room_v1') || '';
   } catch (e) {
-    return 'STUDY-ROOM-ALPHA';
+    return '';
   }
 };
 
@@ -197,7 +197,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [currentUser, setCurrentUser] = useState<UserProfile>(initialUserData.user);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialUserData.isAuthenticated);
   const [peers, setPeers] = useState<RoomPeer[]>([]);
-  const [videoState, setVideoState] = useState<VideoSyncState>({ ...defaultVideo, roomId: initialRoomId });
+  const [videoState, setVideoState] = useState<VideoSyncState>({ ...defaultVideo, roomId: initialRoomId || 'STUDY-ROOM-ALPHA' });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [whiteboardElements, setWhiteboardElements] = useState<WhiteboardElement[]>([]);
   const [sharedNote, setSharedNote] = useState<SharedNote | null>(null);
@@ -231,6 +231,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const socketRef = useRef<Socket | null>(null);
   const previousRoomIdRef = useRef<string>('');
+  const previousUserIdRef = useRef<string>(initialUserData.user.id);
   // Always-current values for socket handlers that live across renders
   const roomIdRef = useRef<string>(initialRoomId);
   const userRef = useRef<UserProfile>(initialUserData.user);
@@ -436,6 +437,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.log('Connected to StudyOS real-time server:', newSocket.id);
       setIsConnected(true);
       const activeRoom = roomIdRef.current;
+      if (!activeRoom) return;
       const activeUser = userRef.current;
       const storedActivity = getStoredActivity();
       const effectiveUser = {
@@ -569,7 +571,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [addToast]);
 
-  // Re-join the rooms whenever the group or the signed-in identity changes
+  // Re-join the rooms whenever the group, the signed-in identity, or connection state changes (Bug 13 & 15 fix)
   useEffect(() => {
     const activeSocket = socketRef.current;
     if (!activeSocket?.connected) return;
@@ -584,6 +586,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     previousRoomIdRef.current = roomId;
 
+    const previousUserId = previousUserIdRef.current;
+    if (previousUserId && previousUserId !== currentUser.id && roomId) {
+      activeSocket.emit('room:leave', { roomId, userId: previousUserId });
+    }
+    previousUserIdRef.current = currentUser.id;
+
     if (!roomId) return;
     const effectiveUser = {
       ...currentUser,
@@ -592,8 +600,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeSocket.emit('room:join', { roomId, user: effectiveUser });
     activeSocket.emit('video:join', { roomId, userName: effectiveUser.name });
     activeSocket.emit('chat:join', { roomId });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, currentUser.id, currentUser.name]);
+  }, [roomId, currentUser.id, currentUser.name, isConnected]);
 
   // Voice chat must be unlocked again in every new room (password gate stays intact)
   useEffect(() => {
@@ -923,9 +930,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [activeActivity]);
 
-  // Tune in to peer's PDF
+  // Tune in to peer's PDF (Bug 16 fix)
   const tuneInToPeerPdf = useCallback((peer: RoomPeer) => {
-    if (!peer.currentDocument) return;
+    if (!peer.currentDocument || typeof peer.currentDocument.fileUrl !== 'string') {
+      addToast('Cannot Open Document', 'This document has an invalid or missing file URL.', 'alert');
+      return;
+    }
     const fileId = peer.currentDocument.fileUrl.split('/stream/')[1]?.split(/[?#]/)[0] || '';
     if (!fileId) {
       addToast('Syncing or Local Only', `"${peer.currentDocument.title}" is currently syncing to Telegram or is only available locally on ${peer.name}'s device.`, 'alert');

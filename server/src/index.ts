@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import dns from 'dns';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -80,7 +81,7 @@ app.post('/api/reset', requireAdmin, async (req, res) => {
 app.get('/api/user', (req, res) => {
   const userId = req.query.userId as string;
   if (!userId) {
-    return res.status(404).json({ error: 'User ID required' });
+    return res.status(400).json({ error: 'User ID required' });
   }
   const user = storage.getUser(userId);
   if (!user) {
@@ -107,7 +108,7 @@ app.post('/api/user/profile', (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password, name, targetExam, city, avatar } = req.body || {};
-    if (!username || typeof username !== 'string' || !username.trim()) {
+    if (!username || typeof username !== 'string' || username.trim().length < 3) {
       return res.status(400).json({ error: 'Username is required and must be at least 3 characters.' });
     }
     if (!password || typeof password !== 'string' || password.length < 4) {
@@ -365,18 +366,59 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
   }
 });
 
+// --- SSRF & Private IP Protection for Web Proxy ---
+function isPrivateIp(ip: string): boolean {
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' || ip === '::') return true;
+  if (ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('169.254.') || ip.startsWith('127.')) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+  if (/^(fc00|fe80)/i.test(ip)) return true;
+  return false;
+}
+
+async function isSafeUrlForProxy(urlString: string): Promise<{ safe: boolean; reason?: string; parsed?: URL }> {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { safe: false, reason: 'Only HTTP and HTTPS protocols are allowed' };
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '0.0.0.0') {
+      return { safe: false, reason: 'Internal/loopback requests are strictly forbidden' };
+    }
+    if (isPrivateIp(host)) {
+      return { safe: false, reason: 'Private/internal IP addresses are strictly forbidden' };
+    }
+
+    try {
+      const lookupResult = await dns.promises.lookup(host);
+      if (lookupResult && isPrivateIp(lookupResult.address)) {
+        return { safe: false, reason: 'Destination domain resolves to a private or internal IP' };
+      }
+    } catch {
+      return { safe: false, reason: 'Unable to resolve destination domain' };
+    }
+
+    return { safe: true, parsed };
+  } catch (e: any) {
+    return { safe: false, reason: 'Malformed URL' };
+  }
+}
+
 // --- SECURE WEB EMBED PROXY (Mock Test & Web Study Notes) ---
 app.get('/api/proxy/web', async (req, res) => {
   const targetUrl = req.query.url as string;
-  if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
-    return res.status(400).send('Invalid or missing URL. URL must start with http:// or https://');
+  if (!targetUrl || typeof targetUrl !== 'string') {
+    return res.status(400).send('Invalid or missing URL parameter.');
+  }
+
+  const urlCheck = await isSafeUrlForProxy(targetUrl);
+  if (!urlCheck.safe || !urlCheck.parsed) {
+    return res.status(403).send(`Blocked: ${urlCheck.reason || 'Unsafe destination'}`);
   }
 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
-
-    const parsedTarget = new URL(targetUrl);
 
     const response = await fetch(targetUrl, {
       signal: controller.signal,
@@ -384,7 +426,7 @@ app.get('/api/proxy/web', async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
-        'Referer': parsedTarget.origin
+        'Referer': urlCheck.parsed.origin
       }
     });
 
@@ -396,7 +438,6 @@ app.get('/api/proxy/web', async (req, res) => {
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
     res.removeHeader('Content-Security-Policy-Report-Only');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', rawContentType);
 
     if (rawContentType.includes('text/html')) {
@@ -444,29 +485,60 @@ app.get('/api/mock/records', (req, res) => {
 
 app.post('/api/mock/record', (req, res) => {
   const { userId, userName, platform, testTitle, score, totalMarks, accuracy, percentile, attemptedQuestions, totalQuestions, timeTakenMinutes } = req.body;
-  if (!userId || !platform || score === undefined || totalMarks === undefined) {
-    return res.status(400).json({ error: 'Missing required mock test fields' });
+  if (!userId || typeof userId !== 'string' || !platform || typeof platform !== 'string') {
+    return res.status(400).json({ error: 'Valid userId and platform are required' });
   }
+
+  // Verify user exists to prevent orphaned/injected XP minting
+  const existingUser = storage.getUser(userId);
+  if (!existingUser) {
+    return res.status(404).json({ error: 'User not found. Valid registered user required.' });
+  }
+
+  const numScore = Number(score);
+  const numTotal = Number(totalMarks);
+  if (isNaN(numScore) || isNaN(numTotal) || !isFinite(numScore) || !isFinite(numTotal) || numScore < 0 || numTotal <= 0) {
+    return res.status(400).json({ error: 'Score and total marks must be valid positive numbers' });
+  }
+
+  const rawAccuracy = accuracy !== undefined ? Number(accuracy) : Math.round((numScore / numTotal) * 100);
+  const validAccuracy = isNaN(rawAccuracy) || !isFinite(rawAccuracy) ? 0 : Math.max(0, Math.min(100, rawAccuracy));
+
+  const validPercentile = percentile !== undefined && !isNaN(Number(percentile)) && isFinite(Number(percentile))
+    ? Math.max(0, Math.min(100, Number(percentile)))
+    : undefined;
+
+  const validAttempted = attemptedQuestions !== undefined && !isNaN(Number(attemptedQuestions)) && isFinite(Number(attemptedQuestions))
+    ? Math.max(0, Math.floor(Number(attemptedQuestions)))
+    : undefined;
+
+  const validTotalQuestions = totalQuestions !== undefined && !isNaN(Number(totalQuestions)) && isFinite(Number(totalQuestions))
+    ? Math.max(1, Math.floor(Number(totalQuestions)))
+    : undefined;
+
+  const validTimeTaken = timeTakenMinutes !== undefined && !isNaN(Number(timeTakenMinutes)) && isFinite(Number(timeTakenMinutes))
+    ? Math.max(1, Math.floor(Number(timeTakenMinutes)))
+    : undefined;
 
   const record = storage.addMockTestRecord({
     userId,
-    userName: userName || 'Student',
-    platform,
-    testTitle: testTitle || `${platform} Mock Test`,
-    score: Number(score),
-    totalMarks: Number(totalMarks),
-    accuracy: Number(accuracy || 0),
-    percentile: percentile !== undefined ? Number(percentile) : undefined,
-    attemptedQuestions: attemptedQuestions !== undefined ? Number(attemptedQuestions) : undefined,
-    totalQuestions: totalQuestions !== undefined ? Number(totalQuestions) : undefined,
-    timeTakenMinutes: timeTakenMinutes !== undefined ? Number(timeTakenMinutes) : undefined
+    userName: userName || existingUser.name || 'Student',
+    platform: platform.trim(),
+    testTitle: (testTitle && typeof testTitle === 'string' && testTitle.trim()) ? testTitle.trim() : `${platform} Mock Test`,
+    score: numScore,
+    totalMarks: numTotal,
+    accuracy: validAccuracy,
+    percentile: validPercentile,
+    attemptedQuestions: validAttempted,
+    totalQuestions: validTotalQuestions,
+    timeTakenMinutes: validTimeTaken
   });
 
   // Notify room peers with a cheerful toast
   const roomId = (req.body.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
   io.to(roomId).emit('notification:toast', {
     title: '🏆 Mock Test Completed!',
-    message: `${userName || 'Student'} completed ${record.testTitle} on ${platform}: Score ${record.score}/${record.totalMarks} (${record.accuracy}% Accuracy)!`,
+    message: `${record.userName} completed ${record.testTitle} on ${platform}: Score ${record.score}/${record.totalMarks} (${record.accuracy}% Accuracy)!`,
     type: 'success'
   });
 

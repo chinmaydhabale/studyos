@@ -34,6 +34,23 @@ const MAINS_SECTIONS: SectionConfig[] = [
   { id: 'english_mains', name: 'English Language', durationMinutes: 35, questionCount: 35, color: 'text-amber-400 bg-amber-500/10 border-amber-500/30' }
 ];
 
+let sharedAudioContext: AudioContext | null = null;
+function getSharedAudioContext(): AudioContext | null {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+      sharedAudioContext = new AudioContextClass();
+    }
+    if (sharedAudioContext.state === 'suspended') {
+      sharedAudioContext.resume().catch(() => {});
+    }
+    return sharedAudioContext;
+  } catch (e) {
+    return null;
+  }
+}
+
 interface MockTimerProps {
   onExamFinish?: (totalSecondsTaken: number, examMode: string) => void;
   onSectionChange?: (sectionName: string) => void;
@@ -50,16 +67,30 @@ export const MockTimer: React.FC<MockTimerProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
+  // Bug 19 fix: store parent callbacks in refs so inline arrows don't tear down interval
+  const onExamFinishRef = useRef(onExamFinish);
+  onExamFinishRef.current = onExamFinish;
+  const onSectionChangeRef = useRef(onSectionChange);
+  onSectionChangeRef.current = onSectionChange;
+
   const sections = examMode === 'prelims' ? PRELIMS_SECTIONS : MAINS_SECTIONS;
   const currentSection = sections[currentSectionIndex] || sections[0];
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
+  const currentSectionIndexRef = useRef(currentSectionIndex);
+  currentSectionIndexRef.current = currentSectionIndex;
+
+  // Bug 22 fix: track end timestamp to prevent cumulative clock drift
+  const targetEndTimeRef = useRef<number | null>(null);
 
   const totalExamDurationSeconds = sections.reduce((acc, s) => acc + s.durationMinutes * 60, 0);
 
-  // Play audio chime
+  // Play audio chime (Bug 21 fix: reuse singleton AudioContext)
   const playAlertSound = (freq = 880) => {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getSharedAudioContext();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
@@ -76,6 +107,7 @@ export const MockTimer: React.FC<MockTimerProps> = ({
   // Change exam mode
   const handleModeChange = (mode: 'prelims' | 'mains' | 'stopwatch') => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     setExamMode(mode);
     setCurrentSectionIndex(0);
     if (mode === 'prelims') {
@@ -90,6 +122,7 @@ export const MockTimer: React.FC<MockTimerProps> = ({
   // Reset timer
   const handleReset = () => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     setCurrentSectionIndex(0);
     if (examMode === 'stopwatch') {
       setStopwatchSeconds(0);
@@ -101,47 +134,77 @@ export const MockTimer: React.FC<MockTimerProps> = ({
   // Jump to specific section
   const handleJumpToSection = (index: number) => {
     setCurrentSectionIndex(index);
-    setSecondsRemaining(sections[index].durationMinutes * 60);
-    if (onSectionChange) onSectionChange(sections[index].name);
+    const newSeconds = sections[index].durationMinutes * 60;
+    setSecondsRemaining(newSeconds);
+    if (isRunning) {
+      targetEndTimeRef.current = Date.now() + newSeconds * 1000;
+    }
+    if (onSectionChangeRef.current) onSectionChangeRef.current(sections[index].name);
   };
 
-  // Timer Tick Interval
+  // Timer Tick Interval (Bugs 19, 20, 22 fixed)
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning) {
+      targetEndTimeRef.current = null;
+      return;
+    }
+
+    if (examMode === 'stopwatch') {
+      const stopwatchStart = Date.now() - stopwatchSeconds * 1000;
+      const interval = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - stopwatchStart) / 1000);
+        setStopwatchSeconds(elapsed);
+      }, 500);
+      return () => clearInterval(interval);
+    }
+
+    // Exam countdown mode with drift-free timestamp math
+    if (targetEndTimeRef.current === null) {
+      targetEndTimeRef.current = Date.now() + secondsRemaining * 1000;
+    }
 
     const interval = window.setInterval(() => {
-      if (examMode === 'stopwatch') {
-        setStopwatchSeconds(s => s + 1);
-        return;
-      }
+      if (!targetEndTimeRef.current) return;
+      const remainingMs = targetEndTimeRef.current - Date.now();
+      const remainingSecs = Math.max(0, Math.ceil(remainingMs / 1000));
 
       setSecondsRemaining(prev => {
-        if (prev <= 1) {
-          // Section complete
+        if (remainingSecs === 120 && prev > 120) {
+          playAlertSound(660); // 2 minute warning
+        }
+
+        // Bug 20 fix: section completes once remaining reaches 0 (displaying 00:00)
+        if (remainingSecs <= 0) {
           playAlertSound(1100);
-          if (currentSectionIndex < sections.length - 1) {
-            const nextIdx = currentSectionIndex + 1;
+          const curIdx = currentSectionIndexRef.current;
+          const curSections = sectionsRef.current;
+          if (curIdx < curSections.length - 1) {
+            const nextIdx = curIdx + 1;
             setCurrentSectionIndex(nextIdx);
-            if (onSectionChange) onSectionChange(sections[nextIdx].name);
-            return sections[nextIdx].durationMinutes * 60;
+            if (onSectionChangeRef.current) {
+              onSectionChangeRef.current(curSections[nextIdx].name);
+            }
+            const nextSecs = curSections[nextIdx].durationMinutes * 60;
+            targetEndTimeRef.current = Date.now() + nextSecs * 1000;
+            return nextSecs;
           } else {
             // Whole mock complete!
             setIsRunning(false);
+            targetEndTimeRef.current = null;
             playAlertSound(1320);
-            if (onExamFinish) onExamFinish(totalExamDurationSeconds, examMode);
+            if (onExamFinishRef.current) {
+              onExamFinishRef.current(totalExamDurationSeconds, examMode);
+            }
             return 0;
           }
         }
-        if (prev === 120) {
-          // 2 minute warning
-          playAlertSound(660);
-        }
-        return prev - 1;
+
+        return remainingSecs;
       });
-    }, 1000);
+    }, 250);
 
     return () => clearInterval(interval);
-  }, [isRunning, examMode, currentSectionIndex, sections, totalExamDurationSeconds, onSectionChange, onExamFinish]);
+  }, [isRunning, examMode, totalExamDurationSeconds]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -250,7 +313,13 @@ export const MockTimer: React.FC<MockTimerProps> = ({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-white" />
-                <span>{secondsRemaining === sections[0].durationMinutes * 60 ? 'Start Exam' : 'Resume'}</span>
+                <span>
+                  {examMode === 'stopwatch'
+                    ? (stopwatchSeconds === 0 ? 'Start' : 'Resume')
+                    : (secondsRemaining === sections[currentSectionIndex].durationMinutes * 60 && currentSectionIndex === 0
+                        ? 'Start Exam'
+                        : 'Resume')}
+                </span>
               </>
             )}
           </button>

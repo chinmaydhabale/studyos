@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
 import { WhiteboardElement, LiveScreenShareState } from '../types.js';
+import { removeVoiceMember } from './voiceAndChatSocket.js';
 
 interface RoomPeer {
   socketId: string;
@@ -77,6 +78,85 @@ export function updateRoomPeerVoiceState(
   io.to(roomId).emit('room:peers', peers);
 }
 
+export function performRoomLeaveCleanup(
+  io: Server,
+  socket: Socket,
+  roomId: string,
+  userId?: string
+): void {
+  const cleanId = cleanRoomId(roomId);
+  socket.leave(cleanId);
+  socket.leave(`video_${cleanId}`);
+  socket.leave(`chat_${cleanId}`);
+  socket.leave(`voice_${cleanId}`);
+
+  // Voice room member cleanup
+  removeVoiceMember(cleanId, socket.id);
+  io.to(`voice_${cleanId}`).emit('voice:peer_left', { peerId: socket.id });
+
+  const peers = activeRoomPeers.get(cleanId) || [];
+  const departingPeer = peers.find(p => p.socketId === socket.id || (userId && p.userId === userId));
+
+  // Auto-save in-progress study activity on room exit
+  if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
+    const durationSeconds = Math.max(0, Math.floor((Date.now() - departingPeer.activityStartTime) / 1000));
+    if (durationSeconds >= 10) {
+      storage.recordActivitySession(
+        departingPeer.userId,
+        departingPeer.name,
+        departingPeer.currentActivity,
+        departingPeer.activityCategory || 'study',
+        durationSeconds
+      );
+      const updatedUser = storage.getUser(departingPeer.userId);
+      if (updatedUser) {
+        socket.emit('user:profile_updated', updatedUser);
+      }
+    }
+    departingPeer.activityStartTime = null;
+  }
+
+  const remaining = peers.filter(p => p.socketId !== socket.id && (!userId || p.userId !== userId));
+  // Bug 10 fix: delete empty room from Map to prevent unbounded memory growth
+  if (remaining.length === 0) {
+    activeRoomPeers.delete(cleanId);
+  } else {
+    activeRoomPeers.set(cleanId, remaining);
+  }
+  io.to(cleanId).emit('room:peers', remaining);
+
+  // Clean up orphaned PDF presentation if presenter left
+  const currentPres = activePdfPresentations.get(cleanId);
+  if (currentPres && departingPeer && currentPres.presenterId === departingPeer.userId) {
+    activePdfPresentations.delete(cleanId);
+    io.to(cleanId).emit('pdf:presentation_state', { isActive: false, roomId: cleanId });
+    io.to(cleanId).emit('notification:toast', {
+      title: 'PDF Co-Study Ended',
+      message: `${departingPeer.name} left the room. PDF presentation ended.`,
+      type: 'info'
+    });
+  }
+
+  // Clean up orphaned screen share if presenter left, or notify presenter if viewer left (Bug 17)
+  const currentShare = activeScreenShares.get(cleanId);
+  if (currentShare) {
+    if (currentShare.presenterSocketId === socket.id || (departingPeer && currentShare.presenterId === departingPeer.userId)) {
+      activeScreenShares.delete(cleanId);
+      io.to(cleanId).emit('screen:state', { isActive: false, roomId: cleanId });
+      io.to(cleanId).emit('notification:toast', {
+        title: 'Live Stream Ended',
+        message: `${departingPeer ? departingPeer.name : 'Presenter'} left the room. Live stream ended.`,
+        type: 'info'
+      });
+    } else {
+      // Notify presenter that this viewer left
+      io.to(currentShare.presenterSocketId).emit('screen:viewer_left', {
+        viewerSocketId: socket.id
+      });
+    }
+  }
+}
+
 export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Join Room
   socket.on('room:join', (data: {
@@ -97,20 +177,13 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     const cleanRoomId = (data.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
     const oldRoomId = (socket as any).currentStudyRoom;
 
-    // Cleanly leave previous room to prevent cross-room leaks
+    // Cleanly leave previous room to prevent cross-room leaks (Bug 8 fix)
     if (oldRoomId && oldRoomId !== cleanRoomId) {
-      socket.leave(oldRoomId);
-      socket.leave(`video_${oldRoomId}`);
-      socket.leave(`chat_${oldRoomId}`);
-      socket.leave(`voice_${oldRoomId}`);
-
-      const oldPeers = activeRoomPeers.get(oldRoomId) || [];
-      const updatedOldPeers = oldPeers.filter(p => p.socketId !== socket.id && p.userId !== data.user.id);
-      activeRoomPeers.set(oldRoomId, updatedOldPeers);
-      io.to(oldRoomId).emit('room:peers', updatedOldPeers);
+      performRoomLeaveCleanup(io, socket, oldRoomId, data.user.id);
     }
 
     (socket as any).currentStudyRoom = cleanRoomId;
+    (socket as any).userId = data.user.id;
     socket.join(cleanRoomId);
     socket.join(`chat_${cleanRoomId}`);
     socket.join(`video_${cleanRoomId}`);
@@ -176,61 +249,8 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   socket.on('room:leave', (data: { roomId: string; userId?: string }) => {
     const rId = (data.roomId || (socket as any).currentStudyRoom || '').trim().toUpperCase();
     if (rId) {
-      socket.leave(rId);
-      socket.leave(`video_${rId}`);
-      socket.leave(`chat_${rId}`);
-      socket.leave(`voice_${rId}`);
-
-      const peers = activeRoomPeers.get(rId) || [];
-      const departingPeer = peers.find(p => p.socketId === socket.id || (data.userId && p.userId === data.userId));
-
-      // Auto-save in-progress study activity on room exit
-      if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
-        const durationSeconds = Math.max(0, Math.floor((Date.now() - departingPeer.activityStartTime) / 1000));
-        if (durationSeconds >= 10) {
-          storage.recordActivitySession(
-            departingPeer.userId,
-            departingPeer.name,
-            departingPeer.currentActivity,
-            departingPeer.activityCategory || 'study',
-            durationSeconds
-          );
-          const updatedUser = storage.getUser(departingPeer.userId);
-          if (updatedUser) {
-            socket.emit('user:profile_updated', updatedUser);
-          }
-        }
-        departingPeer.activityStartTime = null;
-      }
-
-      const remaining = peers.filter(p => p.socketId !== socket.id && (!data.userId || p.userId !== data.userId));
-      activeRoomPeers.set(rId, remaining);
-      io.to(rId).emit('room:peers', remaining);
+      performRoomLeaveCleanup(io, socket, rId, data.userId);
       (socket as any).currentStudyRoom = null;
-
-      // Clean up orphaned PDF presentation if presenter left
-      const currentPres = activePdfPresentations.get(rId);
-      if (currentPres && departingPeer && currentPres.presenterId === departingPeer.userId) {
-        activePdfPresentations.delete(rId);
-        io.to(rId).emit('pdf:presentation_state', { isActive: false, roomId: rId });
-        io.to(rId).emit('notification:toast', {
-          title: 'PDF Co-Study Ended',
-          message: `${departingPeer.name} left the room. PDF presentation ended.`,
-          type: 'info'
-        });
-      }
-
-      // Clean up orphaned screen share if presenter left
-      const currentShare = activeScreenShares.get(rId);
-      if (currentShare && (currentShare.presenterSocketId === socket.id || (departingPeer && currentShare.presenterId === departingPeer.userId))) {
-        activeScreenShares.delete(rId);
-        io.to(rId).emit('screen:state', { isActive: false, roomId: rId });
-        io.to(rId).emit('notification:toast', {
-          title: 'Live Stream Ended',
-          message: `${departingPeer ? departingPeer.name : 'Presenter'} left the room. Live stream ended.`,
-          type: 'info'
-        });
-      }
     }
   });
 
@@ -435,6 +455,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       startedAt: Date.now()
     };
     activeScreenShares.set(roomId, shareState);
+    (socket as any).userId = data.presenterId;
 
     // Update peer in activeRoomPeers roster
     const peers = activeRoomPeers.get(roomId) || [];
@@ -490,6 +511,17 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     }
   });
 
+  // Viewer leaves screen share - notify presenter to cleanup PC and decrement viewerCount (Bug 17 fix)
+  socket.on('screen:leave_viewer', (data: { roomId: string }) => {
+    const roomId = cleanRoomId(data.roomId);
+    const current = activeScreenShares.get(roomId);
+    if (current && current.isActive) {
+      io.to(current.presenterSocketId).emit('screen:viewer_left', {
+        viewerSocketId: socket.id
+      });
+    }
+  });
+
   socket.on('screen:offer', (data: { to: string; offer: any }) => {
     io.to(data.to).emit('screen:offer', { from: socket.id, offer: data.offer });
   });
@@ -513,6 +545,8 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     }
 
     if (data.password === expected) {
+      (socket as any).unlockedVoiceRooms = (socket as any).unlockedVoiceRooms || new Set<string>();
+      (socket as any).unlockedVoiceRooms.add(cleanRoomId);
       callback({ success: true, message: 'Voice room unlocked! Microphone enabled.' });
     } else {
       callback({ success: false, message: 'Incorrect Voice Room Password. Please try again.' });
@@ -550,49 +584,9 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Disconnect
   socket.on('disconnect', () => {
     activeRoomPeers.forEach((peers, roomId) => {
-      const departingPeer = peers.find(p => p.socketId === socket.id);
-
-      // Auto-save in-progress study activity on disconnect
-      if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
-        const durationSeconds = Math.max(0, Math.floor((Date.now() - departingPeer.activityStartTime) / 1000));
-        if (durationSeconds >= 10) {
-          storage.recordActivitySession(
-            departingPeer.userId,
-            departingPeer.name,
-            departingPeer.currentActivity,
-            departingPeer.activityCategory || 'study',
-            durationSeconds
-          );
-        }
-        departingPeer.activityStartTime = null;
-      }
-
-      const remaining = peers.filter(p => p.socketId !== socket.id);
-      activeRoomPeers.set(roomId, remaining);
-      io.to(roomId).emit('room:peers', remaining);
-
-      // Clean up orphaned PDF presentation if presenter disconnected
-      const currentPres = activePdfPresentations.get(roomId);
-      if (currentPres && departingPeer && currentPres.presenterId === departingPeer.userId) {
-        activePdfPresentations.delete(roomId);
-        io.to(roomId).emit('pdf:presentation_state', { isActive: false, roomId });
-        io.to(roomId).emit('notification:toast', {
-          title: 'PDF Co-Study Ended',
-          message: `${departingPeer.name} disconnected. PDF presentation ended.`,
-          type: 'info'
-        });
-      }
-
-      // Clean up orphaned screen share if presenter disconnected
-      const currentShare = activeScreenShares.get(roomId);
-      if (currentShare && (currentShare.presenterSocketId === socket.id || (departingPeer && currentShare.presenterId === departingPeer.userId))) {
-        activeScreenShares.delete(roomId);
-        io.to(roomId).emit('screen:state', { isActive: false, roomId });
-        io.to(roomId).emit('notification:toast', {
-          title: 'Live Stream Ended',
-          message: `${departingPeer ? departingPeer.name : 'Presenter'} disconnected. Live stream ended.`,
-          type: 'info'
-        });
+      const isMember = peers.some(p => p.socketId === socket.id);
+      if (isMember) {
+        performRoomLeaveCleanup(io, socket, roomId);
       }
     });
   });

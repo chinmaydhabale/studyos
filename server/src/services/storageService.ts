@@ -606,8 +606,6 @@ export class StorageService {
       throw new Error('Password must be at least 4 characters');
     }
 
-    const isChinmayExemption = cleanUsername === 'chinmay' && data.password === '7717';
-
     // Check in-memory credentials and DB
     const existingCreds = this.userCredentials.get(cleanUsername);
     let existingInDb: any = null;
@@ -620,7 +618,7 @@ export class StorageService {
     }
 
     // Only throw "already taken" if actual password credentials exist for this username
-    if (!isChinmayExemption && (existingCreds || (existingInDb && existingInDb.passwordHash))) {
+    if (existingCreds || (existingInDb && existingInDb.passwordHash)) {
       throw new Error('Username already taken. Please choose another one or log in.');
     }
 
@@ -714,14 +712,7 @@ export class StorageService {
       }
     }
 
-    // Special auto-provisioning guarantee for chinmay / 7717
-    if ((cleanInput === 'chinmay' || resolvedUsername === 'chinmay') && password === '7717') {
-      this.ensureChinmayAccount();
-      const u = this.getUserByUsername('chinmay') || this.users.get('user_1790089573198_ucnf');
-      if (u) {
-        return { user: stripDbFields(u), token: `token_${u.id}_${Date.now()}` };
-      }
-    }
+    const escapeRegex = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
 
     let dbUser: any = null;
     if (isDbConnected()) {
@@ -730,7 +721,7 @@ export class StorageService {
           $or: [
             { username: cleanInput },
             { username: resolvedUsername },
-            { name: { $regex: new RegExp(`^${cleanInput}$`, 'i') } }
+            { name: { $regex: new RegExp(`^${escapeRegex(cleanInput)}$`, 'i') } }
           ]
         });
       } catch (err: any) {
