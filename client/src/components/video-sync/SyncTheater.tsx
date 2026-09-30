@@ -92,6 +92,10 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         const latest = videoStateRef.current;
         try {
           playerRef.current = new window.YT.Player('yt-player-frame', {
+            // The API replaces our div with an iframe and drops its className,
+            // so size the iframe explicitly to fill the stage.
+            width: '100%',
+            height: '100%',
             videoId: latest.videoId || 'k7YS_P_t3uA',
             playerVars: {
               autoplay: 0,
@@ -334,10 +338,20 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
 
           {/* Sync Status Badge & Partner Presence */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline font-medium">Synced:</span>
-              <span className="font-semibold">{peers.length} Studying Together</span>
+            {syncStatus === 'syncing' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                <span className="font-semibold">Resyncing…</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span className="font-semibold">Synced</span>
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs">
+              <Users className="w-3.5 h-3.5" />
+              <span className="font-semibold">{peers.length + 1} Studying Together</span>
             </div>
 
             {/* Quick Presets Dropdown */}

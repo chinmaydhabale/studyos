@@ -212,6 +212,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
+  // Incremented on every stop/new play so an in-flight (buffering) turn can detect
+  // that it was cancelled and abort before it starts audio.
+  const playbackTokenRef = useRef(0);
 
   // ----------------------------------------------------
   // 2. Chat / Doubt Assistant State
@@ -274,31 +277,49 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   }, [initialPrompt]);
 
   // Switch Preset Topic
+  const makeTopicWelcome = (title: string): ChatMessageItem[] => ([
+    {
+      id: `welcome-${Date.now()}`,
+      role: 'assistant',
+      content: `Active topic changed to: "${title}". Ab is topic se judha koi bhi doubt poochhiye, podcast suniye, ya flashcards practice kijiye!`,
+      timestamp: 'Just now',
+      suggestedFollowUps: [
+        'Explain the core concept in simple terms',
+        'What are the most common exam traps?',
+        'Give me a mnemonic to remember this',
+        'Derive key formula step-by-step'
+      ]
+    }
+  ]);
+
+  // Clear every piece of generated content so a new source never shows stale
+  // artifacts (study plan, podcast, flashcards, quiz, cheat sheet, chat).
+  const resetGeneratedContent = (title: string) => {
+    setAudioDiscussion(null);
+    setFlashcards([]);
+    setQuizQuestions([]);
+    setCheatSheet(null);
+    setStudyPlan(null);
+    setChatMessages(makeTopicWelcome(title));
+  };
+
+  // Close the Edit Notes modal on Escape.
+  useEffect(() => {
+    if (!isEditorOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsEditorOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isEditorOpen]);
+
   const handleSelectPreset = (preset: typeof PRESET_TOPICS[0]) => {
     stopAudio();
     setActiveTopic(preset.title);
     setActiveDomain(preset.domain);
     setSourceMaterial(preset.content);
     // Reset generated content for new topic
-    setAudioDiscussion(null);
-    setFlashcards([]);
-    setQuizQuestions([]);
-    setCheatSheet(null);
-    setStudyPlan(null);
-    setChatMessages([
-      {
-        id: `welcome-${Date.now()}`,
-        role: 'assistant',
-        content: `Active topic changed to: "${preset.title}". Ab is topic se judha koi bhi doubt poochhiye, podcast suniye, ya flashcards practice kijiye!`,
-        timestamp: 'Just now',
-        suggestedFollowUps: [
-          'Explain the core concept in simple terms',
-          'What are the most common exam traps?',
-          'Give me a mnemonic to remember this',
-          'Derive key formula step-by-step'
-        ]
-      }
-    ]);
+    resetGeneratedContent(preset.title);
     addToast('Study Topic Updated', `Switched to ${preset.title}`, 'info');
   };
 
@@ -325,10 +346,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         setActiveTopic(cleanTitle);
         setActiveDomain('Uploaded Document');
         setSourceMaterial(fullText.trim() || 'No selectable text found in this PDF.');
-        setAudioDiscussion(null);
-        setFlashcards([]);
-        setQuizQuestions([]);
-        setCheatSheet(null);
+        resetGeneratedContent(cleanTitle);
         addToast('PDF Processed!', `Extracted text from ${pagesToRead} pages of "${cleanTitle}"`, 'success');
       } else {
         const text = await file.text();
@@ -336,10 +354,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         setActiveTopic(cleanTitle);
         setActiveDomain('Custom File');
         setSourceMaterial(text);
-        setAudioDiscussion(null);
-        setFlashcards([]);
-        setQuizQuestions([]);
-        setCheatSheet(null);
+        resetGeneratedContent(cleanTitle);
         addToast('File Loaded!', `Loaded contents of "${cleanTitle}"`, 'success');
       }
     } catch (err: any) {
@@ -355,13 +370,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const handleSaveCustomNotes = () => {
     if (!tempEditorText.trim()) return;
     stopAudio();
-    setActiveTopic(tempEditorTitle.trim() || 'Custom Study Notes');
+    const noteTitle = tempEditorTitle.trim() || 'Custom Study Notes';
+    setActiveTopic(noteTitle);
     setActiveDomain('Student Notes');
     setSourceMaterial(tempEditorText.trim());
-    setAudioDiscussion(null);
-    setFlashcards([]);
-    setQuizQuestions([]);
-    setCheatSheet(null);
+    resetGeneratedContent(noteTitle);
     setIsEditorOpen(false);
     addToast('Notes Saved!', 'AI Coach is now analyzing your custom study material.', 'success');
   };
@@ -404,6 +417,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
+    // Invalidate any in-flight playTurn so it won't start audio after we stop.
+    playbackTokenRef.current += 1;
     setIsPlaying(false);
     setAudioBuffering(false);
   };
@@ -415,6 +430,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     }
 
     stopAudio();
+    // stopAudio() bumped the token; claim this playback attempt.
+    const myToken = playbackTokenRef.current;
     setCurrentTurnIndex(index);
     setIsPlaying(true);
     setAudioBuffering(true);
@@ -469,6 +486,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         console.warn('Neural TTS failed, falling back to Web Speech:', err);
       }
     }
+
+    // Bail out if the user paused/started another turn while we were buffering.
+    if (myToken !== playbackTokenRef.current) return;
 
     setAudioBuffering(false);
 
@@ -640,14 +660,16 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
 
   const handleCardMastery = (level: 'learning' | 'reviewing' | 'mastered') => {
     if (!flashcards.length) return;
-    const updated = [...flashcards];
-    updated[activeCardIndex].masteryLevel = level;
+    // Immutable update — never mutate the existing card object in place.
+    const updated = flashcards.map((card, idx) =>
+      idx === activeCardIndex ? { ...card, masteryLevel: level } : card
+    );
     setFlashcards(updated);
     addXp(15);
 
     // Auto next card
+    setIsCardFlipped(false);
     if (activeCardIndex < flashcards.length - 1) {
-      setIsCardFlipped(false);
       setActiveCardIndex(activeCardIndex + 1);
     } else {
       addToast('Deck Completed!', 'Great job! You revised all flashcards.', 'success');
@@ -858,7 +880,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
             <MessageSquare className="w-3.5 h-3.5 text-indigo-300" />
             <span>Doubt & Q&A</span>
             {chatMessages.length > 1 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/20">
                 {chatMessages.length - 1}
               </span>
             )}
@@ -878,7 +900,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
             <Zap className="w-3.5 h-3.5 text-amber-300" />
             <span>Flashcards</span>
             {flashcards.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/20">
                 {flashcards.length}
               </span>
             )}
@@ -898,7 +920,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
             <Award className="w-3.5 h-3.5 text-emerald-300" />
             <span>Exam Quiz</span>
             {quizQuestions.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/20">
                 {quizQuestions.length}
               </span>
             )}
@@ -1335,6 +1357,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               <button
                 type="submit"
                 disabled={!chatInput.trim() || chatLoading}
+                aria-label="Send message"
+                title="Send message"
                 className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white disabled:opacity-40 transition-all shadow-md shadow-indigo-600/25"
               >
                 <Send className="w-4 h-4" />
@@ -1388,8 +1412,18 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
 
                 {/* 3D Flip Card */}
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isCardFlipped}
+                  aria-label={isCardFlipped ? 'Flashcard answer, press to show question' : 'Flashcard question, press to reveal answer'}
                   onClick={() => setIsCardFlipped(!isCardFlipped)}
-                  className="min-h-[280px] p-8 rounded-3xl bg-gradient-to-br from-slate-900 to-slate-950 border border-white/15 shadow-2xl flex flex-col justify-between cursor-pointer transition-all duration-300 hover:border-amber-500/40 relative overflow-hidden"
+                  onKeyDown={(e) => {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                      e.preventDefault();
+                      setIsCardFlipped(f => !f);
+                    }
+                  }}
+                  className="min-h-[280px] p-8 rounded-3xl bg-gradient-to-br from-slate-900 to-slate-950 border border-white/15 shadow-2xl flex flex-col justify-between cursor-pointer transition-all duration-300 hover:border-amber-500/40 focus:outline-none focus:ring-2 focus:ring-amber-500/50 relative overflow-hidden"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
@@ -1420,6 +1454,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                       }
                     }}
                     disabled={activeCardIndex === 0}
+                    aria-label="Previous flashcard"
+                    title="Previous flashcard"
                     className="p-2.5 rounded-xl bg-slate-900 border border-white/10 text-slate-300 disabled:opacity-30 transition-colors"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -1454,6 +1490,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                       }
                     }}
                     disabled={activeCardIndex === flashcards.length - 1}
+                    aria-label="Next flashcard"
+                    title="Next flashcard"
                     className="p-2.5 rounded-xl bg-slate-900 border border-white/10 text-slate-300 disabled:opacity-30 transition-colors"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -1774,7 +1812,10 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       {/* 4. MODAL: Edit Notes / Paste Custom Material */}
       {/* =================================================================== */}
       {isEditorOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setIsEditorOpen(false)}
+        >
           <div
             className="w-full max-w-xl bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4 relative"
             onClick={(e) => e.stopPropagation()}
@@ -1786,6 +1827,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
               </div>
               <button
                 onClick={() => setIsEditorOpen(false)}
+                aria-label="Close editor"
+                title="Close"
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-4 h-4" />

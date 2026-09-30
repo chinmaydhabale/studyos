@@ -247,6 +247,7 @@ export const Header: React.FC<HeaderProps> = ({
         setShowUserMenu(false);
         setShowAmbientMenu(false);
         setShowMobileNav(false);
+        setShowServerModal(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -443,7 +444,7 @@ export const Header: React.FC<HeaderProps> = ({
                                 {item.label}
                               </p>
                               {item.badge && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                                   {item.badge}
                                 </span>
                               )}
@@ -792,8 +793,14 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Server Connection Modal */}
       {showServerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-2xl space-y-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowServerModal(false)}
+        >
+          <div
+            className="w-full max-w-md bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm text-white">⚡ Server Connection Status</span>
@@ -803,6 +810,8 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <button
                 onClick={() => setShowServerModal(false)}
+                aria-label="Close server connection dialog"
+                title="Close"
                 className="text-slate-400 hover:text-white text-xs font-mono p-1"
               >
                 ✕
@@ -811,10 +820,11 @@ export const Header: React.FC<HeaderProps> = ({
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor="server-backend-url" className="block text-xs font-semibold text-slate-300 mb-1">
                   Active Backend URL:
                 </label>
                 <input
+                  id="server-backend-url"
                   type="text"
                   value={customUrlInput}
                   onChange={(e) => setCustomUrlInput(e.target.value)}

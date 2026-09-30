@@ -7,6 +7,20 @@ interface AuthModalProps {
   onClose: () => void;
 }
 
+const EXAMS = [
+  'RRB PO & Clerk (Regional Rural Bank)',
+  'IBPS PO / Clerk (Public Sector Banks)',
+  'SBI PO / Clerk (State Bank of India)',
+  'RBI Grade B / Assistant',
+  'SSC CGL / CHSL',
+  'UPSC CSE / State PCS',
+  'College Studies & Engineering'
+];
+
+// Only keep a stored exam if it's a real option, otherwise the controlled
+// <select> value won't match any <option> and silently misrepresents the choice.
+const resolveExam = (exam?: string) => (exam && EXAMS.includes(exam) ? exam : EXAMS[0]);
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose
@@ -22,7 +36,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [name, setName] = useState(currentUser.name || '');
   const [signupUsername, setSignupUsername] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
-  const [targetExam, setTargetExam] = useState(currentUser.targetExam || 'RRB PO & Clerk');
+  const [targetExam, setTargetExam] = useState(resolveExam(currentUser.targetExam));
   const [city, setCity] = useState(currentUser.city || '');
   const [selectedAvatarSeed, setSelectedAvatarSeed] = useState('Scholar');
 
@@ -47,21 +61,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
     setError(null);
     setName(currentUser.name || '');
-    setTargetExam(currentUser.targetExam || 'RRB PO & Clerk');
+    setTargetExam(resolveExam(currentUser.targetExam));
     setCity(currentUser.city || '');
   }, [isOpen, isAuthenticated, currentUser.name, currentUser.targetExam, currentUser.city]);
 
+  // Close on Escape, matching the app's other overlays.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  const exams = [
-    'RRB PO & Clerk (Regional Rural Bank)',
-    'IBPS PO / Clerk (Public Sector Banks)',
-    'SBI PO / Clerk (State Bank of India)',
-    'RBI Grade B / Assistant',
-    'SSC CGL / CHSL',
-    'UPSC CSE / State PCS',
-    'College Studies & Engineering'
-  ];
+  const exams = EXAMS;
 
   const avatarSeeds = ['Scholar', 'Priya', 'Chinmay', 'Aarav', 'Rahul', 'Sneha', 'Ananya', 'Vikram'];
 

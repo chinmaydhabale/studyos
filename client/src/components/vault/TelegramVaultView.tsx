@@ -51,6 +51,8 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
   const [uploadSubject, setUploadSubject] = useState<string>('Quantitative Aptitude');
   const [uploadDescription, setUploadDescription] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  // 0–100 upload percentage; null once the request switches to server-side processing.
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -96,6 +98,18 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
     fetchTelegramStatus();
     fetchDocuments();
   }, [roomId]);
+
+  // Close open modals on Escape (but don't interrupt an active upload).
+  useEffect(() => {
+    if (!isUploadOpen && !showConfigModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (showConfigModal) setShowConfigModal(false);
+      if (isUploadOpen && !isUploading) setIsUploadOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isUploadOpen, showConfigModal, isUploading]);
 
   // Real-time socket listener for newly uploaded documents
   useEffect(() => {
@@ -191,6 +205,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
     }
 
     setIsUploading(true);
+    setUploadProgress(0);
     try {
       const formData = new FormData();
       formData.append('file', uploadFile);
@@ -201,16 +216,29 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
       formData.append('uploaderName', currentUser.name || currentUser.username || 'Student');
       formData.append('description', uploadDescription.trim());
 
-      const res = await fetch(`${API_BASE_URL}/api/telegram/upload`, {
-        method: 'POST',
-        body: formData
+      // XHR (not fetch) so we can report real upload progress to the user.
+      const data = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_BASE_URL}/api/telegram/upload`);
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            // Cap the bar at 99% until the server confirms — the last stretch is
+            // Telegram-side processing, not the browser upload.
+            setUploadProgress(Math.min(99, pct));
+          }
+        };
+        xhr.onload = () => {
+          let parsed: any = {};
+          try { parsed = JSON.parse(xhr.responseText); } catch { /* non-JSON */ }
+          if (xhr.status >= 200 && xhr.status < 300) resolve(parsed);
+          else reject(new Error(parsed.error || 'Failed to upload document'));
+        };
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.send(formData);
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to upload document');
-      }
-
+      setUploadProgress(100);
       addToast('Uploaded to Telegram!', `"${uploadTitle}" is now stored in Telegram Cloud.`, 'success');
       setDocuments(prev => [data.document, ...prev]);
       setIsUploadOpen(false);
@@ -221,6 +249,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
       addToast('Upload Failed', err.message || 'Could not upload to Telegram', 'alert');
     } finally {
       setIsUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -466,13 +495,18 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
 
       {/* UPLOAD DOCUMENT MODAL */}
       {isUploadOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div 
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => { if (!isUploading) setIsUploadOpen(false); }}
+        >
+          <div
             className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => setIsUploadOpen(false)}
+              aria-label="Close upload dialog"
+              title="Close"
               className="absolute top-4 right-4 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
             >
               <X className="w-4 h-4" />
@@ -573,6 +607,14 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
                 />
               </div>
 
+              {isUploading && uploadProgress !== null && (
+                <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-200"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={isUploading || !uploadFile}
@@ -581,7 +623,11 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
                 {isUploading ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Uploading to Telegram Cloud...</span>
+                    <span>
+                      {uploadProgress !== null && uploadProgress < 100
+                        ? `Uploading… ${uploadProgress}%`
+                        : 'Finalizing on Telegram Cloud…'}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -597,13 +643,18 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
 
       {/* TELEGRAM CONFIGURATION MODAL */}
       {showConfigModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div 
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setShowConfigModal(false)}
+        >
+          <div
             className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => setShowConfigModal(false)}
+              aria-label="Close configuration dialog"
+              title="Close"
               className="absolute top-4 right-4 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
             >
               <X className="w-4 h-4" />

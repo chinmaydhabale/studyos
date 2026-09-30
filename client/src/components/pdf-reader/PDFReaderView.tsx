@@ -80,6 +80,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
   const [displayPage, setDisplayPage] = useState<number>(1);
   const previousDisplayPageRef = useRef(displayPage);
+  // Local draft of the page-number input so typing "25" doesn't navigate to 2 then 25.
+  const [pageInputValue, setPageInputValue] = useState<string>('1');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +150,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   documentsRef.current = documents;
   activePdfDocRef.current = activePdfDoc;
   displayPageRef.current = displayPage;
+
+  // Keep the page-input draft in sync when the page changes from scroll/follow/etc.
+  useEffect(() => {
+    setPageInputValue(String(displayPage));
+  }, [displayPage]);
 
   // Revoke the final blob URL exactly once, on unmount only.
   useEffect(() => {
@@ -439,6 +446,11 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     const targetPage = numPages > 0 ? Math.min(page, numPages) : page;
     requestPageScroll(targetPage);
     sendPdfPageChange(targetPage);
+    // Any manual navigation drops the user out of live-follow modes so the
+    // presenter/read-along effect doesn't immediately snap the page back.
+    if (isFollowingPresenter) {
+      setIsFollowingPresenter(false);
+    }
     if (readAlongPeerId) {
       setReadAlongPeerId(null);
       addToast('Independent Reading', 'Navigated manually — exited follow mode.', 'info');
@@ -526,7 +538,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       });
       return next;
     });
-  }, [pdfScale]);
+
+    // Page heights change on zoom, so the old scroll offset now points at a
+    // different page. Re-anchor to the page the reader was on.
+    const anchorPage = displayPageRef.current;
+    requestAnimationFrame(() => requestPageScroll(anchorPage));
+  }, [pdfScale, requestPageScroll]);
 
   // Navigation can happen before loading finishes or arrive from a peer.
   // Clamp it once the page count is known so the reader and room stay in range.
@@ -736,7 +753,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           </div>
 
           {/* Page Navigation (syncs to the room while presenting) */}
-          {streamUrl && (
+          {streamUrl && !pdfError && (
             <div
               className="hidden sm:flex items-center gap-0.5 ml-2 bg-slate-950 border border-white/10 rounded-xl px-1 py-0.5 shrink-0"
               title={pdfPresentation?.presenterId === currentUser.id ? 'Page — synced to all viewers' : 'Page number'}
@@ -745,27 +762,38 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                 onClick={() => goToPage(displayPage - 1)}
                 disabled={numPages === 0 || displayPage <= 1}
                 className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                aria-label="Previous page"
                 title="Previous Page"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
               <input
-                type="number"
-                min={1}
-                max={numPages || undefined}
+                type="text"
+                inputMode="numeric"
                 disabled={numPages === 0}
-                value={displayPage}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(v)) goToPage(v);
+                value={pageInputValue}
+                onChange={(e) => setPageInputValue(e.target.value.replace(/[^0-9]/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = parseInt(pageInputValue, 10);
+                    if (!Number.isNaN(v)) goToPage(v);
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                onBlur={() => {
+                  const v = parseInt(pageInputValue, 10);
+                  if (!Number.isNaN(v) && v >= 1) goToPage(v);
+                  else setPageInputValue(String(displayPage));
                 }}
                 className="w-10 bg-transparent text-center text-xs font-bold text-white focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label="Page number"
                 title="Page Number"
               />
               <button
                 onClick={() => goToPage(displayPage + 1)}
                 disabled={numPages === 0 || displayPage >= numPages}
                 className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                aria-label="Next page"
                 title="Next Page"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -1218,6 +1246,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               </div>
               <button
                 onClick={() => setIsLibraryOpen(false)}
+                aria-label="Close library"
+                title="Close library"
                 className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" />

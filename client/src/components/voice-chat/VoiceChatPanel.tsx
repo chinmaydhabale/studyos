@@ -228,7 +228,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
                 {msg.videoTimestamp !== undefined && (
                   <button
                     onClick={() => sendVideoSeek(msg.videoTimestamp!)}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 text-[10px] font-mono font-medium border border-indigo-500/30 transition-colors"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 text-[10px] font-mono font-medium border border-indigo-500/30 transition-colors"
                     title="Click to jump video to this timestamp for both students"
                   >
                     <Clock className="w-2.5 h-2.5" />
@@ -240,7 +240,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
                 {msg.pdfPage !== undefined && (
                   <button
                     onClick={() => onJumpPdfPage?.(msg.pdfPage!)}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 text-[10px] font-mono font-bold border border-cyan-500/30 transition-colors"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 text-[10px] font-mono font-bold border border-cyan-500/30 transition-colors"
                     title={`Click to jump PDF to Page ${msg.pdfPage}`}
                   >
                     <BookOpen className="w-2.5 h-2.5" />

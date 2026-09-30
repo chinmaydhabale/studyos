@@ -29,6 +29,8 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
   const [voicePassword, setVoicePassword] = useState('study123');
 
   const [loading, setLoading] = useState(false);
+  // Which quick-join row is currently in flight, so only that button spins.
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -55,13 +57,25 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
     }
   }, [isOpen]);
 
+  // Close on Escape when the modal is dismissible.
+  useEffect(() => {
+    if (!isOpen || !onClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleQuickJoin = async (targetId: string) => {
     setError(null);
     setLoading(true);
+    setJoiningRoomId(targetId);
     const result = await joinGroup(targetId);
     setLoading(false);
+    setJoiningRoomId(null);
     if (!result.success) {
       setError(result.message || `Failed to enter group ${targetId}`);
     } else {
@@ -116,14 +130,18 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div 
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+      onClick={() => onClose?.()}
+    >
+      <div
         className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
         onClick={(e) => e.stopPropagation()}
       >
         {onClose && (
           <button
             onClick={onClose}
+            aria-label="Close"
             className="absolute top-4 right-4 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
             title="Close"
           >
@@ -285,8 +303,17 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
                             onClick={() => handleQuickJoin(room.roomId)}
                             className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-cyan-600/20 transition-all disabled:opacity-50"
                           >
-                            <span>Join</span>
-                            <ArrowRight className="w-3 h-3" />
+                            {joiningRoomId === room.roomId ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Joining…</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>Join</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
@@ -314,7 +341,7 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
                   required
                   placeholder="e.g. STUDY-ROOM-ALPHA or RRB-7225"
                   value={inputRoomId}
-                  onChange={(e) => setInputRoomId(e.target.value.toUpperCase().trim())}
+                  onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
                   className="w-full bg-slate-950/80 border border-white/10 rounded-2xl pl-9 pr-3.5 py-3 text-white font-mono text-sm tracking-wider uppercase placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
                 />
               </div>

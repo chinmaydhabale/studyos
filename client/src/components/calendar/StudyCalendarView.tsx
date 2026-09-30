@@ -307,7 +307,7 @@ export const StudyCalendarView: React.FC = () => {
                       <span>•</span>
                       <span>Target: {task.targetDate}</span>
                       {task.isAiGenerated && (
-                        <span className="text-indigo-400 font-semibold bg-indigo-500/10 px-1.5 py-0.2 rounded">
+                        <span className="text-indigo-400 font-semibold bg-indigo-500/10 px-1.5 py-0.5 rounded">
                           AI Scheduled
                         </span>
                       )}

@@ -119,12 +119,19 @@ export const MockArenaView: React.FC<MockArenaViewProps> = ({ onAskAiDoubt }) =>
   const localPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // Auto-switch to Stream tab when a peer starts sharing
+  // Auto-switch to the Stream tab (and connect) when a peer STARTS sharing.
+  // A ref tracks the previous presenter so we only react to the transition, not
+  // on every re-render while a share is already ongoing.
+  const prevSharePresenterRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeShare && activeShare.isActive && activeShare.presenterId !== currentUser.id) {
-      // Prompt user or switch tab
+    const activePresenter = activeShare && activeShare.isActive ? activeShare.presenterId : null;
+    const isPeerShare = activePresenter && activePresenter !== currentUser.id;
+    if (isPeerShare && prevSharePresenterRef.current !== activePresenter) {
+      setActiveSubTab('stream');
+      joinStream();
     }
-  }, [activeShare, currentUser.id]);
+    prevSharePresenterRef.current = activePresenter;
+  }, [activeShare, currentUser.id, joinStream]);
 
   // Attach remote stream to video element
   useEffect(() => {
@@ -339,9 +346,11 @@ export const MockArenaView: React.FC<MockArenaViewProps> = ({ onAskAiDoubt }) =>
                 ? 'bg-indigo-600 text-white border-indigo-500'
                 : 'bg-slate-800 text-slate-400 border-white/10 hover:text-white'
             }`}
-            title="Toggle Split View (Web + StudyOS Sidekick)"
+            aria-label={isSplitView ? 'Exit split view' : 'Enter split view'}
+            aria-pressed={isSplitView}
+            title={isSplitView ? 'Exit Split View (full-width web)' : 'Enter Split View (Web + StudyOS Sidekick)'}
           >
-            <Maximize2 className="w-3.5 h-3.5" />
+            {isSplitView ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
@@ -367,7 +376,7 @@ export const MockArenaView: React.FC<MockArenaViewProps> = ({ onAskAiDoubt }) =>
                   }`}
                 >
                   <span>{preset.name}</span>
-                  <span className="text-[9px] opacity-70 px-1 py-0.2 rounded bg-black/30">
+                  <span className="text-[9px] opacity-70 px-1 py-0.5 rounded bg-black/30">
                     {preset.tag}
                   </span>
                 </button>
@@ -462,6 +471,21 @@ export const MockArenaView: React.FC<MockArenaViewProps> = ({ onAskAiDoubt }) =>
                     Stop Sharing (Make Private)
                   </button>
                 </div>
+              </div>
+            ) : isSomeoneElseStreaming ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">
+                <Radio className="w-16 h-16 mb-4 text-amber-500 animate-pulse" />
+                <h3 className="text-lg font-bold text-white">Connecting to {activeShare?.presenterName}'s Live Stream…</h3>
+                <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4">
+                  Hang tight — establishing the live connection to {activeShare?.platformName || 'the mock test'}.
+                </p>
+                <button
+                  onClick={joinStream}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold shadow-lg transition-all"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Retry Connection</span>
+                </button>
               </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">
