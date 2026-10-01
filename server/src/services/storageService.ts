@@ -380,7 +380,9 @@ export class StorageService {
     this.groups.clear();
     this.documents.clear();
     this.userCredentials.clear();
+    this.mockTestRecords = [];
     this.ensureDefaultGroup();
+    this.saveAllToDisk();
 
     if (!isDbConnected()) return;
     try {
@@ -702,13 +704,20 @@ export class StorageService {
       throw new Error('Username cannot be blank.');
     }
 
-    // Resolve username or display name (e.g. username 'pari_01' has name 'shivanshi')
+    // Resolve username or display name (prioritizing unique username)
     let resolvedUsername = cleanInput;
-    for (const u of this.users.values()) {
-      if ((u.username && u.username.toLowerCase() === cleanInput) ||
-          (u.name && u.name.trim().toLowerCase() === cleanInput && u.username)) {
-        resolvedUsername = u.username.toLowerCase();
-        break;
+    const matchingUsersByName = Array.from(this.users.values()).filter(
+      u => Boolean(u.name && u.name.trim().toLowerCase() === cleanInput && u.username)
+    );
+    const singleMatchedUser = matchingUsersByName[0];
+    if (matchingUsersByName.length === 1 && singleMatchedUser?.username) {
+      resolvedUsername = singleMatchedUser.username.toLowerCase();
+    } else if (matchingUsersByName.length > 1) {
+      const exactUsernameUser = this.getUserByUsername(cleanInput);
+      if (exactUsernameUser?.username) {
+        resolvedUsername = exactUsernameUser.username.toLowerCase();
+      } else {
+        throw new Error('Multiple accounts found with this display name. Please log in using your unique username.');
       }
     }
 
@@ -717,14 +726,24 @@ export class StorageService {
     let dbUser: any = null;
     if (isDbConnected()) {
       try {
+        // Priority 1: Exact match on username
         dbUser = await UserModel.findOne({
-          $or: [
-            { username: cleanInput },
-            { username: resolvedUsername },
-            { name: { $regex: new RegExp(`^${escapeRegex(cleanInput)}$`, 'i') } }
-          ]
+          username: { $in: [cleanInput, resolvedUsername] }
         });
+
+        // Priority 2: If no exact username match, match by name only if unique
+        if (!dbUser) {
+          const matchingByName = await UserModel.find({
+            name: { $regex: new RegExp(`^${escapeRegex(cleanInput)}$`, 'i') }
+          });
+          if (matchingByName.length === 1) {
+            dbUser = matchingByName[0];
+          } else if (matchingByName.length > 1) {
+            throw new Error('Multiple accounts found with this display name. Please log in using your unique username.');
+          }
+        }
       } catch (err: any) {
+        if (err.message?.includes('Multiple accounts')) throw err;
         console.warn('MongoDB authentication lookup failed, falling back to disk cache:', err.message);
       }
     }
@@ -764,11 +783,14 @@ export class StorageService {
 
     let inMemoryUser = this.getUserByUsername(resolvedUsername) || this.getUserByUsername(cleanInput);
     if (!inMemoryUser) {
-      for (const u of this.users.values()) {
-        if (u.name && u.name.trim().toLowerCase() === cleanInput) {
-          inMemoryUser = u;
-          break;
-        }
+      const matchedByName = Array.from(this.users.values()).filter(
+        u => u.name && u.name.trim().toLowerCase() === cleanInput
+      );
+      const singleInMemory = matchedByName[0];
+      if (matchedByName.length === 1 && singleInMemory) {
+        inMemoryUser = singleInMemory;
+      } else if (matchedByName.length > 1) {
+        throw new Error('Multiple accounts found with this display name. Please log in using your unique username.');
       }
     }
 
@@ -1291,6 +1313,10 @@ export class StorageService {
     if (!userId) return this.tasks;
     // Legacy tasks created before per-user isolation stay visible to everyone.
     return this.tasks.filter(t => !t.userId || t.userId === userId);
+  }
+
+  public getTask(id: string): StudyTask | undefined {
+    return this.tasks.find(t => t.id === id);
   }
 
   public addTask(task: StudyTask): StudyTask {

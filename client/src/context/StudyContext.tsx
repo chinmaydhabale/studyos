@@ -92,24 +92,21 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addXp = useCallback((amount: number, _reason?: string) => {
     if (!Number.isFinite(amount) || amount <= 0) return;
     const earnedCoins = Math.floor(amount / 5);
-    setXp(prevXp => {
-      const nextXp = prevXp + amount;
-      setCoins(prevCoins => {
-        const nextCoins = prevCoins + earnedCoins;
-        setStreak(prevStreak => {
-          const nextStreak = prevStreak === 0 ? 1 : prevStreak;
-          updateUserProfile({
-            xp: nextXp,
-            coins: nextCoins,
-            streak: nextStreak
-          });
-          return nextStreak;
-        });
-        return nextCoins;
-      });
-      return nextXp;
+
+    setXp(prevXp => prevXp + amount);
+    setCoins(prevCoins => prevCoins + earnedCoins);
+    setStreak(prevStreak => (prevStreak === 0 ? 1 : prevStreak));
+
+    const nextXp = (currentUser?.xp ?? 0) + amount;
+    const nextCoins = (currentUser?.coins ?? 0) + earnedCoins;
+    const nextStreak = (currentUser?.streak ?? 0) === 0 ? 1 : (currentUser?.streak ?? 1);
+
+    updateUserProfile({
+      xp: nextXp,
+      coins: nextCoins,
+      streak: nextStreak
     });
-  }, [updateUserProfile]);
+  }, [currentUser?.xp, currentUser?.coins, currentUser?.streak, updateUserProfile]);
 
   useEffect(() => {
     if (level > celebratedLevelRef.current) {

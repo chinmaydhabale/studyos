@@ -239,7 +239,37 @@ app.post('/api/telegram/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Room ID and Title are required' });
     }
 
-    const caption = `📚 ${title}\n🏷️ Subject: ${subject || 'Quantitative Aptitude'}\n👤 Student: ${uploaderName || 'Anonymous'}\n🏛️ Group ID: ${roomId.toUpperCase()}`;
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const group = await storage.getStudyGroup(cleanRoomId);
+    if (!group && cleanRoomId !== 'SAMPLE-LIBRARY') {
+      return res.status(404).json({
+        error: `Study group "${cleanRoomId}" does not exist. Please create or join a valid group first.`
+      });
+    }
+
+    // Whitelist safe document & study asset MIME types and extensions
+    const allowedMimeTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'image/jpeg',
+      'image/png',
+      'image/webp'
+    ];
+    const isAllowedMime = allowedMimeTypes.includes((file.mimetype || '').toLowerCase());
+    const isAllowedExt = /\.(pdf|docx?|xlsx?|pptx?|txt|jpe?g|png|webp)$/i.test(file.originalname);
+    if (!isAllowedMime && !isAllowedExt) {
+      return res.status(400).json({
+        error: 'Invalid file type. Only PDFs, Word documents, spreadsheets, presentations, and study notes/images are permitted.'
+      });
+    }
+
+    const caption = `📚 ${title}\n🏷️ Subject: ${subject || 'Quantitative Aptitude'}\n👤 Student: ${uploaderName || 'Anonymous'}\n🏛️ Group ID: ${cleanRoomId}`;
     const telegramRes = await telegramService.uploadDocument(
       file.buffer,
       file.originalname,
@@ -353,6 +383,17 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
     res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    if (response.body) {
+      const { Readable } = await import('stream');
+      // @ts-ignore
+      const nodeStream = Readable.fromWeb(response.body);
+      return nodeStream.pipe(res);
+    }
     const arrayBuffer = await response.arrayBuffer();
     res.send(Buffer.from(arrayBuffer));
   } catch (err: any) {
@@ -365,6 +406,17 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
     res.send(fallbackPdf);
   }
 });
+
+// HTML escape helper to prevent reflected XSS in dynamically injected templates
+function escapeHtml(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // --- SSRF & Private IP Protection for Web Proxy ---
 function isPrivateIp(ip: string): boolean {
@@ -440,23 +492,35 @@ app.get('/api/proxy/web', async (req, res) => {
     res.removeHeader('Content-Security-Policy-Report-Only');
     res.setHeader('Content-Type', rawContentType);
 
+    const safeUrl = escapeHtml(targetUrl);
+
     if (rawContentType.includes('text/html')) {
+      const contentLength = Number(response.headers.get('content-length') || 0);
+      if (contentLength > 15 * 1024 * 1024) {
+        return res.status(413).send('Content too large to proxy (exceeds 15MB limit).');
+      }
+
       let html = await response.text();
       // Inject <base href="..."> into <head> so relative assets load properly
-      const baseTag = `<base href="${targetUrl}">`;
-      if (html.includes('<head>')) {
-        html = html.replace('<head>', `<head>${baseTag}`);
-      } else if (html.includes('<HEAD>')) {
-        html = html.replace('<HEAD>', `<HEAD>${baseTag}`);
+      const baseTag = `<base href="${safeUrl}">`;
+      if (/<head(\s[^>]*)?>/i.test(html)) {
+        html = html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${baseTag}`);
       } else {
         html = baseTag + html;
       }
       return res.send(html);
     } else {
+      if (response.body) {
+        const { Readable } = await import('stream');
+        // @ts-ignore
+        const nodeStream = Readable.fromWeb(response.body);
+        return nodeStream.pipe(res);
+      }
       const arrayBuffer = await response.arrayBuffer();
       return res.send(Buffer.from(arrayBuffer));
     }
   } catch (err: any) {
+    const safeUrl = escapeHtml(targetUrl);
     return res.status(502).send(`
       <!DOCTYPE html>
       <html>
@@ -467,9 +531,9 @@ app.get('/api/proxy/web', async (req, res) => {
           <div class="card">
             <h3>⚠️ Secured Study Portal</h3>
             <p>This exam portal requires full browser authentication or protected session cookies:</p>
-            <div class="url">${targetUrl}</div>
+            <div class="url">${safeUrl}</div>
             <p>You can launch it in a dedicated companion window with 1 click while your StudyOS Mock Timer & Live Screen Share stay active!</p>
-            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn">Launch in Dual Companion Window ↗</a>
+            <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn">Launch in Dual Companion Window ↗</a>
           </div>
         </body>
       </html>
@@ -534,13 +598,15 @@ app.post('/api/mock/record', (req, res) => {
     timeTakenMinutes: validTimeTaken
   });
 
-  // Notify room peers with a cheerful toast
-  const roomId = (req.body.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
-  io.to(roomId).emit('notification:toast', {
-    title: '🏆 Mock Test Completed!',
-    message: `${record.userName} completed ${record.testTitle} on ${platform}: Score ${record.score}/${record.totalMarks} (${record.accuracy}% Accuracy)!`,
-    type: 'success'
-  });
+  // Notify room peers with a cheerful toast if test was taken within a specific study group room
+  const targetRoom = req.body.roomId ? String(req.body.roomId).trim().toUpperCase() : null;
+  if (targetRoom) {
+    io.to(targetRoom).emit('notification:toast', {
+      title: '🏆 Mock Test Completed!',
+      message: `${record.userName} completed ${record.testTitle} on ${platform}: Score ${record.score}/${record.totalMarks} (${record.accuracy}% Accuracy)!`,
+      type: 'success'
+    });
+  }
 
   // Also broadcast user profile update so XP/badges update in real-time
   const updatedUser = storage.getUser(userId);
@@ -602,9 +668,13 @@ app.get('/api/tasks', (req, res) => {
 });
 
 app.post('/api/tasks', (req, res) => {
+  const userId = req.body?.userId;
+  if (!userId || typeof userId !== 'string' || !userId.trim()) {
+    return res.status(400).json({ error: 'Valid userId is required to create a task' });
+  }
   const newTask = storage.addTask({
     id: `task-${Date.now()}`,
-    userId: req.body.userId || '',
+    userId: userId.trim(),
     title: req.body.title || 'Untitled Study Task',
     subject: req.body.subject || 'General',
     durationMinutes: req.body.durationMinutes || 30,
@@ -618,13 +688,26 @@ app.post('/api/tasks', (req, res) => {
 
 app.post('/api/tasks/:id/toggle', (req, res) => {
   const userId = req.body?.userId;
+  if (!userId || typeof userId !== 'string' || !userId.trim()) {
+    return res.status(400).json({ error: 'User ID is required to toggle task' });
+  }
+
+  const cleanUserId = userId.trim();
+  const task = storage.getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Ownership verification: user can only toggle their own task
+  if (task.userId && task.userId !== cleanUserId) {
+    return res.status(403).json({ error: 'Forbidden: You can only toggle your own tasks' });
+  }
+
   const updated = storage.toggleTask(req.params.id, {
-    userId,
+    userId: cleanUserId,
     userName: req.body?.userName
   });
   if (!updated) return res.status(404).json({ error: 'Task not found' });
-  if (userId) {
-    const user = storage.getUser(userId);
+  if (cleanUserId) {
+    const user = storage.getUser(cleanUserId);
     if (user) {
       io.emit('user:profile_updated', user);
     }
