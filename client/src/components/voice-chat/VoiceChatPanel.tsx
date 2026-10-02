@@ -159,7 +159,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
       </div>
 
       {/* Active Study Buddies Presence Bar with Live Situations */}
-      <div className="px-3 py-2 bg-slate-950/40 border-b border-white/5 flex items-center gap-3 overflow-x-auto shrink-0">
+      <div className="px-3 py-2 bg-slate-950/40 border-b border-white/5 flex items-center gap-3 overflow-x-auto shrink-0 no-scrollbar">
         <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">In Room:</span>
         {peers.map((peer) => (
           <div key={peer.userId} className="flex items-center gap-1.5 shrink-0">
@@ -190,7 +190,7 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
       </div>
 
       {/* Chat Messages Stream */}
-      <div ref={messagesRef} className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+      <div ref={messagesRef} className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 custom-scrollbar">
         {chatMessages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
             <Bot className="w-8 h-8 text-indigo-400/50 mb-2" />

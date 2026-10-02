@@ -106,7 +106,7 @@ export const SharedNotesEditor: React.FC = () => {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)]">
+    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col flex-1 min-h-0 h-full overflow-hidden">
       
       {/* Top Header & Toolbar */}
       <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-3 mb-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
@@ -233,7 +233,7 @@ export const SharedNotesEditor: React.FC = () => {
               value={content}
               onChange={handleChange}
               placeholder="# Start writing collaborative notes with your study partner..."
-              className="flex-1 w-full p-4 bg-transparent text-slate-100 text-xs md:text-sm font-mono leading-relaxed resize-none focus:outline-none placeholder:text-slate-600"
+              className="flex-1 w-full p-4 bg-transparent text-slate-100 text-xs md:text-sm font-mono leading-relaxed resize-none focus:outline-none placeholder:text-slate-600 custom-scrollbar"
             />
           </div>
         )}
@@ -246,7 +246,7 @@ export const SharedNotesEditor: React.FC = () => {
               <span className="text-[10px] text-emerald-400">Synchronized View</span>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-5 text-slate-200 text-xs md:text-sm leading-relaxed space-y-1">
+            <div className="flex-1 overflow-y-auto p-5 text-slate-200 text-xs md:text-sm leading-relaxed space-y-1 custom-scrollbar">
               {content.trim() ? (
                 content.split('\n').map((line, idx) => {
                   if (line.startsWith('### ')) {

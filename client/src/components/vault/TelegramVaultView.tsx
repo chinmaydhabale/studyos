@@ -286,7 +286,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
   });
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#090d16] text-slate-100 p-4 max-w-7xl mx-auto w-full">
+    <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[#090d16] text-slate-100 p-4 max-w-7xl mx-auto w-full custom-scrollbar">
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/90 border border-white/10 rounded-3xl p-5 shadow-2xl mb-5">
@@ -500,7 +500,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
           onClick={() => { if (!isUploading) setIsUploadOpen(false); }}
         >
           <div
-            className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
+            className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col gap-4 relative"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -648,7 +648,7 @@ export const TelegramVaultView: React.FC<TelegramVaultViewProps> = ({ onNavigate
           onClick={() => setShowConfigModal(false)}
         >
           <div
-            className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl overflow-hidden flex flex-col gap-4 relative"
+            className="w-full max-w-lg bg-slate-900 border border-white/15 rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col gap-4 relative"
             onClick={(e) => e.stopPropagation()}
           >
             <button

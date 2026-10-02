@@ -66,15 +66,17 @@ const MainLayout: React.FC = () => {
         {/* Tab 1: Synchronized Co-Study Theater + Quick Live Situation Bar */}
         {activeTab === 'video' && (
           <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
-            <div className="max-w-7xl mx-auto w-full px-4 pt-3 pb-1">
+            <div className="max-w-7xl mx-auto w-full px-4 pt-3 pb-1 shrink-0">
               <LiveSituationTracker onNavigateToTab={setActiveTab} />
             </div>
-            <SyncTheater
-              onAskAiDoubtAtTimestamp={(timestamp) => {
-                setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
-                setActiveTab('ai-coach');
-              }}
-            />
+            <div className="flex-1 min-h-0 flex flex-col">
+              <SyncTheater
+                onAskAiDoubtAtTimestamp={(timestamp) => {
+                  setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
+                  setActiveTab('ai-coach');
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -108,13 +110,13 @@ const MainLayout: React.FC = () => {
           <div className="w-full max-w-7xl mx-auto p-3 flex flex-col lg:flex-row gap-3 h-full overflow-hidden">
             
             {/* Left 50%: Video Player */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col h-full overflow-hidden">
               <SyncTheater />
             </div>
 
             {/* Right 50%: Toggle between Live Situation Tracker, Whiteboard, or Notes */}
-            <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
-              <div className="p-2.5 border-b border-white/10 bg-slate-950/60 flex items-center justify-between">
+            <div className="flex-1 min-h-0 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
+              <div className="p-2.5 border-b border-white/10 bg-slate-950/60 flex items-center justify-between shrink-0">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                   Co-Study Workspace
                 </span>
@@ -150,8 +152,12 @@ const MainLayout: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2">
-                {splitRightTool === 'tracker' && <LiveSituationTracker onNavigateToTab={setActiveTab} />}
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden p-2">
+                {splitRightTool === 'tracker' && (
+                  <div className="flex-1 overflow-y-auto">
+                    <LiveSituationTracker onNavigateToTab={setActiveTab} />
+                  </div>
+                )}
                 {splitRightTool === 'whiteboard' && <WhiteboardCanvas />}
                 {splitRightTool === 'notes' && <SharedNotesEditor />}
               </div>
@@ -169,47 +175,39 @@ const MainLayout: React.FC = () => {
 
         {/* Tab 4: Fullscreen Shared Whiteboard */}
         {activeTab === 'whiteboard' && (
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col h-full">
             <WhiteboardCanvas />
           </div>
         )}
 
         {/* Tab 5: Collaborative Notes */}
         {activeTab === 'notes' && (
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col h-full">
             <SharedNotesEditor />
           </div>
         )}
 
         {/* Tab 6: Personal AI Study Coach & Teacher */}
         {activeTab === 'ai-coach' && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <AICoachHub
-              initialPrompt={aiCoachPresetPrompt}
-              onNavigateToCalendar={() => setActiveTab('calendar')}
-            />
-          </div>
+          <AICoachHub
+            initialPrompt={aiCoachPresetPrompt}
+            onNavigateToCalendar={() => setActiveTab('calendar')}
+          />
         )}
 
         {/* Tab 7: Productivity Analytics */}
         {activeTab === 'analytics' && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <AnalyticsDashboard />
-          </div>
+          <AnalyticsDashboard />
         )}
 
         {/* Tab 8: Study Calendar Heatmap */}
         {activeTab === 'calendar' && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <StudyCalendarView />
-          </div>
+          <StudyCalendarView />
         )}
 
         {/* Tab 9: Multi-Tier Leaderboards */}
         {activeTab === 'leaderboards' && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <LeaderboardsView />
-          </div>
+          <LeaderboardsView />
         )}
 
       </main>

@@ -632,7 +632,7 @@ export const WebNotesView: React.FC<WebNotesViewProps> = ({ onAskAiDoubt }) => {
             </div>
           ) : (
             /* Mode 2: Clean Distraction-Free Reader Mode */
-            <div className={`flex-1 overflow-y-auto p-6 md:p-10 transition-colors ${
+            <div className={`flex-1 overflow-y-auto p-6 md:p-10 transition-colors custom-scrollbar ${
               readerTheme === 'slate' ? 'bg-slate-950 text-slate-100' :
               readerTheme === 'sepia' ? 'bg-[#1c1917] text-[#fed7aa]' :
               'bg-black text-slate-200'
@@ -1180,7 +1180,7 @@ export const WebNotesView: React.FC<WebNotesViewProps> = ({ onAskAiDoubt }) => {
 
             {/* Sidebar Tab 4: AI Study Coach Doubt Solver */}
             {sidebarTab === 'ai' && (
-              <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
+              <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto custom-scrollbar">
                 <div className="bg-gradient-to-br from-indigo-950/40 via-slate-900 to-cyan-950/40 border border-cyan-500/20 rounded-2xl p-4 flex flex-col gap-2">
                   <div className="flex items-center gap-2 text-sm font-bold text-cyan-300">
                     <Sparkles className="w-4 h-4 text-cyan-400" />

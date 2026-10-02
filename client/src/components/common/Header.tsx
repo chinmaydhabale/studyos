@@ -686,7 +686,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Enhanced Grouped Mobile Navigation Drawer */}
       {showMobileNav && (
-        <div className="md:hidden pt-3 pb-3 border-t border-white/10 mt-2 max-w-7xl mx-auto animate-in slide-in-from-top-2 duration-150 space-y-3">
+        <div className="md:hidden pt-3 pb-3 border-t border-white/10 mt-2 max-w-7xl mx-auto animate-in slide-in-from-top-2 duration-150 space-y-3 max-h-[calc(100vh-4.5rem)] overflow-y-auto custom-scrollbar">
           
           {/* AI Coach Quick Hero Banner on Mobile */}
           <button

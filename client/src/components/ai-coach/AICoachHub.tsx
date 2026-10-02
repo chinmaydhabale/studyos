@@ -235,7 +235,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
   // ----------------------------------------------------
   // 3. Flashcards State
@@ -263,9 +263,14 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
   const [studyPlan, setStudyPlan] = useState<StudyPlanResult | null>(null);
   const [planGoal, setPlanGoal] = useState('');
 
-  // Auto-scroll chat
+  // Auto-scroll chat scoped to container, never scrolling the outer window
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
   }, [chatMessages, chatLoading]);
 
   // Handle external initialPrompt (from Video or PDF Reader)
@@ -439,11 +444,18 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     const turn = audioDiscussion.turns[index];
     const isAlex = turn.speaker === 'Alex';
 
-    // Auto-scroll transcript to active turn
+    // Auto-scroll transcript to active turn strictly within transcript container
     setTimeout(() => {
       const turnEl = document.getElementById(`turn-${index}`);
       if (turnEl && transcriptContainerRef.current) {
-        turnEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const container = transcriptContainerRef.current;
+        const containerRect = container.getBoundingClientRect();
+        const turnRect = turnEl.getBoundingClientRect();
+        const offsetTop = turnRect.top - containerRect.top + container.scrollTop;
+        container.scrollTo({
+          top: Math.max(0, offsetTop - 20),
+          behavior: 'smooth'
+        });
       }
     }, 50);
 
@@ -969,7 +981,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       {/* =================================================================== */}
       {/* 3. MAIN WORKSPACE VIEWPORT */}
       {/* =================================================================== */}
-      <main className="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
+      <main className={`flex-1 min-h-0 p-4 sm:p-6 ${activeTab === 'chat' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto custom-scrollbar'}`}>
 
         {/* ================================================================= */}
         {/* TAB 1: 🎙️ AUDIO DEEP DIVE / PODCAST */}
@@ -1269,9 +1281,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         {/* TAB 2: 💬 DOUBT SOLVER & INTERACTIVE CHAT */}
         {/* ================================================================= */}
         {activeTab === 'chat' && (
-          <div className="max-w-4xl mx-auto h-full flex flex-col gap-4 animate-in fade-in duration-200">
+          <div className="max-w-4xl mx-auto w-full flex-1 min-h-0 flex flex-col gap-4 animate-in fade-in duration-200">
             {/* Messages Scroll Area */}
-            <div className="flex-1 min-h-[400px] max-h-[560px] overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
               {chatMessages.map((msg) => {
                 const isUser = msg.role === 'user';
                 return (
@@ -1336,7 +1348,6 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                   <span>AI Coach analyzing source material & preparing solution...</span>
                 </div>
               )}
-              <div ref={chatBottomRef} />
             </div>
 
             {/* Input Form */}

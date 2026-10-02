@@ -148,7 +148,7 @@ export const StudyCalendarView: React.FC = () => {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)] overflow-y-auto space-y-4">
+    <div className="w-full max-w-7xl mx-auto p-4 flex-1 min-h-0 flex flex-col h-full overflow-y-auto space-y-4 custom-scrollbar">
       
       {/* Top Banner */}
       <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">
@@ -193,7 +193,7 @@ export const StudyCalendarView: React.FC = () => {
         </div>
 
         {/* Heatmap Grid */}
-        <div className="overflow-x-auto pb-2">
+        <div className="overflow-x-auto pb-2 custom-scrollbar">
           <div className="grid grid-flow-col grid-rows-7 gap-1.5 min-w-[700px]">
             {timelineDays.map((record) => {
               const isSelected = selectedDay?.date === record.date;

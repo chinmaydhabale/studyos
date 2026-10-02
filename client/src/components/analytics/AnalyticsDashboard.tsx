@@ -45,7 +45,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const distributedHours = subjectDistribution.reduce((sum, s) => sum + (s?.hours || 0), 0);
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)] overflow-y-auto space-y-4">
+    <div className="w-full max-w-7xl mx-auto p-4 flex-1 min-h-0 flex flex-col h-full overflow-y-auto space-y-4 custom-scrollbar">
       
       {/* Top Banner */}
       <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">

@@ -566,7 +566,14 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     const el = pageElsRef.current.get(target);
     if (!el) return;
     pendingScrollPageRef.current = null;
-    el.scrollIntoView({ block: 'start' });
+    const scroller = scrollRef.current;
+    if (scroller) {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      scroller.scrollTop += (elRect.top - scrollerRect.top);
+    } else {
+      el.scrollIntoView({ block: 'start' });
+    }
   });
 
   // Track which page the reader is looking at as they scroll.
@@ -1076,7 +1083,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                 ref={scrollRef}
                 onScroll={handlePagesScroll}
                 onMouseUp={handleTextSelection}
-                className="flex-1 min-h-0 overflow-y-auto relative bg-slate-900/50 px-2 py-2"
+                className="flex-1 min-h-0 overflow-y-auto relative bg-slate-900/50 px-2 py-2 custom-scrollbar"
               >
                 {pdfDoc ? (
                   Array.from({ length: numPages }, (_, i) => i + 1).map(pageNumber => {
