@@ -307,7 +307,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex-1 min-h-0 flex flex-col lg:flex-row gap-4 h-full">
+    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col lg:flex-row gap-4 h-[calc(100vh-4.5rem)]">
       
       {/* Left: Synchronized Video Player Stage */}
       <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">

@@ -989,10 +989,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         )}
       </nav>
 
-      {/* =================================================================== */}
-      {/* 3. MAIN WORKSPACE VIEWPORT */}
-      {/* =================================================================== */}
-      <main className={`flex-1 min-h-0 p-4 sm:p-6 ${activeTab === 'chat' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto custom-scrollbar'}`}>
+      <main className="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
 
         {/* ================================================================= */}
         {/* TAB 1: 🎙️ AUDIO DEEP DIVE / PODCAST */}
@@ -1292,9 +1289,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
         {/* TAB 2: 💬 DOUBT SOLVER & INTERACTIVE CHAT */}
         {/* ================================================================= */}
         {activeTab === 'chat' && (
-          <div className="max-w-4xl mx-auto w-full flex-1 min-h-0 flex flex-col gap-4 animate-in fade-in duration-200">
+          <div className="max-w-4xl mx-auto h-full flex flex-col gap-4 animate-in fade-in duration-200">
             {/* Messages Scroll Area */}
-            <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            <div ref={chatContainerRef} className="flex-1 min-h-[400px] max-h-[560px] overflow-y-auto space-y-4 pr-2 custom-scrollbar">
               {chatMessages.map((msg) => {
                 const isUser = msg.role === 'user';
                 return (

@@ -637,7 +637,7 @@ export const WhiteboardCanvas: React.FC = () => {
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col flex-1 min-h-0 h-full overflow-hidden">
+    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)]">
       
       {/* Top Floating Toolbar */}
       <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-2.5 mb-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
