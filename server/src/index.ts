@@ -17,6 +17,7 @@ import { setupVoiceAndChatSocket } from './sockets/voiceAndChatSocket.js';
 import { setupStudyRoomSocket, getExpectedVoicePassword } from './sockets/studyRoomSocket.js';
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
 import { neuralTts } from './services/neuralTtsService.js';
+import { extractArticleFromHtml } from './services/articleExtractorService.js';
 import { Flashcard } from './types.js';
 
 dotenv.config();
@@ -456,7 +457,7 @@ async function isSafeUrlForProxy(urlString: string): Promise<{ safe: boolean; re
   }
 }
 
-// --- SECURE WEB EMBED PROXY (Mock Test & Web Study Notes) ---
+// --- SECURE WEB EMBED PROXY & CLEAN READER (Study Notes & Portals) ---
 app.get('/api/proxy/web', async (req, res) => {
   const targetUrl = req.query.url as string;
   if (!targetUrl || typeof targetUrl !== 'string') {
@@ -470,29 +471,43 @@ app.get('/api/proxy/web', async (req, res) => {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), 25000);
 
     const response = await fetch(targetUrl, {
       signal: controller.signal,
+      redirect: 'follow',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+        'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
         'Referer': urlCheck.parsed.origin
       }
     });
 
     clearTimeout(timeout);
 
+    const finalUrl = response.url || targetUrl;
     const rawContentType = response.headers.get('content-type') || 'text/html';
 
     // Remove anti-framing headers
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
     res.removeHeader('Content-Security-Policy-Report-Only');
+    res.removeHeader('Cross-Origin-Embedder-Policy');
+    res.removeHeader('Cross-Origin-Opener-Policy');
+    res.removeHeader('Cross-Origin-Resource-Policy');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', rawContentType);
 
-    const safeUrl = escapeHtml(targetUrl);
+    const safeUrl = escapeHtml(finalUrl);
 
     if (rawContentType.includes('text/html')) {
       const contentLength = Number(response.headers.get('content-length') || 0);
@@ -501,12 +516,43 @@ app.get('/api/proxy/web', async (req, res) => {
       }
 
       let html = await response.text();
-      // Inject <base href="..."> into <head> so relative assets load properly
-      const baseTag = `<base href="${safeUrl}">`;
+
+      // Remove meta tags that enforce frame protection or restrictive CSP
+      html = html.replace(/<meta[^>]*http-equiv=["']?(?:X-Frame-Options|Content-Security-Policy)["']?[^>]*>/gi, '');
+
+      // Neutralize common frame-busting scripts
+      html = html.replace(/top\.location(\.href)?\s*=/gi, '// top.location =');
+      html = html.replace(/window\.top(\.location)?/gi, 'window.self');
+      html = html.replace(/parent\.location/gi, 'window.self.location');
+
+      // Inject base tag, frame protection shim, and smooth link-navigation interceptor
+      const injectedHead = `
+        <base href="${safeUrl}">
+        <script>
+          (function() {
+            try {
+              Object.defineProperty(window, 'top', { get: function() { return window.self; }, set: function() {} });
+              Object.defineProperty(window, 'parent', { get: function() { return window.self; }, set: function() {} });
+              Object.defineProperty(window, 'frameElement', { get: function() { return null; } });
+            } catch(e) {}
+            // Smooth in-app navigation: notify parent container
+            document.addEventListener('click', function(e) {
+              var el = e.target;
+              while (el && el.tagName !== 'A') { el = el.parentElement; }
+              if (el && el.href && !el.href.startsWith('javascript:') && !el.href.startsWith('#')) {
+                try {
+                  window.parent.postMessage({ type: 'STUDYOS_NAVIGATE', url: el.href }, '*');
+                } catch(err) {}
+              }
+            }, true);
+          })();
+        </script>
+      `;
+
       if (/<head(\s[^>]*)?>/i.test(html)) {
-        html = html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${baseTag}`);
+        html = html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}${injectedHead}`);
       } else {
-        html = baseTag + html;
+        html = injectedHead + html;
       }
       return res.send(html);
     } else {
@@ -524,20 +570,115 @@ app.get('/api/proxy/web', async (req, res) => {
     return res.status(502).send(`
       <!DOCTYPE html>
       <html>
-        <head><meta charset="utf-8"><title>Portal Notice</title>
-          <style>body{font-family:system-ui,-apple-system,sans-serif;padding:32px 16px;background:#090d16;color:#f8fafc;text-align:center;} .card{max-width:540px;margin:30px auto;background:#131c2e;padding:28px;border-radius:16px;border:1px solid #1e293b;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);} h3{margin-top:0;color:#f59e0b;} p{color:#94a3b8;font-size:14px;line-height:1.6;} .btn{display:inline-block;background:#4f46e5;color:white;text-decoration:none;padding:10px 22px;border-radius:10px;font-weight:600;margin-top:16px;transition:0.2s;} .btn:hover{background:#4338ca;} .url{background:#0f172a;padding:8px 12px;border-radius:8px;font-family:monospace;font-size:12px;word-break:break-all;color:#cbd5e1;margin:12px 0;} </style>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>StudyOS Notes Notice</title>
+          <style>
+            body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 32px 16px; background: #090d16; color: #f8fafc; text-align: center; margin: 0; }
+            .card { max-width: 580px; margin: 40px auto; background: #111827; padding: 32px 28px; border-radius: 20px; border: 1px solid #1f2937; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); }
+            .badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: 700; margin-bottom: 16px; border: 1px solid rgba(245, 158, 11, 0.3); }
+            h2 { margin: 0 0 12px 0; color: #f1f5f9; font-size: 20px; font-weight: 700; }
+            p { color: #94a3b8; font-size: 13px; line-height: 1.6; margin: 0 0 16px 0; }
+            .url { background: #030712; padding: 10px 14px; border-radius: 12px; font-family: monospace; font-size: 12px; word-break: break-all; color: #38bdf8; margin: 16px 0; border: 1px solid #1f2937; text-align: left; }
+            .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+            .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; color: white; text-decoration: none; padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 13px; transition: all 0.2s; cursor: pointer; border: none; }
+            .btn-primary { background: linear-gradient(135deg, #4f46e5, #06b6d4); box-shadow: 0 4px 14px rgba(79, 70, 229, 0.4); }
+            .btn-primary:hover { opacity: 0.95; transform: translateY(-1px); }
+            .btn-secondary { background: #1f2937; color: #e2e8f0; border: 1px solid #374151; }
+            .btn-secondary:hover { background: #374151; }
+            .tips { margin-top: 20px; font-size: 11px; color: #64748b; }
+          </style>
         </head>
         <body>
           <div class="card">
-            <h3>⚠️ Secured Study Portal</h3>
-            <p>This exam portal requires full browser authentication or protected session cookies:</p>
-            <div class="url">${safeUrl}</div>
-            <p>You can launch it in a dedicated companion window with 1 click while your StudyOS Mock Timer & Live Screen Share stay active!</p>
-            <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn">Launch in Dual Companion Window ↗</a>
+            <div class="badge">⚠️ Third-Party Portal Protection</div>
+            <h2>Cannot Embed Directly in Frame</h2>
+            <p>This study portal has strict anti-bot shields (e.g. Cloudflare Turnstile / Akamai) or restricts embedded iframes.</p>
+            <div class="url">🔗 ${safeUrl}</div>
+            <div class="actions">
+              <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+                Open in Companion Tab ↗
+              </a>
+              <button onclick="window.parent.postMessage({ type: 'STUDYOS_SWITCH_READER', url: '${safeUrl}' }, '*')" class="btn btn-secondary">
+                📖 Switch to Clean Reader Mode
+              </button>
+              <button onclick="window.location.reload()" class="btn btn-secondary">
+                🔄 Retry Loading Website
+              </button>
+            </div>
+            <div class="tips">
+              💡 Tip: The Companion Tab opens right beside StudyOS so your Live Room Chat, Vocab notes, and AI doubt solver stay active!
+            </div>
           </div>
         </body>
       </html>
     `);
+  }
+});
+
+// Clean Reader Mode Endpoint: Extracts Article Content, Byline, and Text
+app.get('/api/proxy/article', async (req, res) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl || typeof targetUrl !== 'string') {
+    return res.status(400).json({ success: false, error: 'Invalid or missing URL parameter.' });
+  }
+
+  const urlCheck = await isSafeUrlForProxy(targetUrl);
+  if (!urlCheck.safe || !urlCheck.parsed) {
+    return res.status(403).json({ success: false, error: `Blocked: ${urlCheck.reason || 'Unsafe destination'}` });
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+
+    const response = await fetch(targetUrl, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+        'Sec-Ch-Ua': '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': urlCheck.parsed.origin
+      }
+    });
+
+    clearTimeout(timeout);
+
+    const finalUrl = response.url || targetUrl;
+    const rawContentType = response.headers.get('content-type') || 'text/html';
+
+    if (!rawContentType.includes('text/html')) {
+      return res.json({
+        success: false,
+        title: 'Non-HTML Resource',
+        source: urlCheck.parsed.hostname,
+        url: finalUrl,
+        contentHtml: `<p>This resource is not a webpage (${rawContentType}). You can open it directly in a new tab.</p>`,
+        textContent: '',
+        wordCount: 0,
+        readingTimeMinutes: 1
+      });
+    }
+
+    const html = await response.text();
+    const article = extractArticleFromHtml(html, finalUrl);
+    return res.json(article);
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to extract article content',
+      url: targetUrl
+    });
   }
 });
 
