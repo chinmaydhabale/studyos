@@ -13,6 +13,7 @@ import {
   BookOpen
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
+import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
 
 interface VoiceChatPanelProps {
   currentVideoTime?: number;
@@ -259,7 +260,11 @@ export const VoiceChatPanel: React.FC<VoiceChatPanelProps> = ({
                     : 'bg-slate-800 text-slate-200 border border-white/5 rounded-tl-sm'
                 }`}
               >
-                <div className="whitespace-pre-wrap">{msg.text}</div>
+                {isAi ? (
+                  <FormattedAiMessage content={msg.text} />
+                ) : (
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+                )}
               </div>
             </div>
           );

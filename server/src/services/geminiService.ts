@@ -15,11 +15,16 @@ export type GeminiModelTier = 'heavy' | 'lite' | 'balanced' | 'flashcards';
 export const GEMINI_MODELS = {
   heavy: 'gemini-3.5-flash',
   flashcards: 'gemini-3.5-flash',
-  balanced: 'gemini-3.6-flash',
+  balanced: 'gemini-3.5-flash',
   lite: 'gemini-3.5-flash-lite'
 };
 
-const REQUEST_TIMEOUT_MS = 25000;
+const REQUEST_TIMEOUT_MS = 30000;
+
+export interface GeminiHistoryItem {
+  role: 'user' | 'assistant' | 'model';
+  text: string;
+}
 
 export interface GeminiJsonRequest {
   prompt: string;
@@ -30,6 +35,7 @@ export interface GeminiJsonRequest {
   maxOutputTokens?: number;
   tier?: GeminiModelTier;
   model?: string;
+  conversationHistory?: GeminiHistoryItem[];
 }
 
 export interface GeminiTextRequest {
@@ -39,6 +45,7 @@ export interface GeminiTextRequest {
   maxOutputTokens?: number;
   tier?: GeminiModelTier;
   model?: string;
+  conversationHistory?: GeminiHistoryItem[];
 }
 
 export class GeminiService {
@@ -83,23 +90,14 @@ export class GeminiService {
     let modelsToTry: string[] = [];
     if (customModel) {
       modelsToTry = [customModel];
-    } else if (tier === 'flashcards') {
-      modelsToTry = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
     } else if (tier === 'lite') {
-      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash', 'gemini-flash-latest'];
-    } else if (tier === 'balanced') {
-      modelsToTry = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'];
+      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-flash-lite-latest'];
     } else {
-      // Default or heavy tier: start with primary model (gemini-3.8-flash)
-      const primaryModel = this.getModel();
-      modelsToTry = [primaryModel];
-      if (!modelsToTry.includes('gemini-3.5-flash')) modelsToTry.push('gemini-3.5-flash');
-      if (!modelsToTry.includes('gemini-3.6-flash')) modelsToTry.push('gemini-3.6-flash');
-      if (!modelsToTry.includes('gemini-3.5-flash-lite')) modelsToTry.push('gemini-3.5-flash-lite');
-      if (!modelsToTry.includes('gemini-flash-latest')) modelsToTry.push('gemini-flash-latest');
-      if (!modelsToTry.includes('gemini-3.7-flash')) modelsToTry.push('gemini-3.7-flash');
-      if (!modelsToTry.includes('gemini-3.8-flash')) modelsToTry.push('gemini-3.8-flash');
+      // Default, heavy or balanced
+      const primary = this.getModel();
+      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
     }
+    modelsToTry = Array.from(new Set(modelsToTry));
 
     const keyAttempts = Math.min(keys.length, 3);
     for (let k = 0; k < keyAttempts; k++) {
@@ -152,15 +150,39 @@ export class GeminiService {
   }
 
   private buildPayload(req: GeminiJsonRequest | GeminiTextRequest, json: boolean): Record<string, unknown> {
-    const payload: Record<string, unknown> = {
-      contents: [{ role: 'user', parts: [{ text: req.prompt }] }]
-    };
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+    if (req.conversationHistory && req.conversationHistory.length > 0) {
+      for (const msg of req.conversationHistory) {
+        if (!msg.text || !msg.text.trim()) continue;
+        const role = (msg.role === 'assistant' || msg.role === 'model') ? 'model' : 'user';
+        if (contents.length > 0 && contents[contents.length - 1].role === role) {
+          contents[contents.length - 1].parts[0].text += `\n\n${msg.text.trim()}`;
+        } else {
+          contents.push({
+            role,
+            parts: [{ text: msg.text.trim() }]
+          });
+        }
+      }
+    }
+
+    if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+      contents[contents.length - 1].parts[0].text += `\n\n${req.prompt}`;
+    } else {
+      contents.push({
+        role: 'user',
+        parts: [{ text: req.prompt }]
+      });
+    }
+
+    const payload: Record<string, unknown> = { contents };
     if (req.systemInstruction) {
       payload.systemInstruction = { parts: [{ text: req.systemInstruction }] };
     }
     const generationConfig: Record<string, unknown> = {
       temperature: req.temperature ?? 0.7,
-      maxOutputTokens: req.maxOutputTokens ?? 2048
+      maxOutputTokens: req.maxOutputTokens ?? 8192
     };
     if (json) {
       generationConfig.responseMimeType = 'application/json';

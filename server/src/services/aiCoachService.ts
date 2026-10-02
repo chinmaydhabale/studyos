@@ -105,9 +105,28 @@ const MAX_SELECTION_CHARS = 1500;
 const MAX_NOTEBOOK_SOURCE_CHARS = 120000;
 
 const EXAM_COACH_PERSONA =
-  'You are StudyOS AI Coach, a patient expert tutor for Indian competitive exams ' +
-  '(RRB PO, IBPS PO, SBI PO, SSC CGL). Explain with exam-oriented precision, use SI units, ' +
-  'and keep language crisp. Ground your answer in the learner context when it is provided.';
+  'You are StudyOS AI Coach, a world-class expert mentor and tutor for students preparing for competitive exams ' +
+  '(such as Banking, SSC, Railways, State PSC, UPSC, Engineering, and Science) as well as academic study.\n\n' +
+  'CORE TEACHING PRINCIPLES:\n' +
+  '1. ADAPTIVE LANGUAGE MIRRORING:\n' +
+  '   - If the student asks in Hindi (Devanagari script), reply in natural, clear, polite Hindi with technical terms in brackets.\n' +
+  '   - If the student asks in Hinglish (Romanized Hindi, e.g. "samjhao na", "kaise aaya", "shortcut trick batao"), reply in friendly, conversational, enthusiastic Hinglish (e.g., "Dekhiye, is problem ko solve karne ke 2 methods hain: 1st Basic Concept aur 2nd Exam Shortcut Trick...").\n' +
+  '   - If the student asks in English, reply in articulate, polished English.\n' +
+  '   - If the student asks for a specific language (e.g., "Hindi me", "explain in English"), strictly follow their request.\n\n' +
+  '2. COMPLETE PEDAGOGICAL DEPTH & STRUCTURE (NEVER GIVE SHORT/CURT ANSWERS):\n' +
+  '   - Do NOT give lazy 1-line or 2-sentence answers unless the user explicitly asks for a "1-line summary".\n' +
+  '   - For mathematical, reasoning, and conceptual problems, ALWAYS provide:\n' +
+  '     a) Core Concept & Given Values.\n' +
+  '     b) Step-by-Step Detailed Method (bina kisi calculation step ko skip kiye).\n' +
+  '     c) Standard Mathematical Formula in LaTeX notation.\n' +
+  '     d) Exam Shortcut / Speed Trick (fast calculation hacks essential for exams).\n' +
+  '     e) 💡 Pro Tip & ⚠️ Common Mistake / Exam Trap to avoid.\n\n' +
+  '3. MATHEMATICAL & NOTATIONAL FORMATTING:\n' +
+  '   - Always write centered display math using double dollar blocks: $$<latex>$$\n' +
+  '   - Always write inline math using single dollar signs: $<latex>$\n' +
+  '   - Use standard LaTeX commands like \\frac{a}{b}, \\sqrt{x}, x^2, \\times, \\pm, \\text{...}\n' +
+  '   - Use Markdown bold (**text**), bullet lists, and tables with pipe (|) borders for tabular comparisons.\n' +
+  '   - Never leave formulas unformatted.';
 
 export class AICoachService {
   /** Model id currently in use, for the client status badge. */
@@ -397,13 +416,12 @@ export class AICoachService {
       keyFormula?: string;
       practiceTip?: string;
     }>({
-      systemInstruction: `${EXAM_COACH_PERSONA}\nBreak the doubt down step by step for a student revising for an exam. Respond with JSON only.`,
+      systemInstruction: `${EXAM_COACH_PERSONA}\nBreak the doubt down step-by-step with deep pedagogical clarity for a student revising for an exam. Follow the ADAPTIVE LANGUAGE MIRRORING rule (reply in Hindi/Hinglish if asked in Hindi/Hinglish). Respond with JSON only.`,
       prompt:
         `Learner context:\n${this.buildLearnerContext(context?.userId)}\n` +
         (contextLines.length ? `${contextLines.join('\n')}\n` : '') +
         `\nDoubt: "${question}"\n\n` +
-        'Give a conceptual explanation (2-4 sentences), 3-5 ordered reasoning steps, the single most relevant ' +
-        'formula in LaTeX if the topic has one (omit keyFormula for non-mathematical topics), and one exam practice tip.',
+        'Give an in-depth conceptual explanation, 3-7 ordered step-by-step reasoning/working steps with LaTeX formulas ($$...$$ for display math, $...$ for inline math), the core formula in LaTeX, and an actionable exam practice tip / speed trick. Mirror the student\'s language naturally.',
       schema: {
         type: 'OBJECT',
         properties: {
@@ -415,18 +433,19 @@ export class AICoachService {
         required: ['explanation', 'steps', 'practiceTip']
       },
       temperature: 0.6,
+      maxOutputTokens: 4096,
       tier: 'heavy'
     });
 
     if (solution) {
-      const explanation = this.cleanString(solution.explanation, 1200);
-      const steps = this.cleanStringArray(solution.steps, 6, 500);
+      const explanation = this.cleanString(solution.explanation, 8000);
+      const steps = this.cleanStringArray(solution.steps, 10, 2000);
       if (explanation && steps.length) {
         return {
           explanation,
           steps,
-          keyFormula: this.cleanString(solution.keyFormula, 300),
-          practiceTip: this.cleanString(solution.practiceTip, 400) || 'Attempt two similar problems without looking at the solution.',
+          keyFormula: this.cleanString(solution.keyFormula, 2000),
+          practiceTip: this.cleanString(solution.practiceTip, 2000) || 'Attempt two similar problems without looking at the solution.',
           source: 'gemini'
         };
       }
@@ -1207,7 +1226,7 @@ export class AICoachService {
   }): Promise<NotebookSourceAnswer> {
     const docTitle = this.cleanString(input.docTitle, 200) || 'Document';
     const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
-    const question = this.cleanString(input.question, 1000) || '';
+    const question = this.cleanString(input.question, 2000) || '';
 
     if (!question) {
       return {
@@ -1219,23 +1238,29 @@ export class AICoachService {
       };
     }
 
-    const historyText = (input.history || [])
-      .slice(-6)
-      .map(h => `${h.role === 'user' ? 'Student' : 'NotebookLM Coach'}: ${h.text}`)
-      .join('\n');
+    // Convert up to 20 past turns for Gemini's multi-turn conversational memory
+    const conversationHistory = (input.history || [])
+      .slice(-20)
+      .map(h => ({
+        role: (h.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        text: h.text
+      }));
 
     const result = await gemini.generateJson<{
       answer?: string;
       citations?: string[];
       suggestedFollowUps?: string[];
     }>({
-      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are NotebookLM's source-grounded intelligent tutor. Answer the student strictly based on the source text. Quote or cite source evidence directly. Suggest 3 follow-up study questions. Respond with JSON only.`,
+      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are StudyOS AI Master Tutor & Intelligent Coach. You help students understand study notes, concepts, and solve tricky exam questions. Ground your answer in the source text when relevant. Always provide complete step-by-step mathematical working with standard LaTeX ($$...$$ for display math, $...$ for inline), speed tricks, and match the student's language (Hindi, Hinglish, or English). Respond with JSON only.`,
       prompt:
-        `Document Title: "${docTitle}"\n\n` +
-        `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        (historyText ? `Recent conversation:\n${historyText}\n\n` : '') +
+        (sourceText ? `Document Title: "${docTitle}"\n--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` : '') +
         `Student Question: "${question}"\n\n` +
-        'Provide a clear, pedagogical answer grounded in the source text, list 1-3 direct citations or references from the source, and suggest 3 follow-up questions.',
+        'Instructions:\n' +
+        '1. Provide a comprehensive, in-depth pedagogical answer following the CORE TEACHING PRINCIPLES.\n' +
+        '2. If the question is in Hindi (Devanagari) or Hinglish (Roman Hindi), reply in natural, friendly Hindi/Hinglish.\n' +
+        '3. If mathematical, write all formulas and steps in LaTeX ($$...$$ or $...$), showing given values, step-by-step derivation, and exam shortcut hack.\n' +
+        '4. Include 💡 Pro Tip and ⚠️ Common Mistake / Exam Trap.\n' +
+        '5. List 1-3 direct citations/references from the source if applicable, and suggest 3 smart follow-up questions.',
       schema: {
         type: 'OBJECT',
         properties: {
@@ -1245,17 +1270,18 @@ export class AICoachService {
         },
         required: ['answer', 'citations', 'suggestedFollowUps']
       },
-      temperature: 0.5,
-      maxOutputTokens: 2048,
-      tier: 'lite'
+      temperature: 0.6,
+      maxOutputTokens: 8192,
+      tier: 'heavy',
+      conversationHistory
     });
 
     if (result && result.answer) {
       return {
         question,
-        answer: this.cleanString(result.answer, 2000) || '',
-        citations: this.cleanStringArray(result.citations, 4, 300),
-        suggestedFollowUps: this.cleanStringArray(result.suggestedFollowUps, 3, 200),
+        answer: this.cleanString(result.answer, 16000) || '',
+        citations: this.cleanStringArray(result.citations, 4, 500),
+        suggestedFollowUps: this.cleanStringArray(result.suggestedFollowUps, 3, 300),
         source: 'gemini'
       };
     }

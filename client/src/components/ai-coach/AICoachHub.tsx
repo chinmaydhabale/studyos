@@ -51,6 +51,7 @@ import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
 import { Flashcard, QuizQuestion } from '../../types.js';
 import { pdfjsLib, extractPageText } from '../../lib/pdfjs.js';
+import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
 
 // Types for AI Coach Features
 interface AudioTurn {
@@ -601,13 +602,23 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     setChatLoading(true);
 
     try {
+      // Gather last 20 conversation turns for rich multi-turn context referencing
+      const conversationHistory = chatMessages
+        .filter(m => m.id !== 'welcome-msg' && !m.id.startsWith('err-'))
+        .slice(-20)
+        .map(m => ({
+          role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+          text: m.content
+        }));
+
       const res = await fetch(`${API_BASE_URL}/api/ai/notebook/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           docTitle: activeTopic,
           sourceText: sourceMaterial,
-          question: textToSend.trim()
+          question: textToSend.trim(),
+          history: conversationHistory
         })
       });
 
@@ -1305,7 +1316,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
                         </div>
                       )}
 
-                      <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                      {isUser ? (
+                        <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                      ) : (
+                        <FormattedAiMessage content={msg.content} />
+                      )}
 
                       {/* Citations if any */}
                       {msg.citations && msg.citations.length > 0 && (
