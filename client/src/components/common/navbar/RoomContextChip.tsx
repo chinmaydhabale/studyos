@@ -67,42 +67,28 @@ export const RoomContextChip: React.FC = () => {
         title="Study Room Status & Roster"
       >
         {/* Pulsing Live Connection Indicator */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           <span
-            className={`w-2 h-2 rounded-full ${
+            className={`w-2 h-2 rounded-full shrink-0 ${
               isConnected
                 ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse'
                 : 'bg-rose-400 animate-ping'
             }`}
           />
-          <span className="font-mono font-bold text-white text-xs tracking-tight group-hover:text-cyan-300 transition-colors">
+          <span className="font-mono font-bold text-white text-xs tracking-tight group-hover:text-cyan-300 transition-colors truncate max-w-[70px] sm:max-w-[100px]">
             {roomId || 'Join Room'}
           </span>
         </div>
 
         {/* Peer Count Badge */}
         {roomId && (
-          <div className="flex items-center gap-1 bg-white/5 px-1.5 py-0.5 rounded-lg border border-white/10 text-[10px] text-cyan-300 font-semibold">
+          <div className="flex items-center gap-1 bg-white/5 px-1.5 py-0.5 rounded-lg border border-white/10 text-[10px] text-cyan-300 font-semibold shrink-0">
             <Users className="w-3 h-3 text-cyan-400" />
             <span>{peers.length}</span>
           </div>
         )}
 
-        {/* Mini Peer Avatars Stack (Visible on Desktop) */}
-        {peers.length > 0 && (
-          <div className="hidden xl:flex items-center -space-x-1.5 ml-0.5">
-            {peers.slice(0, 3).map((p) => (
-              <img
-                key={p.userId}
-                src={p.avatar}
-                alt={p.name}
-                className="w-4 h-4 rounded-full border border-slate-900 ring-1 ring-cyan-500/40"
-              />
-            ))}
-          </div>
-        )}
-
-        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`} />
+        <ChevronDown className={`w-3 h-3 text-slate-400 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`} />
       </button>
 
       {/* Room Roster & Quick Actions Popover */}

@@ -60,8 +60,8 @@ interface NavGroup {
 const NAV_GROUPS: NavGroup[] = [
   {
     id: 'study',
-    label: 'Co-Study Rooms',
-    shortLabel: 'Co-Study',
+    label: 'Study Rooms',
+    shortLabel: 'Rooms',
     icon: Tv,
     items: [
       {
@@ -97,10 +97,26 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     id: 'tools',
-    label: 'Workspace & Vault',
-    shortLabel: 'Workspace',
+    label: 'Tools & Games',
+    shortLabel: 'Tools',
     icon: FolderKanban,
     items: [
+      {
+        id: 'math-games',
+        label: 'Math Speed Arena',
+        desc: 'Speed calculations, Vedic shortcuts & 1v1 duels',
+        icon: Gamepad2,
+        badge: 'Hot',
+        color: 'text-amber-400 bg-amber-500/10'
+      },
+      {
+        id: 'ai-coach',
+        label: 'AI Study Coach',
+        desc: 'Instant doubt solver, hints & custom roadmaps',
+        icon: Sparkles,
+        badge: 'AI',
+        color: 'text-cyan-400 bg-cyan-500/10'
+      },
       {
         id: 'vault',
         label: 'Telegram Vault',
@@ -113,7 +129,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Shared Notes',
         desc: 'Collaborative markdown & speed math formulas',
         icon: FileText,
-        color: 'text-amber-400 bg-amber-500/10'
+        color: 'text-emerald-400 bg-emerald-500/10'
       },
       {
         id: 'whiteboard',
@@ -121,14 +137,6 @@ const NAV_GROUPS: NavGroup[] = [
         desc: 'Freehand drawings, puzzle flowcharts & diagrams',
         icon: PenTool,
         color: 'text-purple-400 bg-purple-500/10'
-      },
-      {
-        id: 'math-games',
-        label: 'Math Speed Arena',
-        desc: 'Speed calculations, Vedic shortcuts & 1v1 duels',
-        icon: Gamepad2,
-        badge: 'Hot',
-        color: 'text-amber-400 bg-amber-500/10'
       }
     ]
   },
@@ -366,42 +374,6 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               );
             })}
-
-            {/* Standalone Math Games Tab */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('math-games');
-                setOpenDropdown(null);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
-                activeTab === 'math-games'
-                  ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white shadow-md shadow-amber-500/20 ring-1 ring-white/30 border border-white/20'
-                  : 'text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/40'
-              }`}
-              title="Speed Math & Fast Calculation Games Arena"
-            >
-              <Gamepad2 className={`w-3.5 h-3.5 ${activeTab === 'math-games' ? 'text-amber-200' : 'text-amber-400'}`} />
-              <span>Math Games</span>
-            </button>
-
-            {/* Standalone AI Coach Tab */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('ai-coach');
-                setOpenDropdown(null);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
-                activeTab === 'ai-coach'
-                  ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20 ring-1 ring-white/30 border border-white/20'
-                  : 'text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40'
-              }`}
-              title="Personal AI Study Coach"
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${activeTab === 'ai-coach' ? 'text-cyan-200 animate-spin' : 'text-indigo-400'}`} />
-              <span>AI Coach</span>
-            </button>
           </nav>
 
           {/* Linear-Style Command Palette Trigger */}
@@ -411,66 +383,50 @@ export const Header: React.FC<HeaderProps> = ({
         {/* =================================================================== */}
         {/* ZONE 3: FOCUS UTILITIES & USER PROFILE HUB (RIGHT) */}
         {/* =================================================================== */}
-        <div className="flex items-center gap-2 sm:gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           
           {/* Consolidated Focus Capsule (Timer + Ambient Sound) */}
           <FocusCapsule />
 
-          {/* Voice Talk Mic Button */}
+          {/* Compact Voice Talk Mic Button */}
           <button
             type="button"
             onClick={toggleMic}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl border text-xs font-semibold transition-all ${
+            className={`w-8 h-8 rounded-xl border flex items-center justify-center transition-all shrink-0 ${
               !isVoiceUnlocked
                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
                 : isMicMuted
                 ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
                 : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 shadow-sm shadow-emerald-500/10'
             }`}
-            title={!isVoiceUnlocked ? 'Voice chat locked. Click to enter password' : 'Toggle Voice Mic'}
+            title={
+              !isVoiceUnlocked
+                ? 'Voice chat locked. Click to enter password'
+                : isMicMuted
+                ? 'Mic Muted - Click to speak'
+                : 'Mic Live - Click to mute'
+            }
           >
             {!isVoiceUnlocked ? (
-              <>
-                <Lock className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">Voice Locked</span>
-              </>
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
             ) : isMicMuted ? (
-              <>
-                <MicOff className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">Muted</span>
-              </>
+              <MicOff className="w-3.5 h-3.5 text-rose-400" />
             ) : (
-              <>
-                <Mic className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-                <span className="hidden xl:inline">Mic Live</span>
-              </>
+              <Mic className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             )}
           </button>
 
-          {/* Gamification Stats Pill (Streak 🔥 + Coins 🪙) */}
-          <div className="hidden xl:flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-2xl px-2.5 py-1.5 text-xs shadow-inner">
-            <div className="flex items-center gap-1 text-amber-400 font-bold" title="Study Streak">
-              <Flame className="w-3.5 h-3.5 fill-amber-400 animate-bounce" />
-              <span>{streak}d</span>
-            </div>
-            <div className="w-px h-3 bg-white/10" />
-            <div className="flex items-center gap-1 text-yellow-400 font-bold" title="Math & Study Coins">
-              <Coins className="w-3.5 h-3.5 text-yellow-400" />
-              <span>{coins}</span>
-            </div>
-          </div>
-
-          {/* Notification Bell */}
+          {/* Compact Notification Bell */}
           <button
             type="button"
             onClick={toggleNotifications}
-            className="relative p-2 rounded-2xl bg-slate-900/80 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors shadow-sm"
+            className="relative w-8 h-8 rounded-xl bg-slate-900/80 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors shadow-sm flex items-center justify-center shrink-0"
             title="Notifications"
           >
             <Bell className="w-4 h-4" />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white font-bold text-[10px] rounded-full flex items-center justify-center animate-pulse">
-                {unreadCount}
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 text-white font-bold text-[9px] rounded-full flex items-center justify-center animate-pulse">
+                {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
           </button>
@@ -481,7 +437,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 p-1 pl-1.5 pr-2 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-indigo-500/40 transition-all shadow-sm"
+                className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/90 border border-white/10 hover:border-indigo-500/40 transition-all shadow-sm shrink-0"
                 title="Account Settings & Profile"
               >
                 <img
@@ -490,21 +446,40 @@ export const Header: React.FC<HeaderProps> = ({
                     `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.name || 'Student'}&backgroundColor=6366f1`
                   }
                   alt="Avatar"
-                  className="w-6 h-6 rounded-xl border border-white/10"
+                  className="w-6 h-6 rounded-lg border border-white/10"
                 />
-                <span className="text-xs font-bold text-white hidden md:inline truncate max-w-[90px]">
+                <span className="text-xs font-bold text-white hidden 2xl:inline truncate max-w-[80px]">
                   {currentUser.name}
                 </span>
                 <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showUserMenu ? 'rotate-180 text-white' : ''}`} />
               </button>
 
               {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-56 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2 shadow-2xl z-50 flex flex-col gap-1 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="p-3 border-b border-white/10">
-                    <p className="font-extrabold text-white text-xs">{currentUser.name}</p>
-                    <p className="text-[11px] font-mono text-cyan-300">@{currentUser.username}</p>
-                    <p className="text-[10px] text-slate-400 mt-1">{currentUser.targetExam}</p>
+                <div className="absolute right-0 mt-2 w-64 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2.5 shadow-2xl z-50 flex flex-col gap-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                  <div className="p-3 border-b border-white/10 bg-slate-950/60 rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-extrabold text-white text-xs">{currentUser.name}</p>
+                        <p className="text-[11px] font-mono text-cyan-300">@{currentUser.username}</p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        Lvl {level}
+                      </span>
+                    </div>
+
+                    {/* Streak & Coins in Profile Dropdown */}
+                    <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 text-amber-400 font-bold" title="Study Streak">
+                        <Flame className="w-3.5 h-3.5 fill-amber-400" />
+                        <span>{streak}d Streak</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-yellow-400 font-bold" title="Math & Study Coins">
+                        <Coins className="w-3.5 h-3.5 text-yellow-400" />
+                        <span>{coins} Coins</span>
+                      </div>
+                    </div>
                   </div>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -534,7 +509,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all shrink-0"
             >
               <User className="w-3.5 h-3.5" />
               <span>Sign In</span>
@@ -545,7 +520,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => setShowMobileNav(!showMobileNav)}
-            className="lg:hidden p-2 rounded-2xl bg-slate-900 border border-white/10 text-slate-400 hover:text-white transition-colors"
+            className="lg:hidden w-8 h-8 rounded-xl bg-slate-900 border border-white/10 text-slate-400 hover:text-white transition-colors flex items-center justify-center shrink-0"
             title="Toggle Menu"
           >
             {showMobileNav ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}

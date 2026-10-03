@@ -71,16 +71,16 @@ export const FocusCapsule: React.FC = () => {
   const progressPercent = Math.max(0, Math.min(100, ((totalModeDuration - timeLeft) / totalModeDuration) * 100));
 
   return (
-    <div className="relative select-none" ref={containerRef}>
+    <div className="relative select-none shrink-0" ref={containerRef}>
       
       {/* Sleek Pill Capsule Trigger */}
-      <div className="flex items-center bg-slate-900/90 hover:bg-slate-800/90 border border-white/10 hover:border-indigo-500/30 rounded-2xl p-1 shadow-md transition-all">
+      <div className="flex items-center bg-slate-900/90 hover:bg-slate-800/90 border border-white/10 hover:border-indigo-500/30 rounded-xl p-0.5 sm:p-1 shadow-md transition-all">
         
         {/* Timer Trigger & Countdown */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-xl hover:bg-white/5 text-xs transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/5 text-xs transition-colors"
           title="Focus Pomodoro & Ambient Sounds"
         >
           <div className="relative flex items-center justify-center">
