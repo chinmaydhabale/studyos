@@ -6,14 +6,7 @@ import {
   Mic,
   MicOff,
   Lock,
-  Unlock,
   Bell,
-  Volume2,
-  VolumeX,
-  Share2,
-  Play,
-  Pause,
-  RotateCcw,
   Sparkles,
   Search,
   User,
@@ -21,7 +14,6 @@ import {
   LogOut,
   Users,
   FolderLock,
-  Cloud,
   Menu,
   X,
   ChevronDown,
@@ -35,15 +27,18 @@ import {
   Calendar,
   Trophy,
   Check,
-  Bot,
-  Laptop,
   Globe,
-  Cast,
   Radio,
-  Gamepad2
+  Gamepad2,
+  Sliders,
+  ShieldCheck,
+  ArrowRightLeft
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
-import { useStudy, AmbientSoundType } from '../../context/StudyContext.js';
+import { useStudy } from '../../context/StudyContext.js';
+import { FocusCapsule } from './navbar/FocusCapsule.js';
+import { RoomContextChip } from './navbar/RoomContextChip.js';
+import { CommandSearchTrigger } from './navbar/CommandSearchTrigger.js';
 
 interface NavItem {
   id: string;
@@ -132,7 +127,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Math Speed Arena',
         desc: 'Speed calculations, Vedic shortcuts & 1v1 duels',
         icon: Gamepad2,
-        badge: 'Games',
+        badge: 'Hot',
         color: 'text-amber-400 bg-amber-500/10'
       }
     ]
@@ -206,34 +201,19 @@ export const Header: React.FC<HeaderProps> = ({
     addToast,
     setIsRoomModalOpen,
     setIsAuthModalOpen,
-    logoutUser,
-    openPeerDossier
+    logoutUser
   } = useSocket();
+
+  const { streak, level, coins } = useStudy();
 
   const [showServerModal, setShowServerModal] = useState(false);
   const [customUrlInput, setCustomUrlInput] = useState(serverUrl || '');
-
-  const {
-    timerMode,
-    timeLeft,
-    isRunning,
-    startTimer,
-    pauseTimer,
-    resetTimer,
-    ambientSound,
-    setAmbientSound,
-    streak,
-    level,
-    coins
-  } = useStudy();
-
-  const [showAmbientMenu, setShowAmbientMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMobileNav, setShowMobileNav] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+
   const navRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const ambientMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -241,20 +221,14 @@ export const Header: React.FC<HeaderProps> = ({
       if (navRef.current && !navRef.current.contains(target)) {
         setOpenDropdown(null);
       }
-      // Only close a popover when the click is outside its own wrapper, otherwise
-      // the mousedown would unmount the menu before its item's click can fire.
       if (!userMenuRef.current || !userMenuRef.current.contains(target)) {
         setShowUserMenu(false);
-      }
-      if (!ambientMenuRef.current || !ambientMenuRef.current.contains(target)) {
-        setShowAmbientMenu(false);
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpenDropdown(null);
         setShowUserMenu(false);
-        setShowAmbientMenu(false);
         setShowMobileNav(false);
         setShowServerModal(false);
       }
@@ -267,263 +241,190 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
 
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const copyRoomInvite = () => {
-    if (!roomId) {
-      setIsRoomModalOpen(true);
-      return;
-    }
-    navigator.clipboard?.writeText(roomId);
-    addToast('Group ID Copied!', `Share Group ID "${roomId}" with your study partner to study together.`, 'success');
-  };
-
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-[#090d16]/90 backdrop-blur-xl px-4 py-2.5">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+    <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-[#090d16]/90 backdrop-blur-2xl px-3 sm:px-4 py-2">
+      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2.5 sm:gap-3">
         
-        {/* Logo & Study Room Code */}
-        <div className="flex items-center gap-3">
-          <div 
+        {/* =================================================================== */}
+        {/* ZONE 1: BRAND IDENTITY & UNIFIED ROOM CONTEXT (LEFT) */}
+        {/* =================================================================== */}
+        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+          
+          {/* Logo & Platform Name */}
+          <div
             onClick={() => setActiveTab('video')}
-            className="flex items-center gap-2.5 cursor-pointer group"
+            className="flex items-center gap-2 cursor-pointer group select-none"
+            title="StudyOS - Home"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
-              <Sparkles className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/25 group-hover:scale-105 transition-transform">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold tracking-tight text-lg text-white">Study<span className="text-indigo-400">OS</span></span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  RRB/IBPS PO
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                {roomId ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsRoomModalOpen(true);
-                    }}
-                    className="flex items-center gap-1 hover:text-white transition-colors"
-                    title="Click to Switch or View Group Info"
-                  >
-                    <span>Room:</span>
-                    <span className="font-mono text-cyan-300 font-bold underline decoration-dotted">{roomId}</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsRoomModalOpen(true);
-                    }}
-                    className="text-amber-400 font-semibold hover:underline animate-pulse"
-                  >
-                    No Room Joined (Click to Enter)
-                  </button>
-                )}
-                {roomId && (
-                  <div className="flex items-center gap-1.5 ml-1">
-                    {isConnected ? (
-                      <>
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-emerald-400 text-[10px] font-medium">{peers.length} Live</span>
-                        <div className="hidden md:flex items-center -space-x-1.5 ml-1">
-                          {peers.slice(0, 4).map((p) => (
-                            <button
-                              key={p.userId}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openPeerDossier(p);
-                              }}
-                              className="relative rounded-full hover:scale-110 hover:z-10 transition-transform"
-                              title={`${p.name} - Click to see live activity dossier & breakdown`}
-                            >
-                              <img
-                                src={p.avatar}
-                                alt={p.name}
-                                className="w-4 h-4 rounded-full border border-slate-900 ring-1 ring-emerald-500/50"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowServerModal(true);
-                        }}
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-[10px] font-bold transition-colors cursor-pointer"
-                        title="Click to check or update server connection"
-                      >
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
-                        <span>Reconnecting</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-black tracking-tight text-base sm:text-lg text-white">
+                Study<span className="text-indigo-400">OS</span>
+              </span>
+              <span className="hidden sm:inline-block px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                PRO
+              </span>
             </div>
           </div>
 
-          <button
-            onClick={() => setIsRoomModalOpen(true)}
-            title="Switch or Join Study Group"
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
-          >
-            <Users className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{roomId ? 'Switch Group' : 'Join Group'}</span>
-          </button>
+          {/* Unified Room Context Chip */}
+          <RoomContextChip />
         </div>
 
-        {/* Global Navigation Tabs (Clean Organized Dropdown Submenus) */}
-        <nav ref={navRef} className="hidden md:flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-2xl border border-white/10 shadow-inner">
-          {NAV_GROUPS.map((group) => {
-            const isGroupActive = group.items.some(item => item.id === activeTab);
-            const activeItem = group.items.find(item => item.id === activeTab);
-            const isOpen = openDropdown === group.id;
-            const GroupIcon = group.icon;
+        {/* =================================================================== */}
+        {/* ZONE 2: CENTER NAVIGATION & COMMAND SEARCH ISLAND */}
+        {/* =================================================================== */}
+        <div className="hidden lg:flex items-center gap-2">
+          
+          {/* Segmented Category Pill Navigation */}
+          <nav
+            ref={navRef}
+            className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-2xl border border-white/10 shadow-inner"
+          >
+            {NAV_GROUPS.map((group) => {
+              const isGroupActive = group.items.some((item) => item.id === activeTab);
+              const activeItem = group.items.find((item) => item.id === activeTab);
+              const isOpen = openDropdown === group.id;
+              const GroupIcon = group.icon;
 
-            return (
-              <div key={group.id} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setOpenDropdown(isOpen ? null : group.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
-                    isGroupActive
-                      ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-sm shadow-indigo-600/25 border border-indigo-400/40'
-                      : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'
-                  }`}
-                  title={`${group.label} - Click to browse tools`}
-                >
-                  <GroupIcon className={`w-3.5 h-3.5 ${isGroupActive ? 'text-cyan-300' : 'text-slate-400'}`} />
-                  <span>{group.shortLabel}</span>
-                  {isGroupActive && activeItem && (
-                    <span className="hidden xl:inline-block text-[10px] text-cyan-200 bg-black/20 px-1.5 py-0.5 rounded-md font-medium border border-white/10">
-                      {activeItem.label.split(' ')[0]}
-                    </span>
-                  )}
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : 'text-slate-400'}`} />
-                </button>
+              return (
+                <div key={group.id} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setOpenDropdown(isOpen ? null : group.id)}
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
+                      isGroupActive
+                        ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-sm shadow-indigo-600/25 border border-indigo-400/40'
+                        : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'
+                    }`}
+                    title={`${group.label} Menu`}
+                  >
+                    <GroupIcon className={`w-3.5 h-3.5 ${isGroupActive ? 'text-cyan-300' : 'text-slate-400'}`} />
+                    <span>{group.shortLabel}</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : 'text-slate-400'}`} />
+                  </button>
 
-                {/* Glassmorphic Dropdown Popover */}
-                {isOpen && (
-                  <div className="absolute top-full left-0 mt-2 w-72 rounded-2xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1">
-                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 pb-1.5 mb-1 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 text-indigo-300">
-                        <GroupIcon className="w-3 h-3" />
-                        <span>{group.label}</span>
-                      </span>
-                      <span className="text-[9px] font-mono text-slate-500">{group.items.length} tools</span>
-                    </div>
+                  {/* Dropdown Popover */}
+                  {isOpen && (
+                    <div className="absolute top-full left-0 mt-2 w-72 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1">
+                      <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 pb-1.5 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-indigo-300">
+                          <GroupIcon className="w-3 h-3" />
+                          <span>{group.label}</span>
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-500">{group.items.length} tools</span>
+                      </div>
 
-                    {group.items.map((item) => {
-                      const isSelected = activeTab === item.id;
-                      const ItemIcon = item.icon;
+                      {group.items.map((item) => {
+                        const isSelected = activeTab === item.id;
+                        const ItemIcon = item.icon;
 
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => {
-                            setActiveTab(item.id);
-                            setOpenDropdown(null);
-                          }}
-                          className={`w-full text-left p-2 rounded-xl flex items-start gap-2.5 transition-all group/item ${
-                            isSelected
-                              ? 'bg-indigo-600/25 border border-indigo-500/40 text-white shadow-sm'
-                              : 'hover:bg-white/5 text-slate-300 hover:text-white border border-transparent'
-                          }`}
-                        >
-                          <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 transition-colors ${
-                            isSelected
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : `${item.color} group-hover/item:scale-105 transition-transform`
-                          }`}>
-                            <ItemIcon className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-1">
-                              <p className={`text-xs font-bold leading-tight ${isSelected ? 'text-white' : 'text-slate-200 group-hover/item:text-white'}`}>
-                                {item.label}
-                              </p>
-                              {item.badge && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                                  {item.badge}
-                                </span>
-                              )}
-                              {isSelected && (
-                                <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                              )}
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveTab(item.id);
+                              setOpenDropdown(null);
+                            }}
+                            className={`w-full text-left p-2 rounded-xl flex items-start gap-2.5 transition-all group/item ${
+                              isSelected
+                                ? 'bg-indigo-600/25 border border-indigo-500/40 text-white shadow-sm'
+                                : 'hover:bg-white/5 text-slate-300 hover:text-white border border-transparent'
+                            }`}
+                          >
+                            <div
+                              className={`p-1.5 rounded-lg shrink-0 mt-0.5 transition-colors ${
+                                isSelected ? 'bg-indigo-600 text-white shadow-sm' : `${item.color} group-hover/item:scale-105`
+                              }`}
+                            >
+                              <ItemIcon className="w-4 h-4" />
                             </div>
-                            <p className="text-[11px] text-slate-400 leading-tight mt-0.5 line-clamp-1">
-                              {item.desc}
-                            </p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <p className={`text-xs font-bold leading-tight ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                                  {item.label}
+                                </p>
+                                {item.badge && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                    {item.badge}
+                                  </span>
+                                )}
+                                {isSelected && <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                              </div>
+                              <p className="text-[11px] text-slate-400 leading-tight mt-0.5 line-clamp-1">
+                                {item.desc}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
-          {/* Standalone Flagship AI Coach Tab */}
+            {/* Standalone Math Games Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('math-games');
+                setOpenDropdown(null);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
+                activeTab === 'math-games'
+                  ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white shadow-md shadow-amber-500/20 ring-1 ring-white/30 border border-white/20'
+                  : 'text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/40'
+              }`}
+              title="Speed Math & Fast Calculation Games Arena"
+            >
+              <Gamepad2 className={`w-3.5 h-3.5 ${activeTab === 'math-games' ? 'text-amber-200' : 'text-amber-400'}`} />
+              <span>Math Games</span>
+            </button>
+
+            {/* Standalone AI Coach Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('ai-coach');
+                setOpenDropdown(null);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
+                activeTab === 'ai-coach'
+                  ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 text-white shadow-md shadow-indigo-500/20 ring-1 ring-white/30 border border-white/20'
+                  : 'text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40'
+              }`}
+              title="Personal AI Study Coach"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${activeTab === 'ai-coach' ? 'text-cyan-200 animate-spin' : 'text-indigo-400'}`} />
+              <span>AI Coach</span>
+            </button>
+          </nav>
+
+          {/* Linear-Style Command Palette Trigger */}
+          <CommandSearchTrigger onClick={openCommandPalette} />
+        </div>
+
+        {/* =================================================================== */}
+        {/* ZONE 3: FOCUS UTILITIES & USER PROFILE HUB (RIGHT) */}
+        {/* =================================================================== */}
+        <div className="flex items-center gap-2 sm:gap-2.5">
+          
+          {/* Consolidated Focus Capsule (Timer + Ambient Sound) */}
+          <FocusCapsule />
+
+          {/* Voice Talk Mic Button */}
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('ai-coach');
-              setOpenDropdown(null);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
-              activeTab === 'ai-coach'
-                ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/30 border border-white/20'
-                : 'text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40'
-            }`}
-            title="Open Personal AI Study Coach"
-          >
-            <Sparkles className={`w-3.5 h-3.5 ${activeTab === 'ai-coach' ? 'text-cyan-200 animate-spin' : 'text-indigo-400'}`} />
-            <span>AI Coach</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          </button>
-
-          {/* Standalone Math Speed Games Tab */}
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('math-games');
-              setOpenDropdown(null);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
-              activeTab === 'math-games'
-                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white shadow-lg shadow-amber-500/25 ring-1 ring-white/30 border border-white/20'
-                : 'text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/40'
-            }`}
-            title="Open Speed Math & Calculation Games Arena"
-          >
-            <Gamepad2 className={`w-3.5 h-3.5 ${activeTab === 'math-games' ? 'text-amber-200' : 'text-amber-400'}`} />
-            <span>Math Games</span>
-            <span className="text-[9px] px-1 py-0.2 rounded-full bg-amber-400/30 text-amber-200 font-bold">New</span>
-          </button>
-        </nav>
-
-        {/* Right Controls */}
-        <div className="flex items-center gap-2">
-
-          {/* Voice Talk Mic Button (Password Protected) */}
-          <button
             onClick={toggleMic}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl border text-xs font-semibold transition-all ${
               !isVoiceUnlocked
-                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25'
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
                 : isMicMuted
-                ? 'bg-rose-500/15 border-rose-500/30 text-rose-300 hover:bg-rose-500/25'
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
                 : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 shadow-sm shadow-emerald-500/10'
             }`}
             title={!isVoiceUnlocked ? 'Voice chat locked. Click to enter password' : 'Toggle Voice Mic'}
@@ -531,98 +432,29 @@ export const Header: React.FC<HeaderProps> = ({
             {!isVoiceUnlocked ? (
               <>
                 <Lock className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Voice Locked</span>
+                <span className="hidden xl:inline">Voice Locked</span>
               </>
             ) : isMicMuted ? (
               <>
                 <MicOff className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Muted</span>
+                <span className="hidden xl:inline">Muted</span>
               </>
             ) : (
               <>
-                <Mic className="w-3.5 h-3.5 animate-pulse" />
-                <span className="hidden sm:inline">Mic Live</span>
+                <Mic className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                <span className="hidden xl:inline">Mic Live</span>
               </>
             )}
           </button>
 
-          {/* Pomodoro Timer Badge */}
-          <div className="flex items-center gap-1.5 bg-slate-900/90 border border-indigo-500/30 rounded-xl px-2.5 py-1">
-            <span className="text-xs font-mono font-bold text-indigo-300">
-              {formatTime(timeLeft)}
-            </span>
-            <button
-              onClick={isRunning ? pauseTimer : startTimer}
-              className="p-1 rounded-md hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
-              title={isRunning ? 'Pause Timer' : 'Start Focus Session'}
-            >
-              {isRunning ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />}
-            </button>
-            <button
-              onClick={resetTimer}
-              className="p-1 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
-              title="Reset Timer"
-            >
-              <RotateCcw className="w-3 h-3" />
-            </button>
-          </div>
-
-          {/* Ambient Sound Dropdown */}
-          <div className="relative" ref={ambientMenuRef}>
-            <button
-              onClick={() => setShowAmbientMenu(!showAmbientMenu)}
-              className={`p-2 rounded-xl border transition-colors ${
-                ambientSound !== 'none'
-                  ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
-                  : 'bg-slate-900 border-white/10 text-slate-400 hover:text-white hover:border-white/20'
-              }`}
-              title="Ambient Study Sounds (Rain, Lo-Fi, Library)"
-            >
-              {ambientSound !== 'none' ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            </button>
-
-            {showAmbientMenu && (
-              <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-white/15 p-2 shadow-2xl z-50 flex flex-col gap-1 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-2 py-1">Ambient Focus Audio</span>
-                {[
-                  { id: 'none', label: 'Off / Silent' },
-                  { id: 'lofi', label: '🎧 Lo-Fi Beats & Hiss' },
-                  { id: 'rain', label: '🌧️ Gentle Monsoon Rain' },
-                  { id: 'library', label: '📚 Quiet Library Ambience' },
-                  { id: 'whitenoise', label: '🌊 Deep Focus White Noise' }
-                ].map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => {
-                      setAmbientSound(s.id as AmbientSoundType);
-                      setShowAmbientMenu(false);
-                    }}
-                    className={`text-left px-2.5 py-1.5 rounded-lg transition-colors ${
-                      ambientSound === s.id
-                        ? 'bg-indigo-600 text-white font-medium'
-                        : 'text-slate-300 hover:bg-white/5'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Streak & Coins */}
-          <div className="hidden xl:flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl px-2.5 py-1 text-xs">
-            <div className="flex items-center gap-1 text-amber-400 font-semibold" title="Current Study Streak">
+          {/* Gamification Stats Pill (Streak 🔥 + Coins 🪙) */}
+          <div className="hidden xl:flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-2xl px-2.5 py-1.5 text-xs shadow-inner">
+            <div className="flex items-center gap-1 text-amber-400 font-bold" title="Study Streak">
               <Flame className="w-3.5 h-3.5 fill-amber-400 animate-bounce" />
               <span>{streak}d</span>
             </div>
             <div className="w-px h-3 bg-white/10" />
-            <div className="flex items-center gap-1 text-indigo-300 font-medium" title="Level">
-              <Award className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Lv.{level}</span>
-            </div>
-            <div className="w-px h-3 bg-white/10" />
-            <div className="flex items-center gap-1 text-yellow-400 font-medium" title="Coins">
+            <div className="flex items-center gap-1 text-yellow-400 font-bold" title="Math & Study Coins">
               <Coins className="w-3.5 h-3.5 text-yellow-400" />
               <span>{coins}</span>
             </div>
@@ -630,8 +462,9 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Notification Bell */}
           <button
+            type="button"
             onClick={toggleNotifications}
-            className="relative p-2 rounded-xl bg-slate-900 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors"
+            className="relative p-2 rounded-2xl bg-slate-900/80 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-colors shadow-sm"
             title="Notifications"
           >
             <Bell className="w-4 h-4" />
@@ -642,46 +475,54 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* User Account / Profile Menu */}
+          {/* User Profile / Account Menu */}
           {isAuthenticated ? (
             <div className="relative" ref={userMenuRef}>
               <button
+                type="button"
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 p-1 pl-2 pr-2.5 rounded-2xl bg-slate-900 border border-white/10 hover:border-indigo-500/40 transition-colors"
+                className="flex items-center gap-2 p-1 pl-1.5 pr-2 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-indigo-500/40 transition-all shadow-sm"
                 title="Account Settings & Profile"
               >
                 <img
-                  src={currentUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.name || 'Student'}&backgroundColor=6366f1`}
+                  src={
+                    currentUser.avatar ||
+                    `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.name || 'Student'}&backgroundColor=6366f1`
+                  }
                   alt="Avatar"
-                  className="w-6 h-6 rounded-lg"
+                  className="w-6 h-6 rounded-xl border border-white/10"
                 />
-                <div className="text-left hidden md:block">
-                  <p className="text-[11px] font-bold text-white leading-none">
-                    {currentUser.name}
-                  </p>
-                  <p className="text-[9px] font-mono text-cyan-300 leading-none mt-0.5">
-                    @{currentUser.username || 'aspirant'}
-                  </p>
-                </div>
+                <span className="text-xs font-bold text-white hidden md:inline truncate max-w-[90px]">
+                  {currentUser.name}
+                </span>
+                <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showUserMenu ? 'rotate-180 text-white' : ''}`} />
               </button>
 
               {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-slate-900 border border-white/15 p-2 shadow-2xl z-50 flex flex-col gap-1 text-xs animate-in fade-in zoom-in-95 duration-100">
-                  <div className="p-2.5 border-b border-white/10">
-                    <p className="font-bold text-white text-xs">{currentUser.name}</p>
+                <div className="absolute right-0 mt-2 w-56 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2 shadow-2xl z-50 flex flex-col gap-1 text-xs animate-in fade-in zoom-in-95 duration-100">
+                  <div className="p-3 border-b border-white/10">
+                    <p className="font-extrabold text-white text-xs">{currentUser.name}</p>
                     <p className="text-[11px] font-mono text-cyan-300">@{currentUser.username}</p>
                     <p className="text-[10px] text-slate-400 mt-1">{currentUser.targetExam}</p>
                   </div>
                   <button
-                    onClick={() => { setShowUserMenu(false); setIsAuthModalOpen(true); }}
-                    className="text-left px-2.5 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-2"
+                    type="button"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="text-left px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-colors flex items-center gap-2"
                   >
                     <User className="w-3.5 h-3.5 text-indigo-400" />
                     <span>Switch Account / Sign In</span>
                   </button>
                   <button
-                    onClick={() => { setShowUserMenu(false); logoutUser(); }}
-                    className="text-left px-2.5 py-2 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors flex items-center gap-2 font-semibold"
+                    type="button"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      logoutUser();
+                    }}
+                    className="text-left px-3 py-2 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors flex items-center gap-2 font-semibold"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                     <span>Logout</span>
@@ -691,19 +532,20 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           ) : (
             <button
+              type="button"
               onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
             >
               <User className="w-3.5 h-3.5" />
               <span>Sign In</span>
             </button>
           )}
 
-          {/* Mobile Navigation Toggle Button */}
+          {/* Mobile Navigation Drawer Toggle */}
           <button
             type="button"
             onClick={() => setShowMobileNav(!showMobileNav)}
-            className="md:hidden p-2 rounded-xl bg-slate-900 border border-white/10 text-slate-400 hover:text-white transition-colors"
+            className="lg:hidden p-2 rounded-2xl bg-slate-900 border border-white/10 text-slate-400 hover:text-white transition-colors"
             title="Toggle Menu"
           >
             {showMobileNav ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
@@ -712,125 +554,168 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Enhanced Grouped Mobile Navigation Drawer */}
+      {/* =================================================================== */}
+      {/* REDESIGNED MOBILE SLIDE-OVER DRAWER */}
+      {/* =================================================================== */}
       {showMobileNav && (
-        <div className="md:hidden pt-3 pb-3 border-t border-white/10 mt-2 max-w-7xl mx-auto animate-in slide-in-from-top-2 duration-150 space-y-3 max-h-[calc(100vh-4.5rem)] overflow-y-auto custom-scrollbar">
-          
-          {/* AI Coach Quick Hero Banner on Mobile */}
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('ai-coach');
-              setShowMobileNav(false);
-            }}
-            className={`w-full p-2.5 rounded-xl flex items-center justify-between border transition-all ${
-              activeTab === 'ai-coach'
-                ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 text-white border-white/30 shadow-lg shadow-indigo-500/20'
-                : 'bg-gradient-to-r from-indigo-950/60 to-slate-900 border-indigo-500/30 text-indigo-200'
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-                <Sparkles className="w-4 h-4 text-cyan-300" />
-              </div>
-              <div className="text-left">
-                <p className="text-xs font-extrabold text-white">🤖 AI Coach & Teacher</p>
-                <p className="text-[10px] text-slate-400">Ask doubts, generate formulas & speed tricks</p>
-              </div>
-            </div>
-            {activeTab === 'ai-coach' ? (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">Active</span>
-            ) : (
-              <ChevronDown className="w-4 h-4 -rotate-90 text-indigo-400" />
-            )}
-          </button>
-
-          {/* Math Games Quick Hero Banner on Mobile */}
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('math-games');
-              setShowMobileNav(false);
-            }}
-            className={`w-full p-2.5 rounded-xl flex items-center justify-between border transition-all ${
-              activeTab === 'math-games'
-                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white border-white/30 shadow-lg shadow-amber-500/20'
-                : 'bg-gradient-to-r from-amber-950/60 to-slate-900 border-amber-500/30 text-amber-200'
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
-                <Gamepad2 className="w-4 h-4 text-amber-300" />
-              </div>
-              <div className="text-left">
-                <p className="text-xs font-extrabold text-white">🎮 Math Speed Arena</p>
-                <p className="text-[10px] text-slate-400">Speed arithmetic, Vedic hacks & 1v1 room duels</p>
-              </div>
-            </div>
-            {activeTab === 'math-games' ? (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">Active</span>
-            ) : (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">Play</span>
-            )}
-          </button>
-
-          {/* Grouped Category Grids */}
-          {NAV_GROUPS.map((group) => {
-            const GroupIcon = group.icon;
-            return (
-              <div key={group.id} className="space-y-1.5">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                    <GroupIcon className="w-3 h-3 text-indigo-400" />
-                    <span>{group.label}</span>
-                  </span>
-                  <span className="text-[9px] text-slate-500">{group.items.length} tools</span>
+        <div className="lg:hidden fixed inset-0 top-[53px] z-50 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
+          <div className="w-full h-full bg-[#090d16] border-t border-white/10 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+            
+            {/* 1. User Dossier Header Card */}
+            {currentUser && (
+              <div className="p-3.5 bg-slate-900/90 border border-white/10 rounded-3xl flex items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={currentUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.name}&backgroundColor=6366f1`}
+                    alt="Avatar"
+                    className="w-10 h-10 rounded-2xl border border-white/10"
+                  />
+                  <div>
+                    <h4 className="text-xs font-black text-white">{currentUser.name}</h4>
+                    <span className="text-[10px] font-mono text-cyan-300">@{currentUser.username}</span>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {group.items.map((item) => {
-                    const isSelected = activeTab === item.id;
-                    const ItemIcon = item.icon;
-
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          setActiveTab(item.id);
-                          setShowMobileNav(false);
-                        }}
-                        className={`text-left p-2 rounded-xl flex items-center justify-between border transition-all ${
-                          isSelected
-                            ? 'bg-indigo-600/30 border-indigo-500/50 text-white shadow-sm'
-                            : 'bg-slate-900/70 border-white/5 text-slate-300 hover:bg-white/5'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className={`p-1.5 rounded-lg shrink-0 ${isSelected ? 'bg-indigo-600 text-white' : item.color}`}>
-                            <ItemIcon className="w-4 h-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className={`text-xs font-bold leading-none ${isSelected ? 'text-white' : 'text-slate-200'}`}>
-                              {item.label}
-                            </p>
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {item.desc}
-                            </p>
-                          </div>
-                        </div>
-
-                        {isSelected && (
-                          <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0 ml-1" />
-                        )}
-                      </button>
-                    );
-                  })}
+                <div className="flex items-center gap-2 text-xs">
+                  <div className="px-2 py-1 rounded-xl bg-amber-500/10 text-amber-300 font-bold border border-amber-500/20 flex items-center gap-1">
+                    <Flame className="w-3 h-3 fill-amber-400" />
+                    <span>{streak}d</span>
+                  </div>
+                  <div className="px-2 py-1 rounded-xl bg-yellow-500/10 text-yellow-300 font-bold border border-yellow-500/20 flex items-center gap-1">
+                    <Coins className="w-3 h-3 text-yellow-400" />
+                    <span>{coins}</span>
+                  </div>
                 </div>
               </div>
-            );
-          })}
+            )}
 
+            {/* 2. Quick Action Cards (AI Coach & Math Games) */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('ai-coach');
+                  setShowMobileNav(false);
+                }}
+                className={`p-3 rounded-2xl border flex flex-col gap-1.5 text-left transition-all ${
+                  activeTab === 'ai-coach'
+                    ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white border-white/30 shadow-lg'
+                    : 'bg-slate-900/90 border-indigo-500/30 text-indigo-200'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-cyan-300" />
+                </div>
+                <div className="font-extrabold text-xs text-white">🤖 AI Study Coach</div>
+                <div className="text-[10px] text-slate-400">Ask doubts & formulas</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('math-games');
+                  setShowMobileNav(false);
+                }}
+                className={`p-3 rounded-2xl border flex flex-col gap-1.5 text-left transition-all ${
+                  activeTab === 'math-games'
+                    ? 'bg-gradient-to-br from-amber-600 to-rose-600 text-white border-white/30 shadow-lg'
+                    : 'bg-slate-900/90 border-amber-500/30 text-amber-200'
+                }`}
+              >
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                  <Gamepad2 className="w-4 h-4 text-amber-300" />
+                </div>
+                <div className="font-extrabold text-xs text-white">🎮 Math Speed Arena</div>
+                <div className="text-[10px] text-slate-400">6 calculation games</div>
+              </button>
+            </div>
+
+            {/* 3. Search Bar Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowMobileNav(false);
+                openCommandPalette();
+              }}
+              className="w-full p-2.5 rounded-2xl bg-slate-900 border border-white/10 text-xs text-slate-400 flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Search className="w-4 h-4 text-indigo-400" />
+                <span>Search notes, rooms, tricks...</span>
+              </span>
+              <kbd className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono">⌘K</kbd>
+            </button>
+
+            {/* 4. Categorized Navigation Groups */}
+            <div className="space-y-3 pt-1">
+              {NAV_GROUPS.map((group) => {
+                const GroupIcon = group.icon;
+                return (
+                  <div key={group.id} className="space-y-1.5">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5 px-1">
+                      <GroupIcon className="w-3 h-3 text-indigo-400" />
+                      <span>{group.label}</span>
+                    </span>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {group.items.map((item) => {
+                        const isSelected = activeTab === item.id;
+                        const ItemIcon = item.icon;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveTab(item.id);
+                              setShowMobileNav(false);
+                            }}
+                            className={`p-2.5 rounded-2xl border text-left flex items-center gap-2.5 transition-all ${
+                              isSelected
+                                ? 'bg-indigo-600/30 border-indigo-400/60 text-white font-bold'
+                                : 'bg-slate-900/80 border-white/5 text-slate-300 hover:bg-white/5'
+                            }`}
+                          >
+                            <div className={`p-1.5 rounded-xl ${isSelected ? 'bg-indigo-600 text-white' : item.color}`}>
+                              <ItemIcon className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="text-xs truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 5. Footer Utility Actions */}
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileNav(false);
+                  setIsRoomModalOpen(true);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-slate-300 flex items-center justify-center gap-1.5"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Switch Study Room</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileNav(false);
+                  setShowServerModal(true);
+                }}
+                className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white"
+                title="Server Connection Status"
+              >
+                <Radio className={`w-4 h-4 ${isConnected ? 'text-emerald-400' : 'text-rose-400 animate-pulse'}`} />
+              </button>
+            </div>
+
+          </div>
         </div>
       )}
 
@@ -841,7 +726,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={() => setShowServerModal(false)}
         >
           <div
-            className="w-full max-w-md bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-2xl space-y-4"
+            className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
@@ -854,7 +739,6 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={() => setShowServerModal(false)}
                 aria-label="Close server connection dialog"
-                title="Close"
                 className="text-slate-400 hover:text-white text-xs font-mono p-1"
               >
                 ✕
@@ -876,15 +760,6 @@ export const Header: React.FC<HeaderProps> = ({
                 />
               </div>
 
-              <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-[11px] text-slate-400 space-y-1.5">
-                <p>
-                  <strong>Tip:</strong> If the Cloudflare tunnel was restarted, you can paste the new tunnel URL here to reconnect immediately without redeploying Vercel.
-                </p>
-                <p className="font-mono text-cyan-300 text-[10px] break-all">
-                  Default Active Tunnel: https://reduction-bin-listings-train.trycloudflare.com
-                </p>
-              </div>
-
               <div className="flex items-center justify-between gap-2 pt-2">
                 <button
                   type="button"
@@ -893,7 +768,7 @@ export const Header: React.FC<HeaderProps> = ({
                   }}
                   className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
                 >
-                  Reset to Active Tunnel
+                  Reset Default
                 </button>
 
                 <button
@@ -914,6 +789,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       )}
+
     </header>
   );
 };
