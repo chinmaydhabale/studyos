@@ -581,6 +581,72 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     socket.to(roomId).emit('notes:update', updated);
   });
 
+  // ===================================================================
+  // Speed Math 1v1 Room Duel Events
+  // ===================================================================
+  socket.on('math:duel_invite', (data: {
+    targetSocketId?: string;
+    targetUserId?: string;
+    roomId: string;
+    duelId: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar?: string;
+    gameMode: string;
+    timeLimit: number;
+  }) => {
+    const cleanId = cleanRoomId(data.roomId);
+    if (data.targetSocketId) {
+      io.to(data.targetSocketId).emit('math:duel_received', data);
+    } else {
+      // Room-wide challenge broadcast
+      socket.to(cleanId).emit('math:duel_received', data);
+    }
+  });
+
+  socket.on('math:duel_accept', (data: {
+    duelId: string;
+    challengerSocketId: string;
+    acceptorId: string;
+    acceptorName: string;
+    acceptorAvatar?: string;
+    roomId: string;
+    seed: number;
+    gameMode: string;
+    timeLimit: number;
+  }) => {
+    const cleanId = cleanRoomId(data.roomId);
+    // Broadcast match start to both players
+    io.to(data.challengerSocketId).emit('math:duel_start', data);
+    socket.emit('math:duel_start', data);
+  });
+
+  socket.on('math:duel_decline', (data: { challengerSocketId: string; duelId: string; message?: string }) => {
+    io.to(data.challengerSocketId).emit('math:duel_declined', data);
+  });
+
+  socket.on('math:duel_progress', (data: {
+    opponentSocketId: string;
+    duelId: string;
+    userId: string;
+    score: number;
+    streak: number;
+    questionIndex: number;
+  }) => {
+    io.to(data.opponentSocketId).emit('math:duel_opponent_progress', data);
+  });
+
+  socket.on('math:duel_finish', (data: {
+    opponentSocketId: string;
+    duelId: string;
+    userId: string;
+    finalScore: number;
+    accuracy: number;
+    highestStreak: number;
+  }) => {
+    io.to(data.opponentSocketId).emit('math:duel_opponent_finished', data);
+  });
+
   // Disconnect
   socket.on('disconnect', () => {
     activeRoomPeers.forEach((peers, roomId) => {

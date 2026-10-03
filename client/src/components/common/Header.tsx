@@ -39,7 +39,8 @@ import {
   Laptop,
   Globe,
   Cast,
-  Radio
+  Radio,
+  Gamepad2
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy, AmbientSoundType } from '../../context/StudyContext.js';
@@ -125,6 +126,14 @@ const NAV_GROUPS: NavGroup[] = [
         desc: 'Freehand drawings, puzzle flowcharts & diagrams',
         icon: PenTool,
         color: 'text-purple-400 bg-purple-500/10'
+      },
+      {
+        id: 'math-games',
+        label: 'Math Speed Arena',
+        desc: 'Speed calculations, Vedic shortcuts & 1v1 duels',
+        icon: Gamepad2,
+        badge: 'Games',
+        color: 'text-amber-400 bg-amber-500/10'
       }
     ]
   },
@@ -483,6 +492,25 @@ export const Header: React.FC<HeaderProps> = ({
             <span>AI Coach</span>
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
           </button>
+
+          {/* Standalone Math Speed Games Tab */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('math-games');
+              setOpenDropdown(null);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 ${
+              activeTab === 'math-games'
+                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white shadow-lg shadow-amber-500/25 ring-1 ring-white/30 border border-white/20'
+                : 'text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/40'
+            }`}
+            title="Open Speed Math & Calculation Games Arena"
+          >
+            <Gamepad2 className={`w-3.5 h-3.5 ${activeTab === 'math-games' ? 'text-amber-200' : 'text-amber-400'}`} />
+            <span>Math Games</span>
+            <span className="text-[9px] px-1 py-0.2 rounded-full bg-amber-400/30 text-amber-200 font-bold">New</span>
+          </button>
         </nav>
 
         {/* Right Controls */}
@@ -714,6 +742,35 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">Active</span>
             ) : (
               <ChevronDown className="w-4 h-4 -rotate-90 text-indigo-400" />
+            )}
+          </button>
+
+          {/* Math Games Quick Hero Banner on Mobile */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('math-games');
+              setShowMobileNav(false);
+            }}
+            className={`w-full p-2.5 rounded-xl flex items-center justify-between border transition-all ${
+              activeTab === 'math-games'
+                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-indigo-600 text-white border-white/30 shadow-lg shadow-amber-500/20'
+                : 'bg-gradient-to-r from-amber-950/60 to-slate-900 border-amber-500/30 text-amber-200'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center border border-amber-500/30">
+                <Gamepad2 className="w-4 h-4 text-amber-300" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-extrabold text-white">🎮 Math Speed Arena</p>
+                <p className="text-[10px] text-slate-400">Speed arithmetic, Vedic hacks & 1v1 room duels</p>
+              </div>
+            </div>
+            {activeTab === 'math-games' ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">Active</span>
+            ) : (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">Play</span>
             )}
           </button>
 

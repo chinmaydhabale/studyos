@@ -19,6 +19,7 @@ import { RoomGatewayModal } from './components/rooms/RoomGatewayModal.js';
 import { PDFReaderView } from './components/pdf-reader/PDFReaderView.js';
 import { WebNotesView } from './components/notes/WebNotesView.js';
 import { PeerActivityDossierModal } from './components/activity/PeerActivityDossierModal.js';
+import { MathGamesArena } from './components/math-games/MathGamesArena.js';
 import { PenTool, FileText, Activity } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -209,6 +210,13 @@ const MainLayout: React.FC = () => {
         {activeTab === 'leaderboards' && (
           <div className="flex-1 min-h-0 overflow-y-auto">
             <LeaderboardsView />
+          </div>
+        )}
+
+        {/* Tab 10: Speed Math & Fast Calculation Games Arena */}
+        {activeTab === 'math-games' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <MathGamesArena />
           </div>
         )}
 
