@@ -184,7 +184,9 @@ export class AICoachService {
 
   private cleanString(value: unknown, maxLength = 400): string | undefined {
     if (typeof value !== 'string') return undefined;
-    const trimmed = value.trim();
+    let trimmed = value.trim();
+    // Normalize literal escaped newlines and tabs from LLM outputs
+    trimmed = trimmed.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '  ');
     return trimmed ? trimmed.slice(0, maxLength) : undefined;
   }
 
@@ -953,12 +955,13 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
 2. MATHEMATICS & FORMULA RIGOR (KaTeX / LaTeX):
    - Always use standard LaTeX for all mathematical expressions:
-     * Inline math must be enclosed in single dollar signs: $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$
+     * Inline math must be enclosed in single dollar signs: $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$
      * Block/display math must be enclosed in double dollar signs:
        $$
-       \\text{Compound Interest} = P \\left(1 + \\frac{R}{100}\\right)^T - P
+       \text{Compound Interest} = P \left(1 + \frac{R}{100}\right)^T - P
        $$
-   - Never write raw unescaped ASCII math like "x^2/y". Always format it properly in LaTeX.
+   - CRITICAL: Never write standalone formulas, equations, or LaTeX commands naked on a line without wrapping them in $$...$$ or $...$. ALWAYS wrap them in $$...$$ so they render cleanly.
+   - Separate every section, heading, and step card with normal markdown line breaks.
 
 3. STRUCTURED PEDAGOGICAL BREAKDOWN:
    Use clear Markdown formatting with sections:

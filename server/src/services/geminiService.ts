@@ -243,15 +243,27 @@ export class GeminiService {
 
       if (ch === '\\') {
         const next = str[i + 1] || '';
-        // Valid JSON escape sequences: \", \\, \/, \b, \f, \n, \r, \t
-        if (next === '"' || next === '\\' || next === '/' || next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't') {
+        // Standard JSON escape sequences that must be preserved: \", \\, \/
+        if (next === '"' || next === '\\' || next === '/') {
           out += ch + next;
           i++;
         } else if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(str.slice(i + 2, i + 6))) {
+          // Unicode escape \uXXXX
           out += str.slice(i, i + 6);
           i += 5;
+        } else if (next === 'n') {
+          // Check if followed by letters (e.g. \neq, \nu, \nabla) -> LaTeX command!
+          const following = str.slice(i + 2, i + 5);
+          if (/^[a-zA-Z]/.test(following)) {
+            out += '\\\\';
+          } else {
+            // Real JSON newline escape (\n)
+            out += '\\n';
+            i++;
+          }
         } else {
-          // Unescaped LaTeX backslash (e.g. \sqrt, \alpha, \cdot, \pm, etc.) -> escape it as \\
+          // All LaTeX backslashes (\frac, \times, \text, \right, \left, \sqrt, \alpha, \beta, \cdot, \pm, etc.)
+          // MUST be escaped as \\ so JSON.parse keeps them as valid LaTeX instead of converting to control characters!
           out += '\\\\';
         }
         continue;

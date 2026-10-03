@@ -7,13 +7,18 @@ interface FormattedAiMessageProps {
   className?: string;
 }
 
+function cleanTex(tex: string): string {
+  return tex.trim().replace(/\\\\([a-zA-Z])/g, '\\$1');
+}
+
 /**
  * Safely renders LaTeX math using KaTeX.
  * Returns rendered HTML or raw text fallback on error.
  */
 function renderKaTeX(tex: string, displayMode: boolean): string {
   try {
-    return katex.renderToString(tex.trim(), {
+    const cleaned = cleanTex(tex);
+    return katex.renderToString(cleaned, {
       displayMode,
       throwOnError: false,
       output: 'htmlAndMathml'
@@ -31,18 +36,32 @@ function escapeHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function isMathLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 3 || t.length > 600) return false;
+  // Does it contain clear LaTeX math commands?
+  const hasLatex = /\\(frac|times|sqrt|xrightarrow|left|right|text\{|pm|cdot|approx|alpha|beta|theta|sum|int|partial|infty|ge|le|neq|div|over|binom|quad|pi)/.test(t);
+  if (hasLatex) return true;
+  // Does it look like a standalone mathematical equation line (e.g. "MP = CP + 40")
+  if (/^[A-Za-z0-9_\(\)]+\s*=\s*[A-Za-z0-9_\(\)\+\-\*\/\^\s\\]+$/.test(t) && !t.includes('http') && !t.includes('**')) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Parses inline text for bold, italics, code, and inline LaTeX ($...$ and \(...\))
  */
 const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
   const parts = useMemo(() => {
     // Regex matches:
-    // 1. Inline math: $...$ or \(...\)
-    // 2. Bold: **...**
-    // 3. Inline code: `...`
-    // 4. Italic: *...*
+    // 1. Display math: $$...$$ or \[...\]
+    // 2. Inline math: $...$ or \(...\)
+    // 3. Bold: **...**
+    // 4. Inline code: `...`
+    // 5. Italic: *...*
     const tokens: React.ReactNode[] = [];
-    const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$(?!\s)([^\$\n]+?)(?<!\s)\$|\\\([\s\S]+?\\\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g;
+    const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$([^\$\n]+?)\$|\\\([\s\S]+?\\\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g;
     
     let lastIndex = 0;
     let match: RegExpExecArray | null;
@@ -95,28 +114,28 @@ const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
             dangerouslySetInnerHTML={{ __html: html }}
           />
         );
-      } else if (match[4]) {
+      } else if (match[3]) {
         // Bold: **text**
         tokens.push(
           <strong key={match.index} className="font-bold text-white tracking-wide">
-            {match[4]}
+            {match[3]}
           </strong>
         );
-      } else if (match[5]) {
+      } else if (match[4]) {
         // Code: `code`
         tokens.push(
           <code
             key={match.index}
             className="px-1.5 py-0.5 rounded-md bg-slate-800 text-cyan-300 font-mono text-[11px] border border-white/10"
           >
-            {match[5]}
+            {match[4]}
           </code>
         );
-      } else if (match[6]) {
+      } else if (match[5]) {
         // Italic: *text*
         tokens.push(
           <em key={match.index} className="italic text-slate-200">
-            {match[6]}
+            {match[5]}
           </em>
         );
       }
@@ -143,11 +162,19 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
     setTimeout(() => setCopiedCodeIdx(null), 2000);
   };
 
+  const normalizedContent = useMemo(() => {
+    if (!content) return '';
+    let s = content;
+    // Replace literal escaped newlines and tabs
+    s = s.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '  ');
+    return s;
+  }, [content]);
+
   // Block parser splits content by code fences, math display blocks, tables, and paragraphs
   const renderedBlocks = useMemo(() => {
-    if (!content) return null;
+    if (!normalizedContent) return null;
 
-    const lines = content.split('\n');
+    const lines = normalizedContent.split('\n');
     const blocks: React.ReactNode[] = [];
     let currentTableRows: string[] = [];
     let inCodeBlock = false;
@@ -211,11 +238,45 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
         blocks.push(
           <div
             key={`math-one-${i}`}
-            className="my-3 p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-center overflow-x-auto custom-scrollbar shadow-inner"
+            className="my-3 p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/25 text-center overflow-x-auto custom-scrollbar shadow-inner"
             dangerouslySetInnerHTML={{ __html: html }}
           />
         );
         continue;
+      }
+
+      // Single dollar standalone line: $...$
+      if (trimmed.startsWith('$') && trimmed.endsWith('$') && trimmed.length > 2) {
+        flushTable(i);
+        const math = trimmed.slice(1, -1);
+        const html = renderKaTeX(math, true);
+        blocks.push(
+          <div
+            key={`math-dollar-${i}`}
+            className="my-3 p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/25 text-center overflow-x-auto custom-scrollbar shadow-inner"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        );
+        continue;
+      }
+
+      // Standalone unwrapped LaTeX or math equation line
+      if (isMathLine(trimmed)) {
+        try {
+          const cleaned = cleanTex(trimmed);
+          const html = katex.renderToString(cleaned, { displayMode: true, throwOnError: true });
+          flushTable(i);
+          blocks.push(
+            <div
+              key={`math-auto-${i}`}
+              className="my-3 p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/25 text-center overflow-x-auto custom-scrollbar shadow-inner"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          );
+          continue;
+        } catch {
+          // If KaTeX parsing threw an error, fall through to regular line processing
+        }
       }
 
       if (trimmed === '$$' || trimmed === '\\[') {
