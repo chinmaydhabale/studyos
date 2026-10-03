@@ -89,15 +89,15 @@ export class GeminiService {
 
     let modelsToTry: string[] = [];
     if (customModel) {
-      modelsToTry = [customModel];
+      modelsToTry = [customModel, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.8-flash'];
     } else if (tier === 'lite') {
-      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-flash-lite-latest'];
+      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
     } else {
       // Default, heavy or balanced
       const primary = this.getModel();
-      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
+      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash'];
     }
-    modelsToTry = Array.from(new Set(modelsToTry));
+    modelsToTry = Array.from(new Set(modelsToTry.filter(Boolean)));
 
     const keyAttempts = Math.min(keys.length, 3);
     for (let k = 0; k < keyAttempts; k++) {
@@ -122,8 +122,8 @@ export class GeminiService {
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`[gemini] ${model} (key ...${activeKey.slice(-6)}) returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
-            if (res.status === 503 || res.status === 429 || res.status === 403) {
-              // Rotate key and retry
+            if (res.status === 503 || res.status === 429 || res.status === 403 || res.status === 404) {
+              // Rotate key and retry next model
               this.currentKeyIndex = (this.currentKeyIndex + 1) % keys.length;
               continue; // Fallback to alternative model or next key
             }
