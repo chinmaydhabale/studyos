@@ -46,18 +46,25 @@ export interface AIModelOption {
 
 const DEFAULT_MODELS: AIModelOption[] = [
   {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    tag: 'Recommended & Stable',
+    description: 'Rock solid, comprehensive textbook explanations with guaranteed instant availability',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+  },
+  {
     id: 'gemini-3.8-flash',
     name: 'Gemini 3.8 Flash',
-    tag: 'Recommended',
+    tag: 'Next-Gen Reasoning',
     description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & math solver',
-    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+    badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
   },
   {
     id: 'gemini-3.7-flash',
     name: 'Gemini 3.7 Flash',
     tag: 'Math & Logic',
     description: 'Deep analytical thinking for complex mathematical derivations & proofs',
-    badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
   },
   {
     id: 'gemini-3.6-flash',
@@ -67,18 +74,11 @@ const DEFAULT_MODELS: AIModelOption[] = [
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
   },
   {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    tag: 'Balanced',
-    description: 'Rock solid, comprehensive textbook explanations',
-    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-  },
-  {
     id: 'gemini-3.5-flash-lite',
     name: 'Gemini 3.5 Flash Lite',
     tag: 'Lightning Fast',
     description: 'Instant answers for quick formula checks and rapid doubt lookup',
-    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
   }
 ];
 
@@ -126,7 +126,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [models, setModels] = useState<AIModelOption[]>(DEFAULT_MODELS);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem('studyos_pdf_ai_model') || 'gemini-3.8-flash';
+    return localStorage.getItem('studyos_pdf_ai_model') || 'gemini-3.5-flash';
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);

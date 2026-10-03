@@ -1014,7 +1014,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     });
 
     if (result) {
-      const explanation = this.cleanString(result.explanation, 12000);
+      const explanation = this.cleanString(result.explanation, 16000);
       const keyPoints = this.cleanStringArray(result.keyPoints, 8, 800);
       if (explanation) {
         return {
@@ -1027,6 +1027,45 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
           source: 'gemini',
           modelUsed: selectedModel
         };
+      }
+    }
+
+    // Safety Net: If generateJson fails, try unconstrained generateText
+    if (gemini.isConfigured()) {
+      try {
+        console.warn('[ai] pdf-assist generateJson yielded null, trying generateText fallback...');
+        const textResult = await gemini.generateText({
+          systemInstruction: pdfSystemInstruction,
+          prompt:
+            `Learner profile:\n${this.buildLearnerContext(input.userId)}\n\n` +
+            `Document Title: "${docTitle}" — Page ${page}\n\n` +
+            `${focus}\n\n` +
+            `--- CURRENT PAGE TEXT START ---\n${pageText}\n--- CURRENT PAGE TEXT END ---\n\n` +
+            `${task}\n\n` +
+            `FORMATTING INSTRUCTION: Provide an exhaustive, complete step-by-step pedagogical solution in rich Markdown with KaTeX math ($...$ and $$...$$), Step headings, 💡 Shortcuts, and ⚠️ Common Traps. Do not truncate.`,
+          temperature: 0.5,
+          model: selectedModel,
+          conversationHistory: input.conversationHistory
+        });
+
+        if (textResult && textResult.trim()) {
+          const headingMatch = textResult.match(/^#+\s*(.+)$/m);
+          const heading = headingMatch ? headingMatch[1].trim() : (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
+          return {
+            mode,
+            heading,
+            explanation: textResult.trim(),
+            keyPoints: [
+              'Follow systematic step-by-step problem breakdown',
+              'Verify intermediate equations before substitution',
+              'Cross-check units and edge-case boundary conditions'
+            ],
+            source: 'gemini',
+            modelUsed: selectedModel
+          };
+        }
+      } catch (textErr) {
+        console.warn('[ai] pdf-assist generateText fallback failed:', textErr);
       }
     }
 
@@ -1053,17 +1092,29 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       .filter(s => s.length > 40)
       .slice(0, 4);
 
-    const explanation =
-      'The AI service is not configured on this server, so this is the text extracted from the page ' +
-      'rather than a generated explanation. Set GEMINI_API_KEY to get full AI explanations.' +
-      (question ? `\n\nYour question: "${question}"` : '');
+    let explanation: string;
+    if (gemini.isConfigured()) {
+      explanation =
+        `### ⚠️ Model Temporarily Busy\n\n` +
+        `The selected AI model is currently experiencing temporary high traffic. Here is the reference text extracted directly from Page ${page} of "${docTitle}":\n\n` +
+        `> ${focus.slice(0, 600)}\n\n` +
+        `**Recommended Action:**\n` +
+        `- Select **Gemini 3.5 Flash** (Recommended & Stable) in the model selector above for instant response.\n` +
+        `- Click **"Clear & Ask Again"**.\n` +
+        (question ? `- Your question: *"${question}"*` : '');
+    } else {
+      explanation =
+        'The AI service is not configured on this server, so this is the text extracted from the page ' +
+        'rather than a generated explanation. Set GEMINI_API_KEY to get full AI explanations.' +
+        (question ? `\n\nYour question: "${question}"` : '');
+    }
 
     return {
       mode,
       heading: question ? `Page ${page} — your question` : `Page ${page} of ${docTitle}`,
       explanation,
       keyPoints: sentences.length ? sentences : [focus.slice(0, 300)],
-      followUp: 'Try the AI Coach hub for a full conceptual breakdown.'
+      followUp: 'Select Gemini 3.5 Flash or try asking again in a few moments.'
     };
   }
 

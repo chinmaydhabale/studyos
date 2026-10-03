@@ -19,7 +19,7 @@ export const GEMINI_MODELS = {
   lite: 'gemini-3.5-flash-lite'
 };
 
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 60000;
 
 export interface GeminiHistoryItem {
   role: 'user' | 'assistant' | 'model';
@@ -89,13 +89,13 @@ export class GeminiService {
 
     let modelsToTry: string[] = [];
     if (customModel) {
-      modelsToTry = [customModel, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.8-flash'];
+      modelsToTry = [customModel, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
     } else if (tier === 'lite') {
       modelsToTry = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
     } else {
       // Default, heavy or balanced
       const primary = this.getModel();
-      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash'];
+      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
     }
     modelsToTry = Array.from(new Set(modelsToTry.filter(Boolean)));
 
@@ -122,12 +122,12 @@ export class GeminiService {
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`[gemini] ${model} (key ...${activeKey.slice(-6)}) returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
-            if (res.status === 503 || res.status === 429 || res.status === 403 || res.status === 404) {
-              // Rotate key and retry next model
-              this.currentKeyIndex = (this.currentKeyIndex + 1) % keys.length;
-              continue; // Fallback to alternative model or next key
+            // On rate limits, high demand, or server issues, try the next model or next key
+            if (res.status === 503 || res.status === 429 || res.status === 403 || res.status === 404 || res.status >= 500) {
+              continue;
             }
-            return null;
+            // For 400 parameter errors on specific models, continue to alternative models
+            continue;
           }
 
           const data = await res.json();
@@ -199,28 +199,108 @@ export class GeminiService {
   }
 
   /**
+   * Cleans and repairs common LLM JSON output flaws:
+   * - Strips markdown code fences (```json ... ```)
+   * - Extracts JSON object or array bounds
+   * - Escapes unescaped LaTeX backslashes (\sqrt, \frac, \alpha, \times, \pm, \cdot, etc.)
+   * - Escapes literal raw newlines and tabs inside JSON string literals
+   */
+  private cleanAndParseJson<T>(raw: string): T | null {
+    let str = (raw || '').trim();
+    if (str.startsWith('```')) {
+      str = str.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+    const first = str.indexOf('{');
+    const last = str.lastIndexOf('}');
+    if (first !== -1 && last > first) {
+      str = str.slice(first, last + 1);
+    }
+
+    // Direct attempt
+    try {
+      return JSON.parse(str) as T;
+    } catch {}
+
+    // Character-by-character repair for string literals:
+    let inString = false;
+    let out = '';
+
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+
+      if (!inString) {
+        if (ch === '"') inString = true;
+        out += ch;
+        continue;
+      }
+
+      // Inside string literal
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+
+      if (ch === '\\') {
+        const next = str[i + 1] || '';
+        // Valid JSON escape sequences: \", \\, \/, \b, \f, \n, \r, \t
+        if (next === '"' || next === '\\' || next === '/' || next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't') {
+          out += ch + next;
+          i++;
+        } else if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(str.slice(i + 2, i + 6))) {
+          out += str.slice(i, i + 6);
+          i += 5;
+        } else {
+          // Unescaped LaTeX backslash (e.g. \sqrt, \alpha, \cdot, \pm, etc.) -> escape it as \\
+          out += '\\\\';
+        }
+        continue;
+      }
+
+      // Replace literal unescaped newlines/tabs inside string literal
+      if (ch === '\n') {
+        out += '\\n';
+      } else if (ch === '\r') {
+        out += '\\r';
+      } else if (ch === '\t') {
+        out += '\\t';
+      } else {
+        out += ch;
+      }
+    }
+
+    try {
+      return JSON.parse(out) as T;
+    } catch {}
+
+    // Regex fallback
+    try {
+      const sanitized = str.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+      return JSON.parse(sanitized) as T;
+    } catch {}
+
+    return null;
+  }
+
+  /**
    * Structured generation. Returns the parsed object, or null when the model is
    * unavailable or produced unparseable output.
    */
   public async generateJson<T>(req: GeminiJsonRequest): Promise<T | null> {
     const raw = await this.request(this.buildPayload(req, true), req.tier, req.model);
     if (!raw) return null;
+
+    // 1. Direct parse attempt
     try {
       return JSON.parse(raw) as T;
-    } catch {
-      // Models occasionally wrap JSON in a code fence despite responseMimeType.
-      const match = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-      if (!match) {
-        console.warn('[gemini] response was not JSON');
-        return null;
-      }
-      try {
-        return JSON.parse(match[0]) as T;
-      } catch {
-        console.warn('[gemini] response was not parseable JSON');
-        return null;
-      }
-    }
+    } catch {}
+
+    // 2. Clean and repair common LLM JSON defects
+    const cleaned = this.cleanAndParseJson<T>(raw);
+    if (cleaned !== null) return cleaned;
+
+    console.warn('[gemini] response was not parseable JSON even after sanitization. Raw snippet:', raw.slice(0, 200));
+    return null;
   }
 }
 
