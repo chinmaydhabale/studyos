@@ -1,8 +1,29 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, BookOpen, Loader2, X, HelpCircle, Cpu, Quote, Lightbulb } from 'lucide-react';
+import {
+  Sparkles,
+  Send,
+  BookOpen,
+  Loader2,
+  X,
+  HelpCircle,
+  Cpu,
+  Quote,
+  Lightbulb,
+  Copy,
+  Check,
+  ChevronDown,
+  RotateCcw,
+  Maximize2,
+  Minimize2,
+  Zap,
+  BrainCircuit,
+  MessageSquare,
+  ArrowRight
+} from 'lucide-react';
 import { API_BASE_URL } from '../../config.js';
+import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
 
-const MAX_PAGE_TEXT_CHARS = 6000;
+const MAX_PAGE_TEXT_CHARS = 10000;
 
 export interface PdfAssistResult {
   mode: 'page' | 'selection' | 'question';
@@ -12,23 +33,68 @@ export interface PdfAssistResult {
   formula?: string;
   followUp?: string;
   source: 'gemini' | 'fallback';
+  modelUsed?: string;
 }
+
+export interface AIModelOption {
+  id: string;
+  name: string;
+  tag: string;
+  description: string;
+  badgeColor: string;
+}
+
+const DEFAULT_MODELS: AIModelOption[] = [
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    tag: 'Recommended',
+    description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & math solver',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+  },
+  {
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    tag: 'Math & Logic',
+    description: 'Deep analytical thinking for complex mathematical derivations & proofs',
+    badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+  },
+  {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    tag: 'High Precision',
+    description: 'Rigorous calculation accuracy and formula verification',
+    badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    tag: 'Balanced',
+    description: 'Rock solid, comprehensive textbook explanations',
+    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    tag: 'Lightning Fast',
+    description: 'Instant answers for quick formula checks and rapid doubt lookup',
+    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+  }
+];
 
 interface PDFAiPanelProps {
   docTitle: string;
   currentPage: number;
   userId: string;
-  /** Text the student highlighted inside the PDF, if any. */
   selectedText: string;
-  /** Changes when the student taps "Explain with AI"; triggers the explanation. */
   autoRunSelection?: number;
   onClearSelection: () => void;
   onClose: () => void;
-  /** Extracts the text of a page from the loaded PDF. */
   getPageText: (page: number) => Promise<string>;
-  /** Jumps to the full AI Coach hub for a broader session. */
   onOpenCoachHub?: () => void;
   addToast: (title: string, message: string, type?: 'success' | 'info' | 'alert') => void;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 interface Exchange {
@@ -37,6 +103,7 @@ interface Exchange {
   selectedText?: string;
   page: number;
   result: PdfAssistResult;
+  timestamp: Date;
 }
 
 export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
@@ -49,14 +116,25 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   onClose,
   getPageText,
   onOpenCoachHub,
-  addToast
+  addToast,
+  isExpanded,
+  onToggleExpand
 }) => {
   const [question, setQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const [models, setModels] = useState<AIModelOption[]>(DEFAULT_MODELS);
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('studyos_pdf_ai_model') || 'gemini-3.8-flash';
+  });
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const modelPickerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch AI server status and available models
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE_URL}/api/ai/status`)
@@ -67,23 +145,102 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
       .catch(() => {
         if (!cancelled) setAiEnabled(false);
       });
+
+    fetch(`${API_BASE_URL}/api/ai/models`)
+      .then(res => res.json())
+      .then((data: { models: AIModelOption[] }) => {
+        if (!cancelled && Array.isArray(data?.models) && data.models.length > 0) {
+          setModels(data.models);
+        }
+      })
+      .catch(() => {
+        // Fallback to DEFAULT_MODELS
+      });
+
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Keep the newest answer in view as results stream in.
+  // Close model picker on outside click
   useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false);
+      }
+    };
+    if (showModelPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showModelPicker]);
+
+  // Save model choice
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModel(modelId);
+    localStorage.setItem('studyos_pdf_ai_model', modelId);
+    setShowModelPicker(false);
+    const m = models.find(x => x.id === modelId);
+    addToast('Model Changed', `Now using ${m?.name || modelId} for step-by-step reasoning.`, 'info');
+  };
+
+  // Scroll to bottom on new answers
+  useEffect(() => {
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }
   }, [exchanges.length, isLoading]);
 
-  const runAssist = async (opts: { mode: 'page' | 'selection' | 'question'; selected?: string; ask?: string; page?: number }) => {
+  const activeModelObj = models.find(m => m.id === selectedModel) || models[0];
+
+  const handleCopySolution = (ex: Exchange) => {
+    const fullText = `# ${ex.result.heading}\n\n${ex.result.explanation}${
+      ex.result.formula ? `\n\n### Primary Formula:\n$$${ex.result.formula}$$` : ''
+    }${
+      ex.result.keyPoints?.length
+        ? `\n\n### Key Exam Takeaways:\n${ex.result.keyPoints.map(p => `- ${p}`).join('\n')}`
+        : ''
+    }`;
+    navigator.clipboard.writeText(fullText);
+    setCopiedId(ex.id);
+    addToast('Copied to Clipboard', 'Full step-by-step solution copied with formulas.', 'success');
+    setTimeout(() => setCopiedId(null), 2500);
+  };
+
+  const handleClearHistory = () => {
+    if (exchanges.length === 0) return;
+    setExchanges([]);
+    addToast('Session Cleared', 'Started a fresh AI study session.', 'info');
+  };
+
+  const runAssist = async (opts: {
+    mode: 'page' | 'selection' | 'question';
+    selected?: string;
+    ask?: string;
+    page?: number;
+  }) => {
     const page = opts.page ?? currentPage;
     setIsLoading(true);
     try {
-      // Match the server's prompt cap before serialization so a dense PDF page
-      // cannot exceed Express's JSON body limit.
-      const pageText = (await getPageText(page)).slice(0, MAX_PAGE_TEXT_CHARS);
+      const rawText = await getPageText(page);
+      const pageText = rawText.slice(0, MAX_PAGE_TEXT_CHARS);
+
+      // Build previous conversation turns for multi-turn context
+      const conversationHistory = exchanges.slice(-6).flatMap(ex => {
+        const turns: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+        if (ex.question) {
+          turns.push({ role: 'user', text: ex.question });
+        } else if (ex.selectedText) {
+          turns.push({ role: 'user', text: `Explain this passage from Page ${ex.page}: "${ex.selectedText}"` });
+        }
+        if (ex.result.explanation) {
+          turns.push({ role: 'assistant', text: ex.result.explanation });
+        }
+        return turns;
+      });
+
       const res = await fetch(`${API_BASE_URL}/api/ai/pdf-assist`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -94,28 +251,37 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
           pageText,
           selectedText: opts.selected,
           question: opts.ask,
-          userId
+          userId,
+          model: selectedModel,
+          conversationHistory
         })
       });
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const result: PdfAssistResult = await res.json();
 
       setExchanges(prev => [
         ...prev,
         {
-          id: `ex-${Date.now()}`,
+          id: `ex-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           question: opts.ask,
           selectedText: opts.selected,
           page,
-          result
+          result,
+          timestamp: new Date()
         }
       ]);
+
       if (result.source === 'fallback') {
-        addToast('AI Offline', 'Showing extracted text instead — set GEMINI_API_KEY for real explanations.', 'info');
+        addToast(
+          'AI Offline',
+          'Showing extracted text instead — check GEMINI_API_KEY for real AI explanations.',
+          'info'
+        );
       }
     } catch (err) {
       console.error('PDF AI assist failed:', err);
-      addToast('AI Unavailable', 'Could not reach the AI coach for this page.', 'alert');
+      addToast('AI Unavailable', 'Could not reach the AI professor for this page. Please try again.', 'alert');
     } finally {
       setIsLoading(false);
     }
@@ -128,187 +294,437 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
     runAssist({ mode: 'question', ask, selected: selectedText || undefined });
   };
 
-  // The "Explain with AI" button in the reader bumps autoRunSelection.
+  // Triggered when student taps "Explain with AI" from the PDF text selection popover
   const lastAutoRunRef = useRef<number>(0);
   useEffect(() => {
     if (!autoRunSelection || autoRunSelection === lastAutoRunRef.current) return;
     if (!selectedText) return;
     lastAutoRunRef.current = autoRunSelection;
     runAssist({ mode: 'selection', selected: selectedText });
-    // runAssist is intentionally not a dependency — it is recreated each render
-    // and including it would re-fire the explanation on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRunSelection]);
 
   return (
-    <div className="h-full flex flex-col bg-slate-950/95 backdrop-blur-md overflow-hidden">
-      {/* Header */}
-      <div className="p-3 border-b border-white/10 flex items-center justify-between bg-slate-900/60 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="p-1.5 rounded-lg bg-gradient-to-br from-indigo-600 to-cyan-500 shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-white" />
+    <div className="h-full flex flex-col bg-slate-950/95 backdrop-blur-md overflow-hidden text-slate-100 select-text">
+      {/* 1. Header with Model Selector & Quick Controls */}
+      <div className="p-3 border-b border-white/10 bg-slate-900/80 shrink-0 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          {/* Title & Document Badge */}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-cyan-400 flex items-center justify-center shadow-md shadow-indigo-500/25 shrink-0">
+              <Sparkles className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-black text-white tracking-tight truncate">
+                  AI Study Professor
+                </h3>
+                <span className="px-1.5 py-0.2 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[9px] font-bold">
+                  PRO
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 truncate">
+                {docTitle} • <span className="text-cyan-300 font-mono font-semibold">Page {currentPage}</span>
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h3 className="text-xs font-extrabold text-white truncate">AI Reader Assistant</h3>
-            <p className="text-[10px] text-slate-400 truncate">
-              {docTitle} • page {currentPage}
-            </p>
+
+          {/* Action Icons */}
+          <div className="flex items-center gap-1 shrink-0">
+            {exchanges.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearHistory}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+                title="Clear current session history"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {onToggleExpand && (
+              <button
+                type="button"
+                onClick={onToggleExpand}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors hidden sm:block"
+                title={isExpanded ? 'Collapse to standard width' : 'Expand panel for wider equations'}
+              >
+                {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+              title="Close AI panel"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors shrink-0"
-          title="Close AI assistant"
-        >
-          <X className="w-4 h-4" />
-        </button>
+
+        {/* AI Model Switcher Dropdown Trigger */}
+        <div className="relative" ref={modelPickerRef}>
+          <button
+            type="button"
+            onClick={() => setShowModelPicker(!showModelPicker)}
+            className="w-full flex items-center justify-between p-2 rounded-xl bg-slate-950/80 border border-white/10 hover:border-indigo-500/40 text-left transition-all group"
+            title="Switch AI Reasoning Engine"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <BrainCircuit className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-white group-hover:text-cyan-200 transition-colors truncate">
+                    {activeModelObj.name}
+                  </span>
+                  <span
+                    className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full border ${activeModelObj.badgeColor}`}
+                  >
+                    {activeModelObj.tag}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 shrink-0 ${
+                showModelPicker ? 'rotate-180 text-white' : ''
+              }`}
+            />
+          </button>
+
+          {/* Model Selector Popover */}
+          {showModelPicker && (
+            <div className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-2xl bg-[#0b101e]/98 backdrop-blur-2xl border border-white/15 p-2 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100">
+              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 pb-1 mb-1 flex items-center justify-between">
+                <span>Select AI Model</span>
+                <span className="text-[9px] font-mono text-cyan-400">Gemini 2026 Engine</span>
+              </div>
+
+              {models.map(m => {
+                const isSelected = m.id === selectedModel;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => handleSelectModel(m.id)}
+                    className={`w-full text-left p-2 rounded-xl flex items-start justify-between gap-2 transition-all ${
+                      isSelected
+                        ? 'bg-indigo-600/30 border border-indigo-400/50 text-white shadow-sm'
+                        : 'hover:bg-white/5 text-slate-300 hover:text-white border border-transparent'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                          {m.name}
+                        </span>
+                        <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border ${m.badgeColor}`}>
+                          {m.tag}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight mt-0.5 line-clamp-1">
+                        {m.description}
+                      </p>
+                    </div>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Body */}
-      <div ref={bodyRef} className="flex-1 overflow-y-auto p-3 space-y-3">
+      {/* 2. Chat / Solution Feed */}
+      <div ref={bodyRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 custom-scrollbar">
         {aiEnabled === false && (
-          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 leading-relaxed">
-            <strong>GEMINI_API_KEY is not set</strong>, so the assistant will return the page text instead of a
-            written explanation.
+          <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 leading-relaxed">
+            <strong>GEMINI_API_KEY is not configured</strong> on the server. AI features are operating in fallback mode.
           </div>
         )}
 
-        {/* How-to hint shown until the first answer arrives */}
+        {/* Welcome & How-to guide when no chat yet */}
         {exchanges.length === 0 && !isLoading && (
-          <div className="p-3 rounded-2xl bg-slate-900/60 border border-white/10 text-[11px] text-slate-300 leading-relaxed space-y-2">
-            <p className="font-semibold text-white flex items-center gap-1.5">
-              <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
-              How to use this
+          <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 text-xs text-slate-300 leading-relaxed space-y-3 shadow-lg">
+            <div className="flex items-center gap-2 text-white font-extrabold text-sm border-b border-white/10 pb-2">
+              <Zap className="w-4 h-4 text-amber-400" />
+              <span>Step-by-Step AI Problem Solver</span>
+            </div>
+            <p className="text-slate-300">
+              Ask anything about this document! Get comprehensive, Gemini-level answers with complete step-by-step
+              working, KaTeX math formatting, and shortcut tricks.
             </p>
-            <p>• Highlight any text in the PDF, then tap <strong>Explain selection</strong>.</p>
-            <p>• Or press <strong>Explain this page</strong> for a full page breakdown.</p>
-            <p>• Or just type a question below — answers use the text of the current page.</p>
+            <div className="space-y-2 pt-1 text-[11px]">
+              <div className="flex items-start gap-2 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="text-indigo-400 font-bold shrink-0">1.</span>
+                <span>
+                  <strong>Ask any Math or Logic Question:</strong> Type question in Hindi, Hinglish, or English.
+                </span>
+              </div>
+              <div className="flex items-start gap-2 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="text-cyan-400 font-bold shrink-0">2.</span>
+                <span>
+                  <strong>Highlight Text in PDF:</strong> Select any text, theorem, or problem, then click &ldquo;Explain selection&rdquo;.
+                </span>
+              </div>
+              <div className="flex items-start gap-2 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="text-emerald-400 font-bold shrink-0">3.</span>
+                <span>
+                  <strong>Full Page Breakdown:</strong> Tap &ldquo;Explain Page {currentPage}&rdquo; for an end-to-end breakdown.
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Prompt Starters */}
+            <div className="pt-2 border-t border-white/10 space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick Starters:</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => runAssist({ mode: 'page' })}
+                  className="px-2.5 py-1 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[11px] font-medium transition-all"
+                >
+                  📖 Explain Page {currentPage} End-to-End
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const q = 'Is page par jo main formulas aur concepts hain, unhe step-by-step detail me samjhao with shortcuts.';
+                    setQuestion(q);
+                    runAssist({ mode: 'question', ask: q });
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[11px] font-medium transition-all"
+                >
+                  ⚡ Formulas & Shortcut Tricks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const q = 'Is page ke topic par competitive exam me aane wale 3 typical questions banawo aur unka step by step solution do.';
+                    setQuestion(q);
+                    runAssist({ mode: 'question', ask: q });
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-medium transition-all"
+                >
+                  🎯 Exam Questions & Solutions
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Selected text awaiting an explanation */}
+        {/* Selected text waiting for explanation */}
         {selectedText && (
-          <div className="p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <span className="text-[10px] uppercase font-bold text-indigo-300 flex items-center gap-1">
-                <Quote className="w-3 h-3" />
-                Selected text
+          <div className="p-3.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 space-y-2.5 shadow-md">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase font-bold text-indigo-300 flex items-center gap-1.5">
+                <Quote className="w-3.5 h-3.5" />
+                <span>Selected PDF Passage (Page {currentPage})</span>
               </span>
               <button
                 onClick={onClearSelection}
-                className="text-[10px] text-slate-400 hover:text-white transition-colors shrink-0"
+                className="text-[10px] text-slate-400 hover:text-white transition-colors"
               >
                 Clear
               </button>
             </div>
-            <p className="text-[11px] text-slate-200 leading-relaxed max-h-24 overflow-y-auto">
-              {selectedText}
+            <p className="text-xs text-slate-200 leading-relaxed max-h-28 overflow-y-auto custom-scrollbar p-2 bg-slate-950/60 rounded-xl border border-white/5 font-mono">
+              &ldquo;{selectedText}&rdquo;
             </p>
             <button
               onClick={() => runAssist({ mode: 'selection', selected: selectedText })}
               disabled={isLoading}
-              className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all"
+              className="w-full py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 transition-all"
             >
               {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {isLoading ? 'Explaining...' : 'Explain selection'}
+              <span>{isLoading ? 'Analyzing Passage...' : 'Explain Passage Step-by-Step'}</span>
             </button>
           </div>
         )}
 
-        {/* Answers */}
+        {/* List of Solution Exchanges */}
         {exchanges.map(ex => (
-          <div key={ex.id} className="p-3 rounded-2xl bg-slate-900/70 border border-white/10 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] uppercase font-bold text-cyan-300 flex items-center gap-1 min-w-0">
-                {ex.result.mode === 'question' ? (
-                  <HelpCircle className="w-3 h-3 shrink-0" />
-                ) : (
-                  <BookOpen className="w-3 h-3 shrink-0" />
-                )}
-                <span className="truncate">{ex.result.heading}</span>
-              </span>
-              <span className="text-[9px] font-mono text-slate-500 shrink-0">p.{ex.page}</span>
+          <div
+            key={ex.id}
+            className="p-4 rounded-3xl bg-slate-900/80 border border-white/15 space-y-3.5 shadow-xl transition-all"
+          >
+            {/* Answer Header Bar */}
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="p-1 rounded-lg bg-indigo-500/20 text-indigo-400 shrink-0">
+                  {ex.result.mode === 'question' ? (
+                    <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+                  ) : (
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                  )}
+                </span>
+                <span className="font-extrabold text-xs text-white truncate">{ex.result.heading}</span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded-md">
+                  P.{ex.page}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopySolution(ex)}
+                  className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  title="Copy full solution"
+                >
+                  {copiedId === ex.id ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
             </div>
 
+            {/* Prompt context (if user asked a question) */}
             {ex.question && (
-              <p className="text-[11px] text-slate-400 italic border-l-2 border-slate-700 pl-2">
-                {ex.question}
-              </p>
+              <div className="p-2.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/20 flex items-start gap-2">
+                <MessageSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                <p className="text-xs font-medium text-indigo-200 leading-relaxed">{ex.question}</p>
+              </div>
             )}
 
-            <p className="text-[11.5px] text-slate-200 leading-relaxed whitespace-pre-line">
-              {ex.result.explanation}
-            </p>
+            {/* Main Step-by-Step Solution Body (Rendered with KaTeX Math & Markdown) */}
+            <div className="text-xs leading-relaxed text-slate-200">
+              <FormattedAiMessage content={ex.result.explanation} />
+            </div>
 
-            {ex.result.keyPoints?.length > 0 && (
-              <ul className="space-y-1 pt-1">
-                {ex.result.keyPoints.map((point, idx) => (
-                  <li key={idx} className="text-[11px] text-slate-300 leading-relaxed flex gap-1.5">
-                    <span className="text-cyan-400 shrink-0">•</span>
-                    <span>{point}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-
+            {/* Formula Callout Card */}
             {ex.result.formula && (
-              <p className="text-[11px] font-mono text-amber-200 bg-slate-950 border border-white/10 rounded-lg px-2 py-1.5">
-                {ex.result.formula}
-              </p>
+              <div className="p-3 rounded-2xl bg-slate-950 border border-indigo-500/30 space-y-1.5 shadow-inner">
+                <div className="flex items-center justify-between text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                  <span className="flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>Primary Formula</span>
+                  </span>
+                  <span className="text-[9px] font-mono text-slate-500">LaTeX KaTeX</span>
+                </div>
+                <FormattedAiMessage content={`$$${ex.result.formula}$$`} />
+              </div>
             )}
 
+            {/* Key Takeaways / Exam Rules */}
+            {ex.result.keyPoints && ex.result.keyPoints.length > 0 && (
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-2">
+                <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider flex items-center gap-1">
+                  <Check className="w-3 h-3 text-cyan-400" />
+                  <span>Key Points to Remember</span>
+                </span>
+                <ul className="space-y-1.5">
+                  {ex.result.keyPoints.map((point, idx) => (
+                    <li key={idx} className="text-xs text-slate-300 leading-relaxed flex items-start gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1.5" />
+                      <FormattedAiMessage content={point} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Interactive Follow-Up Suggestion Chip */}
             {ex.result.followUp && (
-              <p className="text-[10.5px] text-indigo-300 flex gap-1.5">
-                <Sparkles className="w-3 h-3 shrink-0 mt-0.5" />
-                <span>{ex.result.followUp}</span>
-              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuestion(ex.result.followUp || '');
+                  runAssist({ mode: 'question', ask: ex.result.followUp });
+                }}
+                className="w-full text-left p-2.5 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs text-cyan-200 transition-all flex items-center justify-between group"
+                title="Tap to ask this follow-up question"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Lightbulb className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span className="truncate">
+                    <strong>Follow-up Challenge:</strong> {ex.result.followUp}
+                  </span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-cyan-400 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+              </button>
             )}
 
-            <p className="text-[9px] text-slate-500 flex items-center gap-1 pt-0.5">
-              <Cpu className="w-2.5 h-2.5" />
-              {ex.result.source === 'gemini' ? 'Gemini' : 'Offline (page text only)'}
-            </p>
+            {/* Footer Tag */}
+            <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-white/5">
+              <span className="flex items-center gap-1">
+                <Cpu className="w-3 h-3 text-indigo-400" />
+                <span>Engine: {ex.result.modelUsed || selectedModel}</span>
+              </span>
+              <span>{ex.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
           </div>
         ))}
 
-        {isLoading && exchanges.length === 0 && (
-          <div className="flex items-center gap-2 text-[11px] text-slate-400 p-2">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-            Reading page {currentPage}...
+        {/* Loading Indicator */}
+        {isLoading && (
+          <div className="p-4 rounded-3xl bg-slate-900/90 border border-indigo-500/30 flex items-center gap-3 animate-pulse shadow-lg">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-400 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-white">
+                {activeModelObj.name} is solving step-by-step...
+              </p>
+              <p className="text-[10px] text-slate-400 truncate">
+                Analyzing page {currentPage} formulas, intermediate steps & concepts
+              </p>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Actions + input */}
-      <div className="p-3 border-t border-white/10 bg-slate-900/60 space-y-2 shrink-0">
-        <button
-          onClick={() => runAssist({ mode: 'page' })}
-          disabled={isLoading}
-          className="w-full py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 disabled:opacity-50 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/25 transition-all"
-        >
-          {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookOpen className="w-3.5 h-3.5" />}
-          Explain this page
-        </button>
+      {/* 3. Input & Action Bar */}
+      <div className="p-3 sm:p-4 border-t border-white/10 bg-slate-900/90 shrink-0 space-y-2.5">
+        {/* Quick Action Pills */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => runAssist({ mode: 'page' })}
+            disabled={isLoading}
+            className="flex-1 py-1.5 px-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Explain Page {currentPage}</span>
+          </button>
 
-        <div className="flex items-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const q = 'Is question ka complete mathematical derivation aur shortcut method dono detail me batao.';
+              setQuestion(q);
+              runAssist({ mode: 'question', ask: q });
+            }}
+            disabled={isLoading}
+            className="flex-1 py-1.5 px-2.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Derivation & Shortcut</span>
+          </button>
+        </div>
+
+        {/* Question Textarea & Send Button */}
+        <div className="flex items-end gap-2 bg-slate-950 border border-white/15 focus-within:border-indigo-400 rounded-2xl p-1.5 transition-colors">
           <textarea
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
+            onChange={e => setQuestion(e.target.value)}
+            onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleAsk();
               }
             }}
             rows={2}
-            placeholder="Ask about this page... (Enter to send)"
-            className="flex-1 resize-none px-2.5 py-2 rounded-xl bg-slate-950 border border-white/15 text-[11px] text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-400 select-text"
+            placeholder="Ask AI Teacher: solve question, explain formula, proof... (Enter to send)"
+            className="flex-1 resize-none bg-transparent px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none select-text custom-scrollbar leading-relaxed"
           />
           <button
+            type="button"
             onClick={handleAsk}
             disabled={isLoading || !question.trim()}
-            className="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-colors shrink-0"
-            title="Ask AI about this page"
+            className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 disabled:opacity-40 text-white shadow-md shadow-indigo-600/25 transition-all shrink-0"
+            title="Send question to AI"
           >
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
@@ -316,11 +732,12 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
 
         {onOpenCoachHub && (
           <button
+            type="button"
             onClick={onOpenCoachHub}
             className="w-full text-[10px] text-slate-400 hover:text-indigo-300 transition-colors text-center"
-            title="Open the full AI Coach hub for a longer study session"
+            title="Open the full AI Coach hub for custom tests, notes & audio summaries"
           >
-            Need more? Open the full AI Coach hub →
+            Need flashcards or audio overview? Open AI Coach Hub →
           </button>
         )}
       </div>

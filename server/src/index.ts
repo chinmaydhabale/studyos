@@ -985,12 +985,66 @@ app.post('/api/ai/summarize-lecture', async (req, res) => {
   }
 });
 
+// Available AI Models for StudyOS
+app.get('/api/ai/models', (_req, res) => {
+  res.json({
+    default: 'gemini-3.8-flash',
+    models: [
+      {
+        id: 'gemini-3.8-flash',
+        name: 'Gemini 3.8 Flash',
+        tag: 'Recommended',
+        description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & math solver',
+        badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+      },
+      {
+        id: 'gemini-3.7-flash',
+        name: 'Gemini 3.7 Flash',
+        tag: 'Math & Logic',
+        description: 'Deep analytical thinking for complex mathematical derivations & proofs',
+        badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+      },
+      {
+        id: 'gemini-3.6-flash',
+        name: 'Gemini 3.6 Flash',
+        tag: 'High Precision',
+        description: 'Rigorous calculation accuracy and formula verification',
+        badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+      },
+      {
+        id: 'gemini-3.5-flash',
+        name: 'Gemini 3.5 Flash',
+        tag: 'Balanced',
+        description: 'Rock solid, comprehensive textbook explanations',
+        badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+      },
+      {
+        id: 'gemini-3.5-flash-lite',
+        name: 'Gemini 3.5 Flash Lite',
+        tag: 'Lightning Fast',
+        description: 'Instant answers for quick formula checks and rapid doubt lookup',
+        badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+      }
+    ]
+  });
+});
+
 // PDF reader assistant — the page text is extracted client-side so locally
 // opened (never uploaded) PDFs work the same as cloud ones.
 app.post('/api/ai/pdf-assist', async (req, res) => {
-  const { mode, docTitle, page, pageText, selectedText, question, userId } = req.body || {};
+  const { mode, docTitle, page, pageText, selectedText, question, userId, model, conversationHistory } = req.body || {};
   try {
-    const result = await aiCoach.assistWithPdf({ mode, docTitle, page, pageText, selectedText, question, userId });
+    const result = await aiCoach.assistWithPdf({
+      mode,
+      docTitle,
+      page,
+      pageText,
+      selectedText,
+      question,
+      userId,
+      model,
+      conversationHistory
+    });
     res.json(result);
   } catch (err) {
     console.error('[ai] pdf-assist failed:', err);

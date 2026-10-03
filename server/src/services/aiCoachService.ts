@@ -55,6 +55,7 @@ export interface PdfAssistResult {
   formula?: string;
   followUp?: string;
   source: AISource;
+  modelUsed?: string;
 }
 
 // NotebookLM Types
@@ -888,12 +889,15 @@ export class AICoachService {
     selectedText?: string;
     question?: string;
     userId?: string;
+    model?: string;
+    conversationHistory?: Array<{ role: 'user' | 'assistant' | 'model'; text: string }>;
   }): Promise<PdfAssistResult> {
     const page = this.clampInt(input.page, 1, 100000, 1);
     const docTitle = this.cleanString(input.docTitle, 200) || 'Study PDF';
     const selectedText = this.cleanString(input.selectedText, MAX_SELECTION_CHARS);
-    const question = this.cleanString(input.question, 500);
+    const question = this.cleanString(input.question, 2000);
     const pageText = (input.pageText || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_CHARS);
+    const selectedModel = (input.model || 'gemini-3.8-flash').trim();
 
     // Scanned / image-only pages have no text layer, so say so plainly rather
     // than inventing an explanation.
@@ -902,10 +906,11 @@ export class AICoachService {
         mode: input.mode || 'page',
         heading: `Page ${page} has no selectable text`,
         explanation:
-          'This page looks like a scanned image, so there is no text layer for the AI to read. ' +
-          'Try selecting text on a page that contains real text.',
+          'This page looks like a scanned image without an embedded digital text layer. ' +
+          'You can still type a general question below, or select text on a page with digital text.',
         keyPoints: [],
-        source: 'fallback'
+        source: 'fallback',
+        modelUsed: selectedModel
       };
     }
 
@@ -915,17 +920,62 @@ export class AICoachService {
 
     const focus =
       mode === 'question'
-        ? `Question: "${question}"${selectedText ? `\nSelected passage the question refers to:\n"${selectedText}"` : ''}`
+        ? `Student's Question:\n"${question}"${selectedText ? `\n\nSpecific passage referenced on Page ${page}:\n"${selectedText}"` : ''}`
         : mode === 'selection'
-        ? `Selected passage the student did not understand:\n"${selectedText}"`
-        : `The student wants page ${page} explained end to end.`;
+        ? `Selected passage to thoroughly master:\n"${selectedText}"`
+        : `The student requests a master-class, end-to-end breakdown of Page ${page}.`;
 
     const task =
       mode === 'question'
-        ? 'Answer the question using the page text as the source of truth. If the page text does not contain the answer, say so explicitly in the explanation, then give the standard exam answer and mark it as outside the page.'
+        ? `Answer the student's question with utmost pedagogical clarity and step-by-step depth.
+- If it's a quantitative/maths/physics question: Provide full algebraic steps, state initial values, formulas, every intermediate calculation, and a quick verification or exam shortcut.
+- If it's conceptual or theoretical: Explain the core premise, real-world analogies, nuances, and exam relevance.
+- Use the page text as primary truth; if the question asks beyond the page, answer completely using your deep expertise and explicitly state the broader context.`
         : mode === 'selection'
-        ? 'Explain the selected passage in plain language: what it means, any term or symbol that needs defining, and why it matters for the exam.'
-        : 'Explain what this page is about, then list the points a student must remember from it.';
+        ? `Explain the selected passage in deep, structured detail:
+- Plain-English / Hinglish explanation of what it actually means.
+- Definition of every mathematical symbol, variable, or technical term.
+- Step-by-step derivation or conceptual significance.
+- Why this concept is critical for competitive exams (Bank PO, SSC CGL, JEE, UPSC, etc.).`
+        : `Provide a master summary of Page ${page}:
+- Main topic and central thesis.
+- Comprehensive step-by-step breakdown of every key idea, theorem, formula, and example on this page.
+- Clear notes for quick revision.`;
+
+    const pdfSystemInstruction = `${EXAM_COACH_PERSONA}
+You are an elite AI Study Professor and Master Tutor (powered by Google Gemini), embedded directly inside the StudyOS PDF reader.
+Your goal is to provide the highest quality, most comprehensive, step-by-step explanations — exactly like the Google Gemini mobile app.
+
+CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
+1. NO SHORTCUTS OR HALF-BAKED ANSWERS:
+   - Never answer in just 2-4 lines. Give a full, well-developed, clear pedagogical explanation that leaves zero doubt in the student's mind.
+   - For mathematical, reasoning, or numerical questions, provide every intermediate step clearly written out.
+
+2. MATHEMATICS & FORMULA RIGOR (KaTeX / LaTeX):
+   - Always use standard LaTeX for all mathematical expressions:
+     * Inline math must be enclosed in single dollar signs: $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$
+     * Block/display math must be enclosed in double dollar signs:
+       $$
+       \\text{Compound Interest} = P \\left(1 + \\frac{R}{100}\\right)^T - P
+       $$
+   - Never write raw unescaped ASCII math like "x^2/y". Always format it properly in LaTeX.
+
+3. STRUCTURED PEDAGOGICAL BREAKDOWN:
+   Use clear Markdown formatting with sections:
+   - ## [Problem Understanding & Given Parameters]
+   - ## [Core Concept & Formula]
+   - **Step 1:** ...
+   - **Step 2:** ...
+   - **Step 3:** ...
+   - 💡 **Shortcut / Exam Vedic Trick:** (When applicable for competitive exams)
+   - ⚠️ **Common Trap / Caution:** (Mistakes students often make in this step)
+   - **Final Answer:** [Highlighted final result]
+
+4. LANGUAGE ADAPTABILITY (Hindi / Hinglish / English):
+   - If the student asks or prompts in Hindi or Hinglish (e.g., "kaise solve karein", "step by step samjhao", "iska formula batao"), respond in crystal-clear, friendly, and natural Hinglish/Hindi.
+   - If in English, respond in articulate, structured English.
+
+5. RESPOND WITH VALID JSON ONLY adhering strictly to the schema provided.`;
 
     const result = await gemini.generateJson<{
       heading?: string;
@@ -934,47 +984,57 @@ export class AICoachService {
       formula?: string;
       followUp?: string;
     }>({
-      systemInstruction: `${EXAM_COACH_PERSONA}\nYou are embedded inside a PDF reader. The page text below is the only source of truth about the document. Never claim the document says something it does not. Respond with JSON only.`,
+      systemInstruction: pdfSystemInstruction,
       prompt:
-        `Learner context:\n${this.buildLearnerContext(input.userId)}\n\n` +
-        `Document: "${docTitle}" — page ${page}\n` +
+        `Learner profile:\n${this.buildLearnerContext(input.userId)}\n\n` +
+        `Document Title: "${docTitle}" — Page ${page}\n\n` +
         `${focus}\n\n` +
-        `--- PAGE TEXT START ---\n${pageText}\n--- PAGE TEXT END ---\n\n` +
+        `--- CURRENT PAGE TEXT START ---\n${pageText}\n--- CURRENT PAGE TEXT END ---\n\n` +
         `${task}\n\n` +
-        'Return a short heading, a 2-4 sentence explanation, 2-5 key points, the single most relevant ' +
-        'formula in LaTeX if the page has one (otherwise an empty string), and one follow-up question ' +
-        'the student should ask themselves.',
+        `FORMATTING REQUIREMENT:
+- "heading": A clear, engaging title for this solution/topic.
+- "explanation": Comprehensive, step-by-step explanation formatted in rich Markdown with Step cards ("Step 1: ..."), callouts ("💡 Shortcut: ...", "⚠️ Common Mistake: ..."), and KaTeX math ($...$ and $$...$$). Do not truncate.
+- "keyPoints": 3 to 6 high-yield exam takeaways or formulas to remember.
+- "formula": The primary formula or equation in pure LaTeX (or empty string if not applicable).
+- "followUp": One thought-provoking follow-up question or practice challenge for the student.`,
       schema: {
         type: 'OBJECT',
         properties: {
           heading: { type: 'STRING' },
-          explanation: { type: 'STRING' },
+          explanation: { type: 'STRING', description: 'Exhaustive step-by-step markdown and LaTeX explanation' },
           keyPoints: { type: 'ARRAY', items: { type: 'STRING' } },
-          formula: { type: 'STRING', description: 'LaTeX, or empty string when not applicable' },
+          formula: { type: 'STRING', description: 'Primary LaTeX formula or equation' },
           followUp: { type: 'STRING' }
         },
         required: ['heading', 'explanation', 'keyPoints']
       },
-      temperature: 0.5
+      temperature: 0.5,
+      model: selectedModel,
+      conversationHistory: input.conversationHistory
     });
 
     if (result) {
-      const explanation = this.cleanString(result.explanation, 1600);
-      const keyPoints = this.cleanStringArray(result.keyPoints, 6, 500);
+      const explanation = this.cleanString(result.explanation, 12000);
+      const keyPoints = this.cleanStringArray(result.keyPoints, 8, 800);
       if (explanation) {
         return {
           mode,
-          heading: this.cleanString(result.heading, 200) || `${docTitle} — page ${page}`,
+          heading: this.cleanString(result.heading, 250) || `${docTitle} — Page ${page}`,
           explanation,
           keyPoints,
-          formula: this.cleanString(result.formula, 300),
-          followUp: this.cleanString(result.followUp, 300),
-          source: 'gemini'
+          formula: this.cleanString(result.formula, 500),
+          followUp: this.cleanString(result.followUp, 500),
+          source: 'gemini',
+          modelUsed: selectedModel
         };
       }
     }
 
-    return { ...this.fallbackPdfAssist(mode, page, docTitle, pageText, selectedText, question), source: 'fallback' };
+    return {
+      ...this.fallbackPdfAssist(mode, page, docTitle, pageText, selectedText, question),
+      source: 'fallback',
+      modelUsed: selectedModel
+    };
   }
 
   /** Offline path: hand back the page text itself, clearly labelled as not AI-written. */

@@ -95,6 +95,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
   // AI assistant state
   const [isAiOpen, setIsAiOpen] = useState<boolean>(false);
+  const [isAiExpanded, setIsAiExpanded] = useState<boolean>(false);
   const [selectedText, setSelectedText] = useState<string>('');
   const [selectionAnchor, setSelectionAnchor] = useState<{ x: number; y: number } | null>(null);
   const [autoRunSelection, setAutoRunSelection] = useState<number>(0);
@@ -1204,7 +1205,9 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           <div
             data-pdf-ai-panel
             data-preserve-pdf-selection
-            className="w-80 lg:w-96 shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text"
+            className={`${
+              isAiExpanded ? 'w-full sm:w-[480px] lg:w-[580px] xl:w-[650px]' : 'w-80 lg:w-96'
+            } shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text transition-all`}
           >
             <PDFAiPanel
               docTitle={activePdfDoc?.title || 'Study PDF'}
@@ -1216,6 +1219,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               onClose={() => setIsAiOpen(false)}
               getPageText={getPageText}
               addToast={addToast}
+              isExpanded={isAiExpanded}
+              onToggleExpand={() => setIsAiExpanded(prev => !prev)}
             />
           </div>
         )}
