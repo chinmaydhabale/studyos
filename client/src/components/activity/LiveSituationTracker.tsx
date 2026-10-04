@@ -317,6 +317,12 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
                       <p className="text-xs font-bold text-white truncate flex items-center gap-1.5">
                         <span>{peer.name}</span>
                         {isMe && <span className="text-[10px] text-indigo-400 font-normal">(You)</span>}
+                        {((isMe && isTimerRunning) || isStudying) && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shrink-0">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            LIVE
+                          </span>
+                        )}
                       </p>
                       <p className="text-[11px] text-slate-400 truncate max-w-[160px]">
                         {currentAct}
@@ -324,7 +330,10 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0">
+                  <div className="text-right shrink-0 flex items-center gap-1.5">
+                    {((isMe && isTimerRunning) || isStudying) && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                    )}
                     <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold ${
                       isStudying ? 'bg-emerald-500/10 text-emerald-300' : isBreak ? 'bg-amber-500/10 text-amber-300' : 'bg-white/5 text-slate-400'
                     }`}>

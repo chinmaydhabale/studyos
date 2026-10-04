@@ -25,13 +25,7 @@ const resolveApiBaseUrl = (): string => {
   try {
     const saved = localStorage.getItem('studyos_custom_api_url');
     if (saved && saved.trim().startsWith('http')) {
-      const isDead = [
-        'reduction-bin-listings-train',
-        'kingston-constraint-rights-complicated',
-        'then-gotta-funny-humor'
-      ].some(dead => saved.includes(dead));
-
-      if (isDead) {
+      if (saved.includes('trycloudflare.com') && !saved.includes('ste-gourmet-camera-holder')) {
         localStorage.removeItem('studyos_custom_api_url');
       } else {
         return saved.trim().replace(/\/+$/, '');
@@ -53,14 +47,12 @@ const resolveApiBaseUrl = (): string => {
   }
 
   // 5. If running on Vercel (*.vercel.app):
-  // Check if env var is set and NOT an old dead domain
+  // Check if env var is set and NOT an outdated trycloudflare domain
   const envUrl = (import.meta as any).env?.VITE_API_URL;
   if (
     envUrl &&
     envUrl.trim() &&
-    !envUrl.includes('kingston-constraint-rights-complicated') &&
-    !envUrl.includes('reduction-bin-listings-train') &&
-    !envUrl.includes('then-gotta-funny-humor')
+    (!envUrl.includes('trycloudflare.com') || envUrl.includes('ste-gourmet-camera-holder'))
   ) {
     return envUrl.trim().replace(/\/+$/, '');
   }

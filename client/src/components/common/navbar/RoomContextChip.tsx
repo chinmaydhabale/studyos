@@ -79,6 +79,16 @@ export const RoomContextChip: React.FC = () => {
           <span className="font-mono font-bold text-white text-xs tracking-tight group-hover:text-cyan-300 transition-colors truncate max-w-[70px] sm:max-w-[100px]">
             {roomId || 'Join Room'}
           </span>
+          {isConnected ? (
+            <span className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+              LIVE
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0">
+              OFFLINE
+            </span>
+          )}
         </div>
 
         {/* Peer Count Badge */}
@@ -102,8 +112,13 @@ export const RoomContextChip: React.FC = () => {
               <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
               <span>Study Room Hub</span>
             </div>
-            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md border border-emerald-500/20">
-              {isConnected ? 'Connected' : 'Offline'}
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md border flex items-center gap-1 font-bold ${
+              isConnected 
+                ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30' 
+                : 'text-rose-300 bg-rose-500/15 border-rose-500/30'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+              {isConnected ? 'LIVE ONLINE' : 'OFFLINE'}
             </span>
           </div>
 

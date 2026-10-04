@@ -503,9 +503,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // yourself never tears down the realtime connection and its listeners.
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 20,
+      reconnectionDelay: 1000,
+      timeout: 20000
     });
     socketRef.current = newSocket;
     setSocket(newSocket);

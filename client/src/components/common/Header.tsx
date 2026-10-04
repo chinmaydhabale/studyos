@@ -152,6 +152,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Live Situation',
         desc: 'Real-time stopwatch & peer activity feed',
         icon: Activity,
+        badge: 'Live',
         color: 'text-emerald-400 bg-emerald-500/10'
       },
       {
