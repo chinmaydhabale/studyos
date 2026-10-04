@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Scale,
   Sparkles,
@@ -81,6 +81,9 @@ export const FlashCompareGame: React.FC<FlashCompareGameProps> = ({ onBackToHub 
     });
   }, [questionsAnswered, score, maxStreak]);
 
+  const finishGameRef = useRef(finishGame);
+  finishGameRef.current = finishGame;
+
   // Timer loop
   useEffect(() => {
     if (!isPlaying) return;
@@ -89,7 +92,7 @@ export const FlashCompareGame: React.FC<FlashCompareGameProps> = ({ onBackToHub 
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          finishGame();
+          finishGameRef.current();
           return 0;
         }
         if (prev <= 10) mathSounds.playTick();
@@ -98,7 +101,7 @@ export const FlashCompareGame: React.FC<FlashCompareGameProps> = ({ onBackToHub 
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPlaying, finishGame]);
+  }, [isPlaying]);
 
   const handleChoice = useCallback((choice: '<' | '=' | '>') => {
     if (!currentQ || feedback !== null) return;

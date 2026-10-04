@@ -38,6 +38,8 @@ interface SocketContextType {
   currentGroup: StudyGroup | null;
   activePdfDoc: StudyDocument | null;
   activePdfPage: number;
+  readAlongPeerId: string | null;
+  setReadAlongPeerId: (id: string | null) => void;
   pdfPresentation: PdfPresentationState | null;
   selectedPeerForDossier: RoomPeer | null;
   activeActivity: {
@@ -226,6 +228,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // PDF Reader & Peer Dossier State
   const [activePdfDoc, setActivePdfDoc] = useState<StudyDocument | null>(null);
   const [activePdfPage, setActivePdfPage] = useState<number>(1);
+  const [readAlongPeerId, setReadAlongPeerId] = useState<string | null>(null);
   const [pdfPresentation, setPdfPresentation] = useState<PdfPresentationState | null>(null);
   const [selectedPeerForDossier, setSelectedPeerForDossier] = useState<RoomPeer | null>(null);
 
@@ -958,6 +961,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setActivePdfDoc(docItem);
     setActivePdfPage(peer.currentDocument.currentPage || 1);
+    setReadAlongPeerId(peer.userId);
     addToast('Tuned In to Reading!', `Reading "${peer.currentDocument.title}" on Page ${peer.currentDocument.currentPage} with ${peer.name}`, 'success');
   }, [roomId, addToast]);
 
@@ -1046,6 +1050,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsRoomModalOpen,
         setActivePdfDoc,
         setActivePdfPage,
+        readAlongPeerId,
+        setReadAlongPeerId,
         openPeerDossier,
         closePeerDossier,
         tuneInToPeerVideo,

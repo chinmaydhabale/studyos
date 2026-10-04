@@ -81,7 +81,9 @@ const MainLayout: React.FC = () => {
 
         {/* Telegram Cloud Storage & Study Vault */}
         {activeTab === 'vault' && (
-          <TelegramVaultView />
+          <TelegramVaultView
+            onNavigateToPdfReader={() => setActiveTab('pdf')}
+          />
         )}
 
         {/* Web Study Notes & Reading with Live Room Chat */}
@@ -110,7 +112,12 @@ const MainLayout: React.FC = () => {
             
             {/* Left 50%: Video Player */}
             <div className="flex-1 flex flex-col h-full overflow-hidden">
-              <SyncTheater />
+              <SyncTheater
+                onAskAiDoubtAtTimestamp={(timestamp) => {
+                  setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
+                  setActiveTab('ai-coach');
+                }}
+              />
             </div>
 
             {/* Right 50%: Toggle between Live Situation Tracker, Whiteboard, or Notes */}
@@ -187,6 +194,7 @@ const MainLayout: React.FC = () => {
           <div className="flex-1 min-h-0 overflow-y-auto">
             <AICoachHub
               initialPrompt={aiCoachPresetPrompt}
+              onClearInitialPrompt={() => setAiCoachPresetPrompt('')}
               onNavigateToCalendar={() => setActiveTab('calendar')}
             />
           </div>

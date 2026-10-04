@@ -58,6 +58,8 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     stopPdfPresentation,
     openPdfInReader,
     openPeerDossier,
+    readAlongPeerId,
+    setReadAlongPeerId,
     addToast
   } = useSocket();
 
@@ -71,7 +73,6 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   // Cloud sync & peer Read Along states
   const [syncStatus, setSyncStatus] = useState<'idle' | 'uploading' | 'synced' | 'error'>('idle');
   const [localPdfDocId, setLocalPdfDocId] = useState<string | null>(null);
-  const [readAlongPeerId, setReadAlongPeerId] = useState<string | null>(null);
 
   // Layout & UI states
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
@@ -1221,6 +1222,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               addToast={addToast}
               isExpanded={isAiExpanded}
               onToggleExpand={() => setIsAiExpanded(prev => !prev)}
+              onOpenCoachHub={handleAskAiAboutDocument}
             />
           </div>
         )}

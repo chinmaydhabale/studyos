@@ -388,14 +388,8 @@ export const WhiteboardCanvas: React.FC = () => {
     };
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getCanvasCoords(e);
-    setIsDrawing(true);
-    setStartPos(pos);
-    setCurrentPoints([pos]);
-
-    // Handle instant-drop elements like Sticky, Equation, Flowchart, Mindmap
-    if (currentTool === 'sticky') {
+  const handleStampTool = (tool: ToolType, pos: { x: number; y: number }): boolean => {
+    if (tool === 'sticky') {
       const text = prompt('Enter note text:', '💡 Key insight or formula');
       if (text) {
         sendWhiteboardElement({
@@ -413,8 +407,9 @@ export const WhiteboardCanvas: React.FC = () => {
           createdAt: Date.now()
         });
       }
-      setIsDrawing(false);
-    } else if (currentTool === 'equation') {
+      return true;
+    }
+    if (tool === 'equation') {
       const eq = prompt('Enter Quantitative formula / trick:', 'CI - SI = P(R/100)^2 (2-Year Diff)');
       if (eq) {
         sendWhiteboardElement({
@@ -429,8 +424,9 @@ export const WhiteboardCanvas: React.FC = () => {
           createdAt: Date.now()
         });
       }
-      setIsDrawing(false);
-    } else if (currentTool === 'flowchart') {
+      return true;
+    }
+    if (tool === 'flowchart') {
       const step = prompt('Enter flowchart / puzzle step:', 'Step: Analyze DI Bar Graph & Compute Ratios');
       if (step) {
         sendWhiteboardElement({
@@ -447,8 +443,9 @@ export const WhiteboardCanvas: React.FC = () => {
           createdAt: Date.now()
         });
       }
-      setIsDrawing(false);
-    } else if (currentTool === 'mindmap') {
+      return true;
+    }
+    if (tool === 'mindmap') {
       const topic = prompt('Enter mind-map topic / concept:', 'Quant Arithmetic Shortcuts');
       if (topic) {
         sendWhiteboardElement({
@@ -465,8 +462,20 @@ export const WhiteboardCanvas: React.FC = () => {
           createdAt: Date.now()
         });
       }
-      setIsDrawing(false);
+      return true;
     }
+    return false;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pos = getCanvasCoords(e);
+    if (handleStampTool(currentTool, pos)) {
+      setIsDrawing(false);
+      return;
+    }
+    setIsDrawing(true);
+    setStartPos(pos);
+    setCurrentPoints([pos]);
   };
 
   const commitDrawnShape = (endPos: { x: number; y: number }) => {
@@ -574,6 +583,10 @@ export const WhiteboardCanvas: React.FC = () => {
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const pos = getTouchCoords(e);
+    if (handleStampTool(currentTool, pos)) {
+      setIsDrawing(false);
+      return;
+    }
     setIsDrawing(true);
     setStartPos(pos);
     setCurrentPoints([pos]);

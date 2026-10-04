@@ -111,6 +111,9 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
     });
   }, [questionsAnswered, score, maxStreak]);
 
+  const finishGameRef = useRef(finishGame);
+  finishGameRef.current = finishGame;
+
   // Timer loop
   useEffect(() => {
     if (!isPlaying) return;
@@ -120,7 +123,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
         setTimeLeft((prev) => {
           if (prev <= 1) {
             clearInterval(interval);
-            finishGame();
+            finishGameRef.current();
             return 0;
           }
           if (prev <= 10) {
@@ -132,7 +135,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
 
       return () => clearInterval(interval);
     }
-  }, [isPlaying, timeMode, finishGame]);
+  }, [isPlaying, timeMode]);
 
   // Handle Answer Submission
   const submitAnswer = useCallback(() => {

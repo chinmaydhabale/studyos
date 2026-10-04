@@ -175,11 +175,12 @@ type WorkspaceTab = 'audio' | 'chat' | 'flashcards' | 'quiz' | 'cheatsheet' | 'p
 
 interface AICoachHubProps {
   initialPrompt?: string;
+  onClearInitialPrompt?: () => void;
   onNavigateToCalendar?: () => void;
 }
 
-export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNavigateToCalendar }) => {
-  const { addToast } = useSocket();
+export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onClearInitialPrompt, onNavigateToCalendar }) => {
+  const { addToast, currentUser } = useSocket();
   const { addXp } = useStudy();
 
   // Active Study Context State
@@ -279,6 +280,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
     if (initialPrompt && initialPrompt.trim()) {
       setActiveTab('chat');
       handleSendChatMessage(initialPrompt);
+      onClearInitialPrompt?.();
     }
   }, [initialPrompt]);
 
@@ -777,7 +779,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onNa
       const res = await fetch(`${API_BASE_URL}/api/ai/schedule-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
+        body: JSON.stringify({ prompt, userId: currentUser.id })
       });
       if (!res.ok) throw new Error('Plan generation failed');
       const data = await res.json();

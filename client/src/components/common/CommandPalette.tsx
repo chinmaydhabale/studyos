@@ -14,7 +14,9 @@ import {
   FolderLock,
   BarChart3,
   Laptop,
-  Globe
+  Globe,
+  Gamepad2,
+  Activity
 } from 'lucide-react';
 import { useStudy } from '../../context/StudyContext.js';
 
@@ -59,6 +61,30 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   if (!isOpen) return null;
 
   const actions = [
+    {
+      id: 'nav-ai-coach',
+      title: 'Open AI Study Coach Hub',
+      subtitle: 'Interactive doubt solver, audio overview, syllabus roadmaps & flashcards',
+      icon: Sparkles,
+      color: 'text-cyan-400 bg-cyan-500/10',
+      run: () => onNavigateTab('ai-coach')
+    },
+    {
+      id: 'nav-math-games',
+      title: 'Open Math Speed Arena & Calculation Games',
+      subtitle: 'Speed Arithmetic Blitz, Vedic Shortcuts, Target 24 & 1v1 Room Duels',
+      icon: Gamepad2,
+      color: 'text-amber-400 bg-amber-500/10',
+      run: () => onNavigateTab('math-games')
+    },
+    {
+      id: 'nav-tracker',
+      title: 'Open Live Situation Tracker',
+      subtitle: 'Real-time stopwatches, peer presence, and focus activity feed',
+      icon: Activity,
+      color: 'text-emerald-400 bg-emerald-500/10',
+      run: () => onNavigateTab('tracker')
+    },
     {
       id: 'ai-prompt-current-affairs',
       title: 'AI Coach: "Tomorrow should include 30 minutes of Current Affairs."',
