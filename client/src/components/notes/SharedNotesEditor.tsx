@@ -18,7 +18,7 @@ import { API_BASE_URL } from '../../config.js';
 export const SharedNotesEditor: React.FC = () => {
   const { sharedNote, updateSharedNote, addToast } = useSocket();
   const [copied, setCopied] = useState(false);
-  const [activeMode, setActiveMode] = useState<'split' | 'edit' | 'preview'>('split');
+  const [activeMode, setActiveMode] = useState<'split' | 'edit' | 'preview'>(() => typeof window !== 'undefined' && window.innerWidth >= 768 ? 'split' : 'edit');
   const [isAiExpanding, setIsAiExpanding] = useState(false);
 
   const content = sharedNote?.content || '';
@@ -129,13 +129,13 @@ export const SharedNotesEditor: React.FC = () => {
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           
           {/* Mode switch */}
           <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-white/10 text-xs">
             <button
               onClick={() => setActiveMode('split')}
-              className={`px-2.5 py-1 rounded-lg font-medium transition-colors ${
+              className={`hidden md:block px-2.5 py-1 rounded-lg font-medium transition-colors ${
                 activeMode === 'split' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
               }`}
             >

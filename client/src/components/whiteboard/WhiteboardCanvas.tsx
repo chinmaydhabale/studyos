@@ -650,13 +650,13 @@ export const WhiteboardCanvas: React.FC = () => {
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col h-[calc(100vh-4.5rem)]">
+    <div className="w-full max-w-7xl mx-auto p-2 sm:p-4 flex flex-col h-[calc(100vh-4.5rem)]">
       
       {/* Top Floating Toolbar */}
-      <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-2.5 mb-3 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+      <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-2 sm:p-2.5 mb-2 sm:mb-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3 shadow-xl">
         
         {/* Tools */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 no-scrollbar max-w-full">
           {tools.map((t) => {
             const Icon = t.icon;
             return (
@@ -678,7 +678,7 @@ export const WhiteboardCanvas: React.FC = () => {
         </div>
 
         {/* Colors & Width */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           
           {/* Color palette */}
           <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/5">
@@ -760,11 +760,11 @@ export const WhiteboardCanvas: React.FC = () => {
         />
 
         {/* Live Multi-User Overlay Legend */}
-        <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-2 text-xs text-slate-300">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Simultaneous Multi-User Drawing Active</span>
-          <span className="text-slate-500">•</span>
-          <span className="text-indigo-400 font-mono">{whiteboardElements.length} Elements Saved</span>
+        <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur-md px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-white/10 flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-slate-300 pointer-events-none shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="hidden sm:inline">Simultaneous Multi-User Drawing Active</span>
+          <span className="hidden sm:inline text-slate-500">•</span>
+          <span className="text-indigo-400 font-mono">{whiteboardElements.length} Elements</span>
         </div>
       </div>
 

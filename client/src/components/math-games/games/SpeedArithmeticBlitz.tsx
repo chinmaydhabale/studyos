@@ -314,7 +314,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
           {!isMultiOp ? (
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Single Operation</label>
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {(
                   [
                     { id: 'mixed', label: 'All Mixed', icon: '±' },
@@ -496,7 +496,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
 
           {/* Question Stage Card */}
           <div
-            className={`bg-slate-900/90 border rounded-3xl p-6 sm:p-10 shadow-2xl flex flex-col items-center justify-center gap-6 transition-all duration-150 ${
+            className={`bg-slate-900/90 border rounded-3xl p-4 sm:p-8 shadow-2xl flex flex-col items-center justify-center gap-4 sm:gap-6 transition-all duration-150 ${
               feedback === 'correct'
                 ? 'border-emerald-500 bg-emerald-950/20 ring-4 ring-emerald-500/30 scale-[1.01]'
                 : feedback === 'wrong'
@@ -517,22 +517,22 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
             </div>
 
             {/* Math Expression */}
-            <div className="flex items-center justify-center flex-wrap gap-2 sm:gap-4 text-3xl sm:text-5xl md:text-6xl font-black font-mono tracking-tight text-white select-none text-center px-2">
+            <div className="flex items-center justify-center flex-wrap gap-2 sm:gap-4 text-2xl sm:text-4xl md:text-5xl font-black font-mono tracking-tight text-white select-none text-center px-2">
               <span>{currentQ.expression || `${currentQ.num1} ${currentQ.operation} ${currentQ.num2}`}</span>
               <span className="text-slate-500">=</span>
               <span className="text-cyan-400">?</span>
             </div>
 
             {/* Answer Display Box */}
-            <div className="w-full max-w-xs h-16 sm:h-20 rounded-2xl bg-slate-950/80 border-2 border-indigo-500/40 flex items-center justify-center text-3xl sm:text-4xl font-mono font-black text-white shadow-inner relative">
+            <div className="w-full max-w-xs h-12 sm:h-16 rounded-2xl bg-slate-950/80 border-2 border-indigo-500/40 flex items-center justify-center text-2xl sm:text-4xl font-mono font-black text-white shadow-inner relative">
               <span>{inputVal || ''}</span>
               {!inputVal && (
-                <span className="text-slate-600 text-lg font-normal tracking-normal animate-pulse">
+                <span className="text-slate-600 text-base sm:text-lg font-normal tracking-normal animate-pulse">
                   Type answer...
                 </span>
               )}
               {/* Blinking Cursor */}
-              <div className="w-1 h-8 bg-cyan-400 ml-1 animate-pulse" />
+              <div className="w-1 h-6 sm:h-8 bg-cyan-400 ml-1 animate-pulse" />
             </div>
           </div>
 

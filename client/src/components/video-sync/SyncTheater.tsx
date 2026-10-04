@@ -52,7 +52,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing'>('synced');
-  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
 
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -307,7 +307,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 flex flex-col lg:flex-row gap-4 h-[calc(100vh-4.5rem)]">
+    <div className="w-full max-w-7xl mx-auto p-2 sm:p-4 flex flex-col lg:flex-row gap-3 sm:gap-4 h-auto lg:h-[calc(100vh-4.5rem)]">
       
       {/* Left: Synchronized Video Player Stage */}
       <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
@@ -316,7 +316,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         <div className="p-3 border-b border-white/10 bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
           
           {/* URL Input */}
-          <div className="flex-1 min-w-[280px] flex items-center gap-2">
+          <div className="flex-1 min-w-0 sm:min-w-[280px] flex items-center gap-2">
             <div className="relative flex-1">
               <Link className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -430,7 +430,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
           </div>
 
           {/* Play/Pause, Seek buttons, Speed, Volume */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               
               {/* Backward 10s */}
@@ -524,7 +524,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
 
       {/* Right: Real-time Live Voice & In-Lecture Doubt Chat Panel */}
       {isChatOpen && (
-        <div className="w-full lg:w-96 flex flex-col h-full animate-in slide-in-from-right duration-200">
+        <div className="w-full lg:w-96 flex flex-col h-[480px] lg:h-full animate-in slide-in-from-right duration-200">
           <VoiceChatPanel
             currentVideoTime={currentTime}
             onSeekVideo={handleSeekDelta}

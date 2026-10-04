@@ -20,7 +20,7 @@ import { PDFReaderView } from './components/pdf-reader/PDFReaderView.js';
 import { WebNotesView } from './components/notes/WebNotesView.js';
 import { PeerActivityDossierModal } from './components/activity/PeerActivityDossierModal.js';
 import { MathGamesArena } from './components/math-games/MathGamesArena.js';
-import { PenTool, FileText, Activity } from 'lucide-react';
+import { PenTool, FileText, Activity, Tv, BookOpen, Globe, Gamepad2, Sparkles } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('video');
@@ -49,7 +49,7 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#090d16] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
+    <div className="h-[100dvh] w-full flex flex-col bg-[#090d16] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white overflow-hidden">
       
       {/* Top Header */}
       <Header
@@ -66,16 +66,16 @@ const MainLayout: React.FC = () => {
         
         {/* Tab 1: Synchronized Co-Study Theater + Quick Live Situation Bar */}
         {activeTab === 'video' && (
-          <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
-            <div className="max-w-7xl mx-auto w-full px-4 pt-3 pb-1">
-              <LiveSituationTracker onNavigateToTab={setActiveTab} />
-            </div>
+          <div className="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scrollbar">
             <SyncTheater
               onAskAiDoubtAtTimestamp={(timestamp) => {
                 setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
                 setActiveTab('ai-coach');
               }}
             />
+            <div className="max-w-7xl mx-auto w-full px-3 sm:px-4 pt-1 pb-4">
+              <LiveSituationTracker onNavigateToTab={setActiveTab} />
+            </div>
           </div>
         )}
 
@@ -108,10 +108,10 @@ const MainLayout: React.FC = () => {
 
         {/* Tab 2: Split-Screen Co-Study Mode */}
         {activeTab === 'split' && (
-          <div className="w-full max-w-7xl mx-auto p-3 flex flex-col lg:flex-row gap-3 h-full overflow-hidden">
+          <div className="w-full max-w-7xl mx-auto p-2 sm:p-3 flex flex-col lg:flex-row gap-3 h-full overflow-y-auto lg:overflow-hidden custom-scrollbar">
             
             {/* Left 50%: Video Player */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="flex-1 flex flex-col h-auto lg:h-full min-h-[320px] lg:overflow-hidden">
               <SyncTheater
                 onAskAiDoubtAtTimestamp={(timestamp) => {
                   setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
@@ -121,7 +121,7 @@ const MainLayout: React.FC = () => {
             </div>
 
             {/* Right 50%: Toggle between Live Situation Tracker, Whiteboard, or Notes */}
-            <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
+            <div className="flex-1 flex flex-col h-[480px] lg:h-full bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
               <div className="p-2.5 border-b border-white/10 bg-slate-950/60 flex items-center justify-between">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                   Co-Study Workspace
@@ -276,6 +276,39 @@ const MainLayout: React.FC = () => {
         onNavigateToVideo={() => setActiveTab('video')}
         onNavigateToPdf={() => setActiveTab('pdf')}
       />
+
+      {/* Mobile Bottom Tab Bar (Phone-First Fast Navigation) */}
+      <nav className="lg:hidden shrink-0 h-14 bg-[#090d16]/95 backdrop-blur-2xl border-t border-white/10 px-2 flex items-center justify-around z-30 select-none pb-[env(safe-area-inset-bottom)]">
+        {[
+          { id: 'video', label: 'Theater', icon: Tv },
+          { id: 'pdf', label: 'PDF', icon: BookOpen },
+          { id: 'web-notes', label: 'Notes', icon: Globe },
+          { id: 'math-games', label: 'Math Arena', icon: Gamepad2 },
+          { id: 'ai-coach', label: 'AI Coach', icon: Sparkles }
+        ].map((item) => {
+          const Icon = item.icon;
+          const isSelected = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex flex-col items-center justify-center flex-1 py-1 transition-all relative ${
+                isSelected ? 'text-cyan-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <div className={`p-1 rounded-xl transition-all ${isSelected ? 'bg-cyan-500/15 scale-110' : ''}`}>
+                <Icon className="w-4 h-4" />
+              </div>
+              <span className="text-[10px] tracking-tight mt-0.5 truncate max-w-[64px]">
+                {item.label}
+              </span>
+              {isSelected && (
+                <span className="absolute bottom-0 w-6 h-0.5 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400/50" />
+              )}
+            </button>
+          );
+        })}
+      </nav>
 
     </div>
   );

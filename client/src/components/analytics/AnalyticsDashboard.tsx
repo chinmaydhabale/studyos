@@ -117,7 +117,7 @@ export const AnalyticsDashboard: React.FC = () => {
           </div>
 
           {/* Subject Legend Rows */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
             {subjectDistribution.map((s: any, idx: number) => (
               <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-2">

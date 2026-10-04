@@ -455,7 +455,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-64 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2.5 shadow-2xl z-50 flex flex-col gap-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div className="fixed inset-x-3 top-[56px] sm:inset-x-auto sm:top-auto sm:right-0 sm:absolute sm:mt-2 w-auto sm:w-64 max-w-[calc(100vw-24px)] rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-2.5 shadow-2xl z-50 flex flex-col gap-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
                   <div className="p-3 border-b border-white/10 bg-slate-950/60 rounded-2xl">
                     <div className="flex items-center justify-between">
                       <div>
@@ -509,10 +509,11 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all shrink-0"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all shrink-0"
+              title="Sign In"
             >
               <User className="w-3.5 h-3.5" />
-              <span>Sign In</span>
+              <span className="hidden sm:inline">Sign In</span>
             </button>
           )}
 
@@ -533,7 +534,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* REDESIGNED MOBILE SLIDE-OVER DRAWER */}
       {/* =================================================================== */}
       {showMobileNav && (
-        <div className="lg:hidden fixed inset-0 top-[53px] z-50 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
+        <div className="lg:hidden fixed inset-0 top-[49px] sm:top-[53px] z-50 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="w-full h-full bg-[#090d16] border-t border-white/10 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-4">
             
             {/* 1. User Dossier Header Card */}

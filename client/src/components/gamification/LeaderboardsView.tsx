@@ -94,17 +94,17 @@ export const LeaderboardsView: React.FC = () => {
         </div>
 
         {/* User Stats Card */}
-        <div className="flex items-center gap-3 bg-slate-950 px-4 py-2 rounded-xl border border-white/10 text-xs">
+        <div className="flex items-center gap-2 sm:gap-3 bg-slate-950 px-3 sm:px-4 py-2 rounded-xl border border-white/10 text-xs flex-wrap">
           <div className="flex items-center gap-1.5 text-amber-400 font-bold">
             <Flame className="w-4 h-4 fill-amber-400 animate-bounce" />
             <span>{streak}-Day Streak</span>
           </div>
-          <div className="w-px h-4 bg-white/10" />
+          <div className="hidden sm:block w-px h-4 bg-white/10" />
           <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
             <Zap className="w-4 h-4 text-indigo-400" />
             <span>Level {level} ({xp} XP)</span>
           </div>
-          <div className="w-px h-4 bg-white/10" />
+          <div className="hidden sm:block w-px h-4 bg-white/10" />
           <div className="flex items-center gap-1.5 text-yellow-400 font-bold">
             <Coins className="w-4 h-4 text-yellow-400" />
             <span>{coins} Coins</span>
@@ -182,11 +182,11 @@ export const LeaderboardsView: React.FC = () => {
               <tr className="border-b border-white/10 text-slate-400 font-semibold uppercase text-[10px]">
                 <th className="py-3 px-3">Rank</th>
                 <th className="py-3 px-3">Student</th>
-                <th className="py-3 px-3">College / Location</th>
+                <th className="py-3 px-3 hidden lg:table-cell">College / Location</th>
                 <th className="py-3 px-3">Study Hours</th>
-                <th className="py-3 px-3">Focus Score</th>
-                <th className="py-3 px-3">Consistency</th>
-                <th className="py-3 px-3">Accuracy</th>
+                <th className="py-3 px-3 hidden sm:table-cell">Focus Score</th>
+                <th className="py-3 px-3 hidden md:table-cell">Consistency</th>
+                <th className="py-3 px-3 hidden md:table-cell">Accuracy</th>
                 <th className="py-3 px-3">XP</th>
                 <th className="py-3 px-3 text-right">Tier</th>
               </tr>
@@ -210,33 +210,33 @@ export const LeaderboardsView: React.FC = () => {
                       <img
                         src={student.avatar}
                         alt={student.name}
-                        className="w-7 h-7 rounded-full border border-white/10"
+                        className="w-7 h-7 rounded-full border border-white/10 shrink-0"
                       />
-                      <div>
-                        <p className={`font-semibold ${isMe ? 'text-indigo-300 font-bold' : 'text-white'}`}>
+                      <div className="min-w-0">
+                        <p className={`font-semibold truncate max-w-[110px] sm:max-w-none ${isMe ? 'text-indigo-300 font-bold' : 'text-white'}`}>
                           {student.name}
                         </p>
                       </div>
                     </td>
-                    <td className="py-3.5 px-3 text-slate-400 text-[11px]">
+                    <td className="py-3.5 px-3 text-slate-400 text-[11px] hidden lg:table-cell">
                       {student.college} • {student.city}
                     </td>
-                    <td className="py-3.5 px-3 font-mono font-bold text-white">
+                    <td className="py-3.5 px-3 font-mono font-bold text-white whitespace-nowrap">
                       {student.studyHours} hrs
                     </td>
-                    <td className="py-3.5 px-3 font-mono text-cyan-300">
+                    <td className="py-3.5 px-3 font-mono text-cyan-300 hidden sm:table-cell">
                       {student.focusScore}%
                     </td>
-                    <td className="py-3.5 px-3 font-mono text-emerald-300">
+                    <td className="py-3.5 px-3 font-mono text-emerald-300 hidden md:table-cell">
                       {student.consistency}%
                     </td>
-                    <td className="py-3.5 px-3 font-mono text-amber-300">
+                    <td className="py-3.5 px-3 font-mono text-amber-300 hidden md:table-cell">
                       {student.accuracy}%
                     </td>
-                    <td className="py-3.5 px-3 font-mono text-indigo-300">
+                    <td className="py-3.5 px-3 font-mono text-indigo-300 whitespace-nowrap">
                       {student.xp} XP
                     </td>
-                    <td className="py-3.5 px-3 text-right">
+                    <td className="py-3.5 px-3 text-right whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getTierBadge(student.tier)}`}>
                         {student.tier}
                       </span>

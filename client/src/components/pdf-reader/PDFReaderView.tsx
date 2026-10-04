@@ -75,7 +75,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [localPdfDocId, setLocalPdfDocId] = useState<string | null>(null);
 
   // Layout & UI states
-  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
   const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
@@ -764,7 +764,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           {/* Page Navigation (syncs to the room while presenting) */}
           {streamUrl && !pdfError && (
             <div
-              className="hidden sm:flex items-center gap-0.5 ml-2 bg-slate-950 border border-white/10 rounded-xl px-1 py-0.5 shrink-0"
+              className="flex items-center gap-0.5 ml-1 sm:ml-2 bg-slate-950 border border-white/10 rounded-xl px-1 py-0.5 shrink-0"
               title={pdfPresentation?.presenterId === currentUser.id ? 'Page — synced to all viewers' : 'Page number'}
             >
               <button
@@ -794,7 +794,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
                   if (!Number.isNaN(v) && v >= 1) goToPage(v);
                   else setPageInputValue(String(displayPage));
                 }}
-                className="w-10 bg-transparent text-center text-xs font-bold text-white focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                className="w-7 sm:w-10 bg-transparent text-center text-xs font-bold text-white focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 aria-label="Page number"
                 title="Page Number"
               />
@@ -1201,14 +1201,14 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
 
         </div>
 
-        {/* Right: AI Reader Assistant (takes the same column as the chat) */}
+        {/* Right: AI Reader Assistant (Mobile Full Overlay / Desktop Side-by-Side) */}
         {isAiOpen && (
           <div
             data-pdf-ai-panel
             data-preserve-pdf-selection
-            className={`${
-              isAiExpanded ? 'w-full sm:w-[480px] lg:w-[580px] xl:w-[650px]' : 'w-80 lg:w-96'
-            } shrink-0 h-full border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text transition-all`}
+            className={`absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto ${
+              isAiExpanded ? 'w-full lg:w-[580px] xl:w-[650px]' : 'w-full lg:w-96'
+            } shrink-0 h-full border-l border-white/10 bg-slate-950/95 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text transition-all`}
           >
             <PDFAiPanel
               docTitle={activePdfDoc?.title || 'Study PDF'}
@@ -1227,12 +1227,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           </div>
         )}
 
-        {/* Right: Side-by-Side Live Voice & Doubts Chatbox (Collapsible) */}
+        {/* Right: Live Voice & Doubts Chatbox (Mobile Full Overlay / Desktop Side-by-Side) */}
         {isChatOpen && !isAiOpen && (
           <div
             data-chat-panel
             data-preserve-pdf-selection
-            className="w-80 lg:w-96 shrink-0 h-full p-2 border-l border-white/10 bg-slate-950/90 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text"
+            className="absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto w-full lg:w-96 shrink-0 h-full p-2 border-l border-white/10 bg-slate-950/95 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text"
           >
             <VoiceChatPanel
               mode="pdf"
@@ -1248,7 +1248,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
         {isLibraryOpen && (
           <div
             data-preserve-pdf-selection
-            className="absolute top-0 right-0 bottom-0 w-80 sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-40 flex flex-col animate-in slide-in-from-right duration-200 select-text"
+            className="absolute top-0 right-0 bottom-0 w-full sm:w-96 bg-slate-900 border-l border-white/10 shadow-2xl z-40 flex flex-col animate-in slide-in-from-right duration-200 select-text"
           >
             
             <div className="p-3 border-b border-white/10 flex items-center justify-between bg-slate-950/60">

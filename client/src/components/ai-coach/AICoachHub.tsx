@@ -196,6 +196,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onCl
   const [tempEditorTitle, setTempEditorTitle] = useState(activeTopic);
   const [tempEditorText, setTempEditorText] = useState(sourceMaterial);
   const [isUploading, setIsUploading] = useState(false);
+  const [isPresetsOpen, setIsPresetsOpen] = useState(false);
 
   // Loading States
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -826,26 +827,41 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onCl
         {/* Quick Action Buttons for Changing Context */}
         <div className="flex items-center gap-2">
           {/* Preset Selector Dropdown */}
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 transition-colors">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsPresetsOpen(!isPresetsOpen)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 transition-colors"
+            >
               <Compass className="w-3.5 h-3.5 text-cyan-400" />
               <span>Presets</span>
             </button>
-            <div className="absolute right-0 mt-1 w-64 p-1.5 bg-slate-900 border border-white/15 rounded-2xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-50">
-              <p className="text-[10px] font-bold text-slate-500 uppercase px-2.5 py-1">Exam Topics</p>
-              {PRESET_TOPICS.map((p, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSelectPreset(p)}
-                  className={`w-full text-left px-2.5 py-2 rounded-xl text-xs flex flex-col transition-colors ${
-                    activeTopic === p.title ? 'bg-indigo-600/30 text-white font-bold' : 'text-slate-300 hover:bg-white/5'
-                  }`}
-                >
-                  <span className="truncate">{p.title}</span>
-                  <span className="text-[10px] text-slate-500">{p.domain}</span>
-                </button>
-              ))}
-            </div>
+            {isPresetsOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40 bg-transparent"
+                  onClick={() => setIsPresetsOpen(false)}
+                />
+                <div className="absolute right-0 mt-1 w-64 max-w-[calc(100vw-32px)] p-1.5 bg-slate-900 border border-white/15 rounded-2xl shadow-2xl transition-all z-50">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase px-2.5 py-1">Exam Topics</p>
+                  {PRESET_TOPICS.map((p, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        handleSelectPreset(p);
+                        setIsPresetsOpen(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-2 rounded-xl text-xs flex flex-col transition-colors ${
+                        activeTopic === p.title ? 'bg-indigo-600/30 text-white font-bold' : 'text-slate-300 hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="truncate">{p.title}</span>
+                      <span className="text-[10px] text-slate-500">{p.domain}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Upload PDF / Document */}

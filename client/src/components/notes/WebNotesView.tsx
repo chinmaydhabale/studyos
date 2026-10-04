@@ -148,7 +148,7 @@ export const WebNotesView: React.FC<WebNotesViewProps> = ({ onAskAiDoubt }) => {
   const [readerTheme, setReaderTheme] = useState<'slate' | 'sepia' | 'black'>('slate');
 
   // Side-by-side workspace & live chat
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'bookmarks' | 'notes' | 'ai'>('chat');
 
   // Bookmarking System
@@ -855,12 +855,12 @@ export const WebNotesView: React.FC<WebNotesViewProps> = ({ onAskAiDoubt }) => {
           </div>
         </div>
 
-        {/* Right: Side-by-Side Live Room Chat, Bookmarks & Notes Sidebar */}
+        {/* Right: Side-by-Side Live Room Chat, Bookmarks & Notes Sidebar (Mobile Full Overlay / Desktop Side-by-Side) */}
         {isSidebarOpen && (
-          <div className="w-full lg:w-96 shrink-0 h-full border-t lg:border-t-0 lg:border-l border-white/10 bg-slate-950/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-right duration-200">
+          <div className="absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto w-full lg:w-96 shrink-0 h-full border-t lg:border-t-0 lg:border-l border-white/10 bg-slate-950/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-right duration-200">
             {/* Sidebar Navigation Tabs */}
-            <div className="p-2 border-b border-white/10 bg-slate-900/60 flex items-center justify-between">
-              <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-xl border border-white/10 text-xs w-full overflow-x-auto no-scrollbar">
+            <div className="p-2 border-b border-white/10 bg-slate-900/60 flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-xl border border-white/10 text-xs flex-1 overflow-x-auto no-scrollbar">
                 <button
                   type="button"
                   onClick={() => setSidebarTab('chat')}

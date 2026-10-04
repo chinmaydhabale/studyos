@@ -93,7 +93,7 @@ export const RoomContextChip: React.FC = () => {
 
       {/* Room Roster & Quick Actions Popover */}
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-72 rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-3.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 flex flex-col gap-3 text-slate-100">
+        <div className="fixed inset-x-3 top-[56px] sm:top-auto sm:inset-x-auto sm:absolute sm:left-0 sm:mt-2 w-auto sm:w-72 max-w-[calc(100vw-24px)] rounded-3xl bg-[#0b101e]/95 backdrop-blur-2xl border border-white/15 p-3.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 flex flex-col gap-3 text-slate-100">
           
           {/* Header */}
           <div className="flex items-center justify-between border-b border-white/10 pb-2">
