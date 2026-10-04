@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useSocket } from '../../../context/SocketContext.js';
 import { useStudy } from '../../../context/StudyContext.js';
-import { ArithmeticQuestion, DuelInvite, DuelPeerProgress } from '../types.js';
+import { ArithmeticQuestion, DifficultyLevel, DuelInvite, DuelPeerProgress } from '../types.js';
 import { generateArithmeticQuestion } from '../engines/mathEngine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { MathNumpad } from '../shared/MathNumpad.js';
@@ -31,6 +31,10 @@ interface MultiplayerDuelArenaProps {
 export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBackToHub }) => {
   const { socket, roomId, currentUser, peers } = useSocket();
   const { addXp, triggerCelebration } = useStudy();
+
+  // Duel Settings state
+  const [duelDifficulty, setDuelDifficulty] = useState<DifficultyLevel>('medium');
+  const [duelIsMultiOp, setDuelIsMultiOp] = useState<boolean>(false);
 
   // Match state
   const [matchState, setMatchState] = useState<'lobby' | 'countdown' | 'playing' | 'gameover'>('lobby');
@@ -91,6 +95,8 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
         senderAvatar: data.senderAvatar,
         gameMode: data.gameMode,
         timeLimit: data.timeLimit,
+        difficulty: data.difficulty || 'medium',
+        isMultiOp: !!data.isMultiOp,
         challengerSocketId: data.senderSocketId || data.socketId
       });
     };
@@ -101,6 +107,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
       const opp = isSender
         ? { id: data.acceptorId, name: data.acceptorName, socketId: data.acceptorSocketId, avatar: data.acceptorAvatar }
         : { id: data.senderId, name: data.senderName, socketId: data.challengerSocketId, avatar: data.senderAvatar };
+
+      if (data.difficulty) setDuelDifficulty(data.difficulty);
+      if (data.isMultiOp !== undefined) setDuelIsMultiOp(data.isMultiOp);
 
       setOpponent(opp);
       setActiveDuelId(data.duelId);
@@ -184,10 +193,10 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
         isFinished: false
       });
       setOpponentFinal(null);
-      setCurrentQ(generateArithmeticQuestion('mixed', 'medium'));
+      setCurrentQ(generateArithmeticQuestion('mixed', duelDifficulty, duelIsMultiOp));
       setMatchState('playing');
     }
-  }, [matchState, countdown, opponent]);
+  }, [matchState, countdown, opponent, duelDifficulty, duelIsMultiOp]);
 
   // Send Invite to Peer
   const sendDuelInvite = (targetPeer: any) => {
@@ -205,7 +214,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
       senderAvatar: currentUser.avatar,
       senderSocketId: socket.id,
       gameMode: 'blitz',
-      timeLimit: 60
+      timeLimit: 60,
+      difficulty: duelDifficulty,
+      isMultiOp: duelIsMultiOp
     });
   };
 
@@ -223,7 +234,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
       senderAvatar: currentUser.avatar,
       senderSocketId: socket.id,
       gameMode: 'blitz',
-      timeLimit: 60
+      timeLimit: 60,
+      difficulty: duelDifficulty,
+      isMultiOp: duelIsMultiOp
     });
   };
 
@@ -244,7 +257,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
       roomId: roomId || 'STUDY-ROOM-ALPHA',
       seed: Date.now(),
       gameMode: incomingInvite.gameMode,
-      timeLimit: incomingInvite.timeLimit
+      timeLimit: incomingInvite.timeLimit,
+      difficulty: incomingInvite.difficulty || duelDifficulty,
+      isMultiOp: incomingInvite.isMultiOp ?? duelIsMultiOp
     });
   };
 
@@ -348,9 +363,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
     setTimeout(() => {
       setFeedback(null);
       setInputVal('');
-      setCurrentQ(generateArithmeticQuestion('mixed', 'medium'));
+      setCurrentQ(generateArithmeticQuestion('mixed', duelDifficulty, duelIsMultiOp));
     }, 180);
-  }, [currentQ, inputVal, myScore, myStreak, myMaxStreak, mySolvedCount, socket, opponent, activeDuelId, currentUser?.id]);
+  }, [currentQ, inputVal, myScore, myStreak, myMaxStreak, mySolvedCount, socket, opponent, activeDuelId, currentUser?.id, duelDifficulty, duelIsMultiOp]);
 
   // Keyboard listener during duel
   useEffect(() => {
@@ -463,6 +478,68 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
             <p className="text-xs text-slate-400 max-w-md mx-auto">
               Real-time 60-second synchronized calculation battle. Challenge any peer in your study room or broadcast an open lobby!
             </p>
+          </div>
+
+          {/* Duel Settings: Complexity & Difficulty */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-slate-950/60 border border-white/5">
+            {/* Calculation Complexity */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Duel Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDuelIsMultiOp(false)}
+                  className={`py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
+                    !duelIsMultiOp
+                      ? 'bg-gradient-to-r from-rose-600 to-indigo-600 text-white shadow-md'
+                      : 'bg-slate-900/60 border border-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>Single Op</span>
+                  <span className="text-[9px] opacity-75 px-1 py-0.5 rounded bg-black/30">a ± b</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuelIsMultiOp(true)}
+                  className={`py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
+                    duelIsMultiOp
+                      ? 'bg-gradient-to-r from-amber-600 to-rose-600 text-white shadow-md'
+                      : 'bg-slate-900/60 border border-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>Multi-Op (BODMAS)</span>
+                  <span className="text-[9px] opacity-75 px-1 py-0.5 rounded bg-black/30">a × b + c</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Difficulty Tier */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Duel Difficulty</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(
+                  [
+                    { id: 'easy', label: 'Easy' },
+                    { id: 'medium', label: 'Medium' },
+                    { id: 'hard', label: 'Hard' },
+                    { id: 'extreme', label: 'Extreme' }
+                  ] as const
+                ).map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setDuelDifficulty(d.id)}
+                    className={`py-2 px-2 rounded-xl font-bold text-xs text-center transition-all ${
+                      duelDifficulty === d.id
+                        ? 'bg-indigo-600 border border-indigo-400 text-white shadow-md'
+                        : 'bg-slate-900/60 border border-white/5 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {inviteSentTo && (
@@ -617,11 +694,23 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
                 : 'border-white/10'
             }`}
           >
-            <div className="flex items-center gap-3 sm:gap-6 text-4xl sm:text-6xl font-black font-mono tracking-tight text-white select-none">
-              <span>{currentQ.num1}</span>
-              <span className="text-cyan-400">{currentQ.operation}</span>
-              <span>{currentQ.num2}</span>
+            {/* Difficulty & Mode Badge */}
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-white/10 text-slate-300 border border-white/10">
+                {currentQ.difficulty || duelDifficulty}
+              </span>
+              {(currentQ.isMultiOp || duelIsMultiOp) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  BODMAS CHAIN
+                </span>
+              )}
+            </div>
+
+            {/* Expression */}
+            <div className="flex items-center justify-center flex-wrap gap-2 sm:gap-4 text-3xl sm:text-5xl md:text-6xl font-black font-mono tracking-tight text-white select-none text-center px-2">
+              <span>{currentQ.expression || `${currentQ.num1} ${currentQ.operation} ${currentQ.num2}`}</span>
               <span className="text-slate-500">=</span>
+              <span className="text-cyan-400">?</span>
             </div>
 
             <div className="w-full max-w-xs h-16 sm:h-20 rounded-2xl bg-slate-950/80 border-2 border-indigo-500/40 flex items-center justify-center text-3xl sm:text-4xl font-mono font-black text-white shadow-inner relative">

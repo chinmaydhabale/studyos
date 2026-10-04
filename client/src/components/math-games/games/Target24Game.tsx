@@ -14,7 +14,7 @@ import {
   Trophy,
   Flame
 } from 'lucide-react';
-import { Target24Question, GameSummary } from '../types.js';
+import { Target24Question, DifficultyLevel, GameSummary } from '../types.js';
 import { generateTarget24Question, evaluateMathExpression } from '../engines/target24Engine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { GameOverModal } from '../shared/GameOverModal.js';
@@ -25,6 +25,7 @@ interface Target24GameProps {
 
 export const Target24Game: React.FC<Target24GameProps> = ({ onBackToHub }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>('medium');
   const [currentQ, setCurrentQ] = useState<Target24Question | null>(null);
   const [usedCardIndices, setUsedCardIndices] = useState<number[]>([]);
   const [tokens, setTokens] = useState<Array<{ type: 'num' | 'op' | 'paren'; val: string; cardIndex?: number }>>([]);
@@ -57,10 +58,10 @@ export const Target24Game: React.FC<Target24GameProps> = ({ onBackToHub }) => {
     setErrorMsg(null);
     setGameSummary(null);
 
-    const q = generateTarget24Question();
+    const q = generateTarget24Question(difficulty);
     setCurrentQ(q);
     setIsPlaying(true);
-  }, []);
+  }, [difficulty]);
 
   const handleCardClick = (num: number, index: number) => {
     if (usedCardIndices.includes(index)) return;
@@ -167,7 +168,7 @@ export const Target24Game: React.FC<Target24GameProps> = ({ onBackToHub }) => {
         setHintUsed(false);
         setShowHint(false);
         setErrorMsg(null);
-        setCurrentQ(generateTarget24Question());
+        setCurrentQ(generateTarget24Question(difficulty));
       }, 700);
     } else {
       setErrorMsg(`Equation equals ${liveEval.result}, but target is 24!`);
@@ -237,6 +238,41 @@ export const Target24Game: React.FC<Target24GameProps> = ({ onBackToHub }) => {
                 {n}
               </div>
             ))}
+          </div>
+
+          {/* Difficulty Tier (4 Scaled Levels) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty Level</label>
+              <span className="text-[11px] text-slate-400 font-medium">4 Puzzle Pools</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {(
+                [
+                  { id: 'easy', label: 'Easy', tag: 'Beginner', desc: 'Direct multiples & basic sums', color: 'border-emerald-500/50 text-emerald-400 bg-emerald-950/20' },
+                  { id: 'medium', label: 'Medium', tag: 'Intermediate', desc: 'Standard classic 24 puzzles', color: 'border-cyan-500/50 text-cyan-400 bg-cyan-950/20' },
+                  { id: 'hard', label: 'Hard', tag: 'Advanced', desc: 'Tricky brackets & fractions', color: 'border-amber-500/50 text-amber-400 bg-amber-950/20' },
+                  { id: 'extreme', label: 'Extreme Hard', tag: 'God Level', desc: 'Notorious mind-benders', color: 'border-rose-500/50 text-rose-400 bg-rose-950/20' }
+                ] as const
+              ).map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setDifficulty(d.id)}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    difficulty === d.id
+                      ? `${d.color} shadow-lg ring-1 ring-white/20 scale-[1.02]`
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs sm:text-sm">{d.label}</span>
+                    <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-white/10 font-bold">{d.tag}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 leading-snug">{d.desc}</div>
+                </button>
+              ))}
+            </div>
           </div>
 
           <button

@@ -322,6 +322,16 @@ export const MathGamesArena: React.FC = () => {
                 </div>
               </div>
 
+              {/* Scaled Features Badges */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white/10 text-slate-300 border border-white/10">
+                  Easy → Extreme Hard
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  Single & Multi-Op
+                </span>
+              </div>
+
               <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs font-bold text-slate-300 group-hover:text-white">
                 <span className="flex items-center gap-1.5">
                   <Play className="w-3.5 h-3.5 fill-current" />

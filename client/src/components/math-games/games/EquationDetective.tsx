@@ -12,7 +12,7 @@ import {
   HelpCircle,
   Clock
 } from 'lucide-react';
-import { DetectiveQuestion, GameSummary } from '../types.js';
+import { DetectiveQuestion, DifficultyLevel, GameSummary } from '../types.js';
 import { generateDetectiveQuestion } from '../engines/mathEngine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { ComboStreakBadge } from '../shared/ComboStreakBadge.js';
@@ -24,6 +24,8 @@ interface EquationDetectiveProps {
 
 export const EquationDetective: React.FC<EquationDetectiveProps> = ({ onBackToHub }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>('medium');
+  const [isMultiOp, setIsMultiOp] = useState<boolean>(false);
   const [currentQ, setCurrentQ] = useState<DetectiveQuestion | null>(null);
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
@@ -51,10 +53,10 @@ export const EquationDetective: React.FC<EquationDetectiveProps> = ({ onBackToHu
     setSelectedOpt(null);
     setGameSummary(null);
 
-    const q = generateDetectiveQuestion();
+    const q = generateDetectiveQuestion(difficulty, isMultiOp);
     setCurrentQ(q);
     setIsPlaying(true);
-  }, []);
+  }, [difficulty, isMultiOp]);
 
   const finishGame = useCallback((results: Array<DetectiveQuestion & { userAnswer: string; isCorrect: boolean }>, finalScore: number, finalStreak: number) => {
     setIsPlaying(false);
@@ -132,7 +134,7 @@ export const EquationDetective: React.FC<EquationDetectiveProps> = ({ onBackToHu
     setTimeout(() => {
       setFeedback(null);
       setSelectedOpt(null);
-      setCurrentQ(generateDetectiveQuestion());
+      setCurrentQ(generateDetectiveQuestion(difficulty, isMultiOp));
     }, 400);
   };
 
@@ -189,8 +191,79 @@ export const EquationDetective: React.FC<EquationDetectiveProps> = ({ onBackToHu
             </p>
           </div>
 
-          <div className="p-4 bg-slate-950/60 border border-white/5 rounded-2xl max-w-sm mx-auto font-mono text-xl sm:text-2xl font-bold text-cyan-300">
-            18  [ ? ]  3  =  54
+          {/* Complexity Selector */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Equation Complexity</label>
+              <span className="text-[11px] text-cyan-400 font-semibold">
+                {isMultiOp ? 'Multi-Op Equation' : 'Single Op Equation'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950/70 border border-white/10 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setIsMultiOp(false)}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 ${
+                  !isMultiOp
+                    ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Single Op</span>
+                <span className="text-[10px] opacity-75 px-1.5 py-0.5 rounded bg-black/30">a [ ? ] b = c</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsMultiOp(true)}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 ${
+                  isMultiOp
+                    ? 'bg-gradient-to-r from-amber-600 to-rose-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Multi-Op (BODMAS)</span>
+                <span className="text-[10px] opacity-75 px-1.5 py-0.5 rounded bg-black/30">a × [ ? ] - b = c</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Difficulty Tier (4 Scaled Levels) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty Level</label>
+              <span className="text-[11px] text-slate-400 font-medium">4 Scaled Tiers</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {(
+                [
+                  { id: 'easy', label: 'Easy', tag: 'Beginner', desc: '1-digit factors, basic signs', color: 'border-emerald-500/50 text-emerald-400 bg-emerald-950/20' },
+                  { id: 'medium', label: 'Medium', tag: 'Intermediate', desc: 'Standard 2-digit deduction', color: 'border-cyan-500/50 text-cyan-400 bg-cyan-950/20' },
+                  { id: 'hard', label: 'Hard', tag: 'Exam Beast', desc: 'Multi-digit & mixed ops', color: 'border-amber-500/50 text-amber-400 bg-amber-950/20' },
+                  { id: 'extreme', label: 'Extreme Hard', tag: 'God Level', desc: 'Intense BODMAS mystery', color: 'border-rose-500/50 text-rose-400 bg-rose-950/20' }
+                ] as const
+              ).map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setDifficulty(d.id)}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    difficulty === d.id
+                      ? `${d.color} shadow-lg ring-1 ring-white/20 scale-[1.02]`
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs sm:text-sm">{d.label}</span>
+                    <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-white/10 font-bold">{d.tag}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 leading-snug">{d.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 bg-slate-950/60 border border-white/5 rounded-2xl max-w-sm mx-auto font-mono text-lg sm:text-xl font-bold text-cyan-300">
+            {isMultiOp ? '14 × [ ? ] - 18 = 94' : '18  [ ? ]  3  =  54'}
           </div>
 
           <button

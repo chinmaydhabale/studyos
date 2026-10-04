@@ -5,6 +5,7 @@ import {
   CompareQuestion,
   TableRecallQuestion,
   OperationType,
+  MultiOperationType,
   DifficultyLevel
 } from '../types.js';
 
@@ -12,10 +13,22 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+// ---------------------------------------------------------------------------
+// 1. SPEED ARITHMETIC BLITZ ENGINE (Single Operation & Multi-Operation BODMAS)
+// ---------------------------------------------------------------------------
+
 export function generateArithmeticQuestion(
   op: OperationType,
-  diff: DifficultyLevel
+  diff: DifficultyLevel = 'medium',
+  isMultiOp: boolean = false,
+  multiType: MultiOperationType = 'mixed'
 ): ArithmeticQuestion {
+  // If Multi-Operation is requested:
+  if (isMultiOp) {
+    return generateMultiOpArithmetic(diff, multiType);
+  }
+
+  // Single Operation mode:
   let chosenOp: '+' | '-' | '×' | '÷';
   if (op === 'mixed') {
     const ops: Array<'+' | '-' | '×' | '÷'> = ['+', '-', '×', '÷'];
@@ -35,9 +48,13 @@ export function generateArithmeticQuestion(
     } else if (diff === 'medium') {
       num1 = randomInt(20, 99);
       num2 = randomInt(15, 99);
-    } else {
+    } else if (diff === 'hard') {
       num1 = randomInt(110, 899);
       num2 = randomInt(95, 699);
+    } else {
+      // Extreme: 4-digit additions
+      num1 = randomInt(1100, 8999);
+      num2 = randomInt(950, 7899);
     }
     answer = num1 + num2;
   } else if (chosenOp === '-') {
@@ -47,9 +64,13 @@ export function generateArithmeticQuestion(
     } else if (diff === 'medium') {
       num2 = randomInt(15, 80);
       num1 = num2 + randomInt(15, 99);
-    } else {
+    } else if (diff === 'hard') {
       num2 = randomInt(120, 600);
       num1 = num2 + randomInt(100, 850);
+    } else {
+      // Extreme: 4-digit subtractions
+      num2 = randomInt(1200, 7500);
+      num1 = num2 + randomInt(1100, 8900);
     }
     answer = num1 - num2;
   } else if (chosenOp === '×') {
@@ -59,9 +80,13 @@ export function generateArithmeticQuestion(
     } else if (diff === 'medium') {
       num1 = randomInt(11, 25);
       num2 = randomInt(3, 9);
-    } else {
+    } else if (diff === 'hard') {
       num1 = randomInt(12, 35);
       num2 = randomInt(11, 29);
+    } else {
+      // Extreme: 2-digit × 2-digit high multiplications
+      num1 = randomInt(25, 99);
+      num2 = randomInt(14, 89);
     }
     answer = num1 * num2;
   } else {
@@ -74,9 +99,14 @@ export function generateArithmeticQuestion(
       num2 = randomInt(4, 15);
       answer = randomInt(8, 25);
       num1 = num2 * answer;
-    } else {
+    } else if (diff === 'hard') {
       num2 = randomInt(12, 30);
       answer = randomInt(15, 60);
+      num1 = num2 * answer;
+    } else {
+      // Extreme: large 2-3 digit integer divisions
+      num2 = randomInt(15, 65);
+      answer = randomInt(35, 150);
       num1 = num2 * answer;
     }
   }
@@ -86,22 +116,228 @@ export function generateArithmeticQuestion(
     num1,
     num2,
     operation: chosenOp,
-    answer
+    expression: `${num1} ${chosenOp} ${num2}`,
+    answer,
+    isMultiOp: false,
+    difficulty: diff
   };
 }
 
-export function generateVedicQuestion(): VedicQuestion {
-  const categories: Array<'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent'> = [
+function generateMultiOpArithmetic(
+  diff: DifficultyLevel,
+  multiType: MultiOperationType
+): ArithmeticQuestion {
+  let expression = '';
+  let answer = 0;
+
+  if (diff === 'easy') {
+    // 2-operation beginner chain
+    const pattern = randomInt(1, 4);
+    if (pattern === 1 || multiType === 'chain_add_sub') {
+      // a + b - c
+      const a = randomInt(10, 35);
+      const b = randomInt(10, 35);
+      const c = randomInt(5, 20);
+      expression = `${a} + ${b} - ${c}`;
+      answer = a + b - c;
+    } else if (pattern === 2 || multiType === 'chain_mult_add') {
+      // a × b + c
+      const a = randomInt(3, 9);
+      const b = randomInt(3, 8);
+      const c = randomInt(5, 25);
+      expression = `${a} × ${b} + ${c}`;
+      answer = a * b + c;
+    } else if (pattern === 3 || multiType === 'chain_mult_sub') {
+      // a × b - c
+      const a = randomInt(4, 9);
+      const b = randomInt(4, 9);
+      const c = randomInt(2, Math.max(3, a * b - 5));
+      expression = `${a} × ${b} - ${c}`;
+      answer = a * b - c;
+    } else {
+      // (a + b) ÷ c
+      const c = randomInt(2, 6);
+      const target = randomInt(3, 10);
+      const sum = c * target;
+      const a = randomInt(2, sum - 2);
+      const b = sum - a;
+      expression = `(${a} + ${b}) ÷ ${c}`;
+      answer = target;
+    }
+  } else if (diff === 'medium') {
+    // 2 to 3 operations, tests BODMAS precedence
+    const pattern = randomInt(1, 5);
+    if (pattern === 1 || multiType === 'chain_mult_add') {
+      // a + b × c (multiplication must be done first!)
+      const b = randomInt(4, 12);
+      const c = randomInt(4, 9);
+      const a = randomInt(15, 60);
+      expression = `${a} + ${b} × ${c}`;
+      answer = a + b * c;
+    } else if (pattern === 2 || multiType === 'chain_mult_sub') {
+      // a × b - c
+      const a = randomInt(8, 20);
+      const b = randomInt(4, 12);
+      const c = randomInt(15, 70);
+      expression = `${a} × ${b} - ${c}`;
+      answer = a * b - c;
+    } else if (pattern === 3) {
+      // (a - b) × c + d
+      const c = randomInt(3, 8);
+      const diffVal = randomInt(6, 18);
+      const b = randomInt(10, 30);
+      const a = b + diffVal;
+      const d = randomInt(10, 45);
+      expression = `(${a} - ${b}) × ${c} + ${d}`;
+      answer = diffVal * c + d;
+    } else if (pattern === 4) {
+      // a ÷ b × c + d
+      const b = randomInt(3, 9);
+      const k = randomInt(4, 12);
+      const a = b * k;
+      const c = randomInt(3, 8);
+      const d = randomInt(12, 50);
+      expression = `${a} ÷ ${b} × ${c} + ${d}`;
+      answer = k * c + d;
+    } else {
+      // a × b + c × d
+      const a = randomInt(5, 12);
+      const b = randomInt(3, 9);
+      const c = randomInt(4, 11);
+      const d = randomInt(2, 8);
+      expression = `${a} × ${b} + ${c} × ${d}`;
+      answer = a * b + c * d;
+    }
+  } else if (diff === 'hard') {
+    // 3 operations with 2-digit and 3-digit terms & squares
+    const pattern = randomInt(1, 5);
+    if (pattern === 1) {
+      // a × b - c × d
+      const a = randomInt(14, 25);
+      const b = randomInt(6, 12);
+      const c = randomInt(5, 15);
+      const d = randomInt(3, 8);
+      expression = `${a} × ${b} - ${c} × ${d}`;
+      answer = a * b - c * d;
+    } else if (pattern === 2) {
+      // a + b × c - d
+      const a = randomInt(60, 220);
+      const b = randomInt(12, 25);
+      const c = randomInt(6, 15);
+      const d = randomInt(25, 110);
+      expression = `${a} + ${b} × ${c} - ${d}`;
+      answer = a + b * c - d;
+    } else if (pattern === 3) {
+      // (a + b) × c - d
+      const a = randomInt(25, 65);
+      const b = randomInt(15, 55);
+      const c = randomInt(5, 12);
+      const d = randomInt(40, 180);
+      expression = `(${a} + ${b}) × ${c} - ${d}`;
+      answer = (a + b) * c - d;
+    } else if (pattern === 4) {
+      // a² + b × c
+      const a = randomInt(11, 24);
+      const b = randomInt(8, 20);
+      const c = randomInt(4, 12);
+      expression = `${a}² + ${b} × ${c}`;
+      answer = a * a + b * c;
+    } else {
+      // a × (b + c) ÷ d
+      const d = randomInt(4, 9);
+      const k = randomInt(6, 16);
+      const sum = d * k;
+      const b = randomInt(8, sum - 8);
+      const c = sum - b;
+      const a = randomInt(5, 16);
+      expression = `${a} × (${b} + ${c}) ÷ ${d}`;
+      answer = a * k;
+    }
+  } else {
+    // Extreme: Full Olympiad / High-speed Quantitative Aptitude BODMAS
+    const pattern = randomInt(1, 5);
+    if (pattern === 1) {
+      // a × b + c² - d
+      const a = randomInt(20, 48);
+      const b = randomInt(7, 18);
+      const c = randomInt(14, 28);
+      const d = randomInt(60, 240);
+      expression = `${a} × ${b} + ${c}² - ${d}`;
+      answer = a * b + c * c - d;
+    } else if (pattern === 2) {
+      // (a + b) × (c - d) + e
+      const a = randomInt(35, 85);
+      const b = randomInt(25, 75);
+      const diffVal = randomInt(4, 15);
+      const d = randomInt(12, 35);
+      const c = d + diffVal;
+      const e = randomInt(45, 180);
+      expression = `(${a} + ${b}) × (${c} - ${d}) + ${e}`;
+      answer = (a + b) * diffVal + e;
+    } else if (pattern === 3) {
+      // a³ - b × c + d
+      const a = randomInt(6, 12);
+      const b = randomInt(18, 42);
+      const c = randomInt(6, 18);
+      const d = randomInt(35, 180);
+      expression = `${a}³ - ${b} × ${c} + ${d}`;
+      answer = a * a * a - b * c + d;
+    } else if (pattern === 4) {
+      // a × b ÷ c + d × e
+      const c = randomInt(4, 9);
+      const k = randomInt(6, 18);
+      const a = c * k;
+      const b = randomInt(8, 24);
+      const d = randomInt(14, 38);
+      const e = randomInt(7, 19);
+      expression = `${a} × ${b} ÷ ${c} + ${d} × ${e}`;
+      answer = (a * b) / c + d * e;
+    } else {
+      // a² - b² + c × d
+      const a = randomInt(22, 45);
+      const b = randomInt(12, a - 2);
+      const c = randomInt(15, 35);
+      const d = randomInt(5, 16);
+      expression = `${a}² - ${b}² + ${c} × ${d}`;
+      answer = a * a - b * b + c * d;
+    }
+  }
+
+  return {
+    id: `q_multi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    expression,
+    answer,
+    isMultiOp: true,
+    difficulty: diff
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2. VEDIC & MENTAL MATH HACKS ENGINE (4 Tiers)
+// ---------------------------------------------------------------------------
+
+export function generateVedicQuestion(
+  diff: DifficultyLevel = 'medium',
+  category?: string
+): VedicQuestion {
+  const allCategories: Array<'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent'> = [
     'square5',
     'multiply11',
     'base100',
     'multiply25_50',
     'fractionPercent'
   ];
-  const cat = categories[Math.floor(Math.random() * categories.length)];
+  const cat = (category && allCategories.includes(category as any))
+    ? (category as 'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent')
+    : allCategories[Math.floor(Math.random() * allCategories.length)];
 
   if (cat === 'square5') {
-    const tens = randomInt(2, 12);
+    let tens = 2;
+    if (diff === 'easy') tens = randomInt(2, 4);      // 25, 35, 45
+    else if (diff === 'medium') tens = randomInt(5, 9); // 55 to 95
+    else if (diff === 'hard') tens = randomInt(10, 15); // 105 to 155
+    else tens = randomInt(16, 25);                      // 165 to 255 (Extreme)
+
     const num = tens * 10 + 5;
     const ans = num * num;
     return {
@@ -110,45 +346,67 @@ export function generateVedicQuestion(): VedicQuestion {
       title: 'Squares of Numbers Ending in 5',
       questionText: `${num}² = ?`,
       answer: ans,
-      trickExplanation: `Multiply tens digit ${tens} by next number (${tens + 1}) = ${tens * (tens + 1)}, then append 25. Answer = ${ans}.`
+      trickExplanation: `Multiply tens digit ${tens} by next number (${tens + 1}) = ${tens * (tens + 1)}, then append 25. Answer = ${ans}.`,
+      difficulty: diff
     };
   }
 
   if (cat === 'multiply11') {
-    const num = randomInt(12, 89);
+    let num = 23;
+    if (diff === 'easy') {
+      // Digits whose sum is < 10 (no carry)
+      const d1 = randomInt(2, 6);
+      const d2 = randomInt(1, 9 - d1);
+      num = d1 * 10 + d2;
+    } else if (diff === 'medium') {
+      // 2-digit with carry
+      num = randomInt(56, 98);
+    } else if (diff === 'hard') {
+      // 3-digit multiplication by 11
+      num = randomInt(125, 485);
+    } else {
+      // Extreme: 4-digit multiplication by 11
+      num = randomInt(1124, 6875);
+    }
+
     const ans = num * 11;
-    const d1 = Math.floor(num / 10);
-    const d2 = num % 10;
-    const mid = d1 + d2;
     return {
       id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       category: 'multiply11',
       title: 'Multiply by 11 Shortcut',
       questionText: `${num} × 11 = ?`,
       answer: ans,
-      trickExplanation: `Split digits ${d1} and ${d2}, insert their sum (${d1} + ${d2} = ${mid}) in between (carrying over if sum ≥ 10). Answer = ${ans}.`
+      trickExplanation: `For ${num} × 11: Add adjacent digits from right to left with carry. ${num} × 11 = ${ans}.`,
+      difficulty: diff
     };
   }
 
   if (cat === 'base100') {
+    let maxDev = 5;
+    if (diff === 'easy') maxDev = 4;
+    else if (diff === 'medium') maxDev = 8;
+    else if (diff === 'hard') maxDev = 15;
+    else maxDev = 25; // Extreme
+
     const isBelow = Math.random() > 0.4;
     if (isBelow) {
-      const dev1 = randomInt(1, 9);
-      const dev2 = randomInt(1, 9);
+      const dev1 = randomInt(2, maxDev);
+      const dev2 = randomInt(2, maxDev);
       const n1 = 100 - dev1;
       const n2 = 100 - dev2;
       const ans = n1 * n2;
       return {
         id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         category: 'base100',
-        title: 'Base 100 Multiplication',
+        title: 'Base 100 Multiplication (Below 100)',
         questionText: `${n1} × ${n2} = ?`,
         answer: ans,
-        trickExplanation: `Deviations from 100 are -${dev1} and -${dev2}. Left part: ${n1} - ${dev2} = ${n1 - dev2}. Right part: (-${dev1}) × (-${dev2}) = ${String(dev1 * dev2).padStart(2, '0')}. Combine to get ${ans}.`
+        trickExplanation: `Deviations from 100 are -${dev1} and -${dev2}. Left part: ${n1} - ${dev2} = ${n1 - dev2}. Right part: (-${dev1}) × (-${dev2}) = ${String(dev1 * dev2).padStart(2, '0')}. Combine to get ${ans}.`,
+        difficulty: diff
       };
     } else {
-      const dev1 = randomInt(2, 8);
-      const dev2 = randomInt(2, 8);
+      const dev1 = randomInt(2, maxDev);
+      const dev2 = randomInt(2, maxDev);
       const n1 = 100 + dev1;
       const n2 = 100 + dev2;
       const ans = n1 * n2;
@@ -158,15 +416,22 @@ export function generateVedicQuestion(): VedicQuestion {
         title: 'Base 100 Multiplication (Above 100)',
         questionText: `${n1} × ${n2} = ?`,
         answer: ans,
-        trickExplanation: `Left part: ${n1} + ${dev2} = ${n1 + dev2}. Right part: ${dev1} × ${dev2} = ${String(dev1 * dev2).padStart(2, '0')}. Combine to get ${ans}.`
+        trickExplanation: `Deviations are +${dev1} and +${dev2}. Left part: ${n1} + ${dev2} = ${n1 + dev2}. Right part: ${dev1} × ${dev2} = ${String(dev1 * dev2).padStart(2, '0')}. Combine to get ${ans}.`,
+        difficulty: diff
       };
     }
   }
 
   if (cat === 'multiply25_50') {
     const is25 = Math.random() > 0.5;
+    let factor = 12;
+    if (diff === 'easy') factor = randomInt(3, 10);
+    else if (diff === 'medium') factor = randomInt(11, 25);
+    else if (diff === 'hard') factor = randomInt(26, 60);
+    else factor = randomInt(65, 140); // Extreme
+
     if (is25) {
-      const base = randomInt(4, 28) * 4; // Multiple of 4
+      const base = factor * 4;
       const ans = base * 25;
       return {
         id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -174,10 +439,11 @@ export function generateVedicQuestion(): VedicQuestion {
         title: 'Multiply by 25 Shortcut',
         questionText: `${base} × 25 = ?`,
         answer: ans,
-        trickExplanation: `25 is 100 / 4! Divide ${base} by 4 = ${base / 4}, then append two zeroes = ${ans}.`
+        trickExplanation: `25 is 100 ÷ 4! Divide ${base} by 4 = ${base / 4}, then append two zeroes = ${ans}.`,
+        difficulty: diff
       };
     } else {
-      const base = randomInt(6, 45) * 2;
+      const base = factor * 2;
       const ans = base * 50;
       return {
         id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -185,30 +451,57 @@ export function generateVedicQuestion(): VedicQuestion {
         title: 'Multiply by 50 Shortcut',
         questionText: `${base} × 50 = ?`,
         answer: ans,
-        trickExplanation: `50 is 100 / 2! Halve ${base} = ${base / 2}, then append two zeroes = ${ans}.`
+        trickExplanation: `50 is 100 ÷ 2! Halve ${base} = ${base / 2}, then append two zeroes = ${ans}.`,
+        difficulty: diff
       };
     }
   }
 
   // Fraction to Percentage
-  const fractions = [
+  const easyFractions = [
     { frac: '1/2', pct: '50%' },
-    { frac: '1/3', pct: '33.33%' },
     { frac: '1/4', pct: '25%' },
     { frac: '1/5', pct: '20%' },
+    { frac: '1/10', pct: '10%' }
+  ];
+  const medFractions = [
+    { frac: '1/3', pct: '33.33%' },
     { frac: '1/6', pct: '16.66%' },
     { frac: '1/7', pct: '14.28%' },
     { frac: '1/8', pct: '12.5%' },
-    { frac: '1/9', pct: '11.11%' },
-    { frac: '1/12', pct: '8.33%' },
     { frac: '3/8', pct: '37.5%' },
     { frac: '5/8', pct: '62.5%' },
     { frac: '2/3', pct: '66.66%' }
   ];
-  const item = fractions[Math.floor(Math.random() * fractions.length)];
+  const hardFractions = [
+    { frac: '1/9', pct: '11.11%' },
+    { frac: '1/11', pct: '9.09%' },
+    { frac: '1/12', pct: '8.33%' },
+    { frac: '2/7', pct: '28.57%' },
+    { frac: '3/7', pct: '42.85%' },
+    { frac: '5/6', pct: '83.33%' },
+    { frac: '7/8', pct: '87.5%' }
+  ];
+  const extremeFractions = [
+    { frac: '1/13', pct: '7.69%' },
+    { frac: '1/14', pct: '7.14%' },
+    { frac: '1/15', pct: '6.66%' },
+    { frac: '1/16', pct: '6.25%' },
+    { frac: '7/16', pct: '43.75%' },
+    { frac: '9/16', pct: '56.25%' },
+    { frac: '11/14', pct: '78.57%' }
+  ];
+
+  let fracPool = medFractions;
+  if (diff === 'easy') fracPool = easyFractions;
+  else if (diff === 'hard') fracPool = hardFractions;
+  else if (diff === 'extreme') fracPool = extremeFractions;
+
+  const item = fracPool[Math.floor(Math.random() * fracPool.length)];
   const options = [item.pct];
+  const allPcts = [...easyFractions, ...medFractions, ...hardFractions, ...extremeFractions].map(f => f.pct);
   while (options.length < 4) {
-    const rnd = fractions[Math.floor(Math.random() * fractions.length)].pct;
+    const rnd = allPcts[Math.floor(Math.random() * allPcts.length)];
     if (!options.includes(rnd)) options.push(rnd);
   }
   options.sort(() => Math.random() - 0.5);
@@ -220,11 +513,77 @@ export function generateVedicQuestion(): VedicQuestion {
     questionText: `Convert fraction ${item.frac} to Percentage:`,
     answer: item.pct,
     options,
-    trickExplanation: `Fraction ${item.frac} equals exactly ${item.pct}. Memorize standard fraction tables to speed up Data Interpretation.`
+    trickExplanation: `Fraction ${item.frac} equals exactly ${item.pct}. Memorize standard fraction tables to supercharge your DI speed.`,
+    difficulty: diff
   };
 }
 
-export function generateDetectiveQuestion(): DetectiveQuestion {
+// ---------------------------------------------------------------------------
+// 3. EQUATION DETECTIVE ENGINE (Single Op & Multi-Op BODMAS Detective)
+// ---------------------------------------------------------------------------
+
+export function generateDetectiveQuestion(
+  diff: DifficultyLevel = 'medium',
+  isMultiOp: boolean = false
+): DetectiveQuestion {
+  // If multi-op detective is requested:
+  if (isMultiOp || diff === 'hard' || diff === 'extreme') {
+    const isMissingOperator = Math.random() > 0.5;
+
+    if (isMissingOperator) {
+      // Multi-op missing operator: e.g. a × b [ ? ] c = d or (a [ ? ] b) × c = d
+      const a = randomInt(diff === 'extreme' ? 12 : 5, diff === 'extreme' ? 25 : 15);
+      const b = randomInt(diff === 'extreme' ? 6 : 3, diff === 'extreme' ? 14 : 9);
+      const c = randomInt(10, diff === 'extreme' ? 80 : 40);
+
+      const opType = randomInt(1, 2) === 1 ? '+' : '-';
+      let result = 0;
+      if (opType === '+') {
+        result = a * b + c;
+      } else {
+        result = a * b - c;
+      }
+
+      return {
+        id: `det_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type: 'missing_op',
+        prompt: `${a} × ${b}  [ ? ]  ${c}  =  ${result}`,
+        correctAnswer: opType,
+        options: ['+', '-', '×', '÷'],
+        explanation: `${a} × ${b} = ${a * b}. Then ${a * b} ${opType} ${c} = ${result}. Missing operator is "${opType}".`,
+        difficulty: diff,
+        isMultiOp: true
+      };
+    } else {
+      // Multi-op missing number: e.g. mult × [ ? ] - sub = result
+      const mult = randomInt(diff === 'extreme' ? 8 : 4, diff === 'extreme' ? 18 : 12);
+      const missing = randomInt(diff === 'extreme' ? 5 : 2, diff === 'extreme' ? 16 : 10);
+      const addSub = randomInt(10, diff === 'extreme' ? 60 : 30);
+      const isSub = Math.random() > 0.4;
+      const result = isSub ? mult * missing - addSub : mult * missing + addSub;
+
+      const correct = String(missing);
+      const options = [correct];
+      while (options.length < 4) {
+        const fake = String(randomInt(Math.max(1, missing - 4), missing + 5));
+        if (!options.includes(fake)) options.push(fake);
+      }
+      options.sort(() => Math.random() - 0.5);
+
+      return {
+        id: `det_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type: 'missing_num',
+        prompt: `${mult} × [ ? ] ${isSub ? '-' : '+'} ${addSub} = ${result}`,
+        correctAnswer: correct,
+        options,
+        explanation: `${mult} × ${missing} = ${mult * missing}, ${isSub ? '-' : '+'} ${addSub} = ${result}. Missing number is ${missing}.`,
+        difficulty: diff,
+        isMultiOp: true
+      };
+    }
+  }
+
+  // Single Operation Detective:
   const isMissingOp = Math.random() > 0.4;
 
   if (isMissingOp) {
@@ -237,35 +596,35 @@ export function generateDetectiveQuestion(): DetectiveQuestion {
     const op = ops[Math.floor(Math.random() * ops.length)];
     let a = 0;
     let b = 0;
-    if (op.symbol === '+') {
-      a = randomInt(12, 50);
-      b = randomInt(8, 45);
-    } else if (op.symbol === '-') {
-      b = randomInt(9, 40);
-      a = b + randomInt(10, 45);
-    } else if (op.symbol === '×') {
-      a = randomInt(4, 15);
-      b = randomInt(3, 12);
-    } else {
-      b = randomInt(3, 12);
-      a = b * randomInt(3, 12);
-    }
-    const c = op.compute(a, b);
 
+    if (diff === 'easy') {
+      if (op.symbol === '+') { a = randomInt(8, 25); b = randomInt(5, 20); }
+      else if (op.symbol === '-') { b = randomInt(5, 18); a = b + randomInt(6, 25); }
+      else if (op.symbol === '×') { a = randomInt(2, 8); b = randomInt(2, 7); }
+      else { b = randomInt(2, 6); a = b * randomInt(2, 8); }
+    } else {
+      if (op.symbol === '+') { a = randomInt(18, 65); b = randomInt(12, 55); }
+      else if (op.symbol === '-') { b = randomInt(15, 50); a = b + randomInt(15, 60); }
+      else if (op.symbol === '×') { a = randomInt(4, 16); b = randomInt(3, 14); }
+      else { b = randomInt(3, 15); a = b * randomInt(3, 15); }
+    }
+
+    const c = op.compute(a, b);
     return {
       id: `det_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: 'missing_op',
       prompt: `${a}  [ ? ]  ${b}  =  ${c}`,
       correctAnswer: op.symbol,
       options: ['+', '-', '×', '÷'],
-      explanation: `${a} ${op.symbol} ${b} = ${c}`
+      explanation: `${a} ${op.symbol} ${b} = ${c}`,
+      difficulty: diff,
+      isMultiOp: false
     };
   } else {
-    // Missing number: e.g. a × [ ? ] + c = d
-    const mult = randomInt(3, 12);
-    const missing = randomInt(2, 10);
-    const add = randomInt(2, 20);
-    const result = mult * missing + add;
+    // Missing number in single operation
+    const a = randomInt(diff === 'easy' ? 4 : 8, diff === 'easy' ? 10 : 20);
+    const missing = randomInt(diff === 'easy' ? 3 : 5, diff === 'easy' ? 10 : 18);
+    const result = a * missing;
 
     const correct = String(missing);
     const options = [correct];
@@ -278,52 +637,97 @@ export function generateDetectiveQuestion(): DetectiveQuestion {
     return {
       id: `det_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: 'missing_num',
-      prompt: `${mult} × [ ? ] + ${add} = ${result}`,
+      prompt: `${a} × [ ? ] = ${result}`,
       correctAnswer: correct,
       options,
-      explanation: `${mult} × ${missing} = ${mult * missing}, + ${add} = ${result}. Missing number is ${missing}.`
+      explanation: `${a} × ${missing} = ${result}. Missing number is ${missing}.`,
+      difficulty: diff,
+      isMultiOp: false
     };
   }
 }
 
-export function generateCompareQuestion(diff: DifficultyLevel): CompareQuestion {
+// ---------------------------------------------------------------------------
+// 4. FLASH COMPARE ENGINE (< = > with 4 Tiers & Multi-Op option)
+// ---------------------------------------------------------------------------
+
+export function generateCompareQuestion(
+  diff: DifficultyLevel = 'medium',
+  isMultiOp: boolean = false
+): CompareQuestion {
   let leftExpr = '';
   let rightExpr = '';
   let leftValue = 0;
   let rightValue = 0;
 
-  const type = randomInt(1, 3);
-  if (type === 1) {
-    // Multiplication comparison
-    const a = randomInt(diff === 'easy' ? 4 : 11, diff === 'easy' ? 12 : 25);
-    const b = randomInt(3, diff === 'easy' ? 9 : 15);
-    const c = randomInt(diff === 'easy' ? 4 : 11, diff === 'easy' ? 12 : 25);
-    const d = randomInt(3, diff === 'easy' ? 9 : 15);
-    leftExpr = `${a} × ${b}`;
-    leftValue = a * b;
-    rightExpr = `${c} × ${d}`;
-    rightValue = c * d;
-  } else if (type === 2) {
-    // Squares vs Multiplications
-    const s = randomInt(7, diff === 'easy' ? 15 : 25);
-    leftExpr = `${s}²`;
-    leftValue = s * s;
-    const a = randomInt(s - 3, s + 3);
-    const b = randomInt(s - 3, s + 3);
-    rightExpr = `${a} × ${b}`;
-    rightValue = a * b;
+  if (isMultiOp || diff === 'hard' || diff === 'extreme') {
+    // Multi-Operation Comparison
+    if (diff === 'extreme') {
+      // High-precision estimation test
+      const a = randomInt(25, 60);
+      const b = randomInt(15, 45);
+      const c = randomInt(20, 80);
+      leftExpr = `${a} × ${b} + ${c}`;
+      leftValue = a * b + c;
+
+      // Make right expression very close (±0, ±2, ±5) to test split-second mental math
+      const delta = [0, 0, -2, 2, -5, 5, -8, 8][Math.floor(Math.random() * 8)];
+      const targetRight = leftValue + delta;
+      const d = randomInt(20, 50);
+      const e = Math.floor(targetRight / d);
+      const rem = targetRight - d * e;
+      rightExpr = `${d} × ${e} + ${rem}`;
+      rightValue = targetRight;
+    } else {
+      // Multi-operation e.g. a × b - c vs d × e - f
+      const a = randomInt(8, 20);
+      const b = randomInt(4, 12);
+      const c = randomInt(10, 40);
+      leftExpr = `${a} × ${b} - ${c}`;
+      leftValue = a * b - c;
+
+      const d = randomInt(8, 20);
+      const e = randomInt(4, 12);
+      const f = randomInt(10, 40);
+      rightExpr = `${d} × ${e} - ${f}`;
+      rightValue = d * e - f;
+    }
   } else {
-    // Addition + subtraction combo
-    const a = randomInt(20, 80);
-    const b = randomInt(15, 60);
-    const c = randomInt(20, 80);
-    const d = randomInt(15, 60);
-    leftExpr = `${a} + ${b}`;
-    leftValue = a + b;
-    rightExpr = `${c + d + randomInt(-4, 4)} - ${randomInt(0, 5)}`;
-    // compute right
-    const parts = rightExpr.split(' - ').map(Number);
-    rightValue = parts[0] - parts[1];
+    // Single Operation Comparison
+    const type = randomInt(1, 3);
+    if (type === 1) {
+      // Multiplication comparison
+      const a = randomInt(diff === 'easy' ? 4 : 11, diff === 'easy' ? 12 : 25);
+      const b = randomInt(3, diff === 'easy' ? 9 : 15);
+      const c = randomInt(diff === 'easy' ? 4 : 11, diff === 'easy' ? 12 : 25);
+      const d = randomInt(3, diff === 'easy' ? 9 : 15);
+      leftExpr = `${a} × ${b}`;
+      leftValue = a * b;
+      rightExpr = `${c} × ${d}`;
+      rightValue = c * d;
+    } else if (type === 2) {
+      // Squares vs Multiplications
+      const s = randomInt(7, diff === 'easy' ? 15 : 25);
+      leftExpr = `${s}²`;
+      leftValue = s * s;
+      const a = randomInt(s - 3, s + 3);
+      const b = randomInt(s - 3, s + 3);
+      rightExpr = `${a} × ${b}`;
+      rightValue = a * b;
+    } else {
+      // Addition vs Subtraction
+      const a = randomInt(diff === 'easy' ? 15 : 30, diff === 'easy' ? 45 : 99);
+      const b = randomInt(diff === 'easy' ? 10 : 25, diff === 'easy' ? 40 : 85);
+      leftExpr = `${a} + ${b}`;
+      leftValue = a + b;
+
+      const delta = [0, 0, -3, 3, -7, 7][Math.floor(Math.random() * 6)];
+      const targetRight = leftValue + delta;
+      const c = targetRight + randomInt(10, 40);
+      const d = c - targetRight;
+      rightExpr = `${c} - ${d}`;
+      rightValue = targetRight;
+    }
   }
 
   let correctAnswer: '<' | '=' | '>';
@@ -337,40 +741,78 @@ export function generateCompareQuestion(diff: DifficultyLevel): CompareQuestion 
     rightExpr,
     leftValue,
     rightValue,
-    correctAnswer
+    correctAnswer,
+    difficulty: diff,
+    isMultiOp
   };
 }
 
-export function generateTableRecallQuestion(): TableRecallQuestion {
-  const typeRoll = Math.random();
+// ---------------------------------------------------------------------------
+// 5. TABLES, SQUARES & CUBES RECALL ENGINE (4 Tiers & Category filter)
+// ---------------------------------------------------------------------------
 
-  if (typeRoll < 0.45) {
-    // Tables up to 30
-    const t = randomInt(11, 29);
-    const mult = randomInt(3, 9);
+export function generateTableRecallQuestion(
+  diff: DifficultyLevel = 'medium',
+  category: 'all' | 'table' | 'square' | 'cube' = 'all'
+): TableRecallQuestion {
+  let chosenCategory = category;
+  if (chosenCategory === 'all') {
+    const types: Array<'table' | 'square' | 'cube'> = ['table', 'square', 'cube'];
+    chosenCategory = types[Math.floor(Math.random() * types.length)];
+  }
+
+  if (chosenCategory === 'table') {
+    let t = 12;
+    let mult = 7;
+    if (diff === 'easy') {
+      t = randomInt(2, 12);
+      mult = randomInt(3, 9);
+    } else if (diff === 'medium') {
+      t = randomInt(12, 25);
+      mult = randomInt(3, 9);
+    } else if (diff === 'hard') {
+      t = randomInt(19, 35);
+      mult = randomInt(4, 9);
+    } else {
+      // Extreme: Tables 25 to 50
+      t = randomInt(26, 50);
+      mult = randomInt(4, 9);
+    }
     return {
       id: `tbl_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: 'table',
       prompt: `${t} × ${mult} = ?`,
-      answer: t * mult
+      answer: t * mult,
+      difficulty: diff
     };
-  } else if (typeRoll < 0.75) {
-    // Squares up to 40
-    const sq = randomInt(11, 35);
+  } else if (chosenCategory === 'square') {
+    let sq = 15;
+    if (diff === 'easy') sq = randomInt(2, 15);
+    else if (diff === 'medium') sq = randomInt(14, 35);
+    else if (diff === 'hard') sq = randomInt(26, 50);
+    else sq = randomInt(36, 100); // Extreme
+
     return {
       id: `tbl_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: 'square',
       prompt: `${sq}² = ?`,
-      answer: sq * sq
+      answer: sq * sq,
+      difficulty: diff
     };
   } else {
-    // Cubes up to 20
-    const cb = randomInt(4, 18);
+    // Cubes
+    let cb = 6;
+    if (diff === 'easy') cb = randomInt(2, 8);
+    else if (diff === 'medium') cb = randomInt(5, 15);
+    else if (diff === 'hard') cb = randomInt(11, 25);
+    else cb = randomInt(16, 32); // Extreme
+
     return {
       id: `tbl_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type: 'cube',
       prompt: `${cb}³ = ?`,
-      answer: cb * cb * cb
+      answer: cb * cb * cb,
+      difficulty: diff
     };
   }
 }

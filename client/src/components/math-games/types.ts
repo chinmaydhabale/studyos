@@ -9,16 +9,23 @@ export type GameModeId =
 
 export type OperationType = 'add' | 'subtract' | 'multiply' | 'divide' | 'mixed';
 
-export type DifficultyLevel = 'easy' | 'medium' | 'hard';
+export type OperationCategory = 'single' | 'multi';
+
+export type MultiOperationType = 'mixed' | 'chain_add_sub' | 'chain_mult_add' | 'chain_mult_sub' | 'chain_bodmas';
+
+export type DifficultyLevel = 'easy' | 'medium' | 'hard' | 'extreme';
 
 export type TimeMode = '60s' | '120s' | 'suddendeath';
 
 export interface ArithmeticQuestion {
   id: string;
-  num1: number;
-  num2: number;
-  operation: '+' | '-' | '×' | '÷';
+  num1?: number;
+  num2?: number;
+  operation?: '+' | '-' | '×' | '÷';
+  expression: string;
   answer: number;
+  isMultiOp?: boolean;
+  difficulty?: DifficultyLevel;
   userAnswer?: number;
   isCorrect?: boolean;
   timeSpentMs?: number;
@@ -32,6 +39,7 @@ export interface VedicQuestion {
   answer: number | string;
   trickExplanation: string;
   options?: string[];
+  difficulty?: DifficultyLevel;
 }
 
 export interface Target24Question {
@@ -39,15 +47,18 @@ export interface Target24Question {
   numbers: number[];
   target: number;
   solutionHint: string;
+  difficulty?: DifficultyLevel;
 }
 
 export interface DetectiveQuestion {
   id: string;
-  type: 'missing_op' | 'missing_num';
+  type: 'missing_op' | 'missing_num' | 'multi_op';
   prompt: string;
   correctAnswer: string;
   options: string[];
   explanation: string;
+  difficulty?: DifficultyLevel;
+  isMultiOp?: boolean;
 }
 
 export interface CompareQuestion {
@@ -57,6 +68,8 @@ export interface CompareQuestion {
   leftValue: number;
   rightValue: number;
   correctAnswer: '<' | '=' | '>';
+  difficulty?: DifficultyLevel;
+  isMultiOp?: boolean;
 }
 
 export interface TableRecallQuestion {
@@ -64,6 +77,7 @@ export interface TableRecallQuestion {
   type: 'table' | 'square' | 'cube';
   prompt: string;
   answer: number;
+  difficulty?: DifficultyLevel;
 }
 
 export interface GameSummary {
@@ -91,6 +105,8 @@ export interface DuelInvite {
   senderName: string;
   senderAvatar?: string;
   gameMode: 'blitz' | 'compare' | 'detective';
+  difficulty?: DifficultyLevel;
+  isMultiOp?: boolean;
   timeLimit: number;
 }
 

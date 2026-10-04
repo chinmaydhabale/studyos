@@ -14,6 +14,7 @@ import {
 import {
   ArithmeticQuestion,
   OperationType,
+  MultiOperationType,
   DifficultyLevel,
   TimeMode,
   GameSummary
@@ -30,7 +31,9 @@ interface SpeedArithmeticBlitzProps {
 
 export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBackToHub }) => {
   // Config state
+  const [isMultiOp, setIsMultiOp] = useState<boolean>(false);
   const [operation, setOperation] = useState<OperationType>('mixed');
+  const [multiType, setMultiType] = useState<MultiOperationType>('mixed');
   const [difficulty, setDifficulty] = useState<DifficultyLevel>('medium');
   const [timeMode, setTimeMode] = useState<TimeMode>('60s');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -72,11 +75,11 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
     setFeedback(null);
     setGameSummary(null);
 
-    const firstQ = generateArithmeticQuestion(operation, difficulty);
+    const firstQ = generateArithmeticQuestion(operation, difficulty, isMultiOp, multiType);
     setCurrentQ(firstQ);
     setQuestionStartTime(Date.now());
     setIsPlaying(true);
-  }, [operation, difficulty, timeMode, getInitialSeconds]);
+  }, [operation, difficulty, timeMode, isMultiOp, multiType, getInitialSeconds]);
 
   // Finish game calculation
   const finishGame = useCallback(() => {
@@ -103,7 +106,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
       xpEarned: earnedXp,
       coinsEarned: earnedCoins,
       questionsReview: questionsAnswered.map((q) => ({
-        prompt: `${q.num1} ${q.operation} ${q.num2}`,
+        prompt: q.expression || `${q.num1} ${q.operation} ${q.num2}`,
         userAnswer: q.userAnswer !== undefined ? String(q.userAnswer) : 'None',
         correctAnswer: String(q.answer),
         isCorrect: !!q.isCorrect
@@ -183,11 +186,11 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
     setTimeout(() => {
       setFeedback(null);
       setInputVal('');
-      const nextQ = generateArithmeticQuestion(operation, difficulty);
+      const nextQ = generateArithmeticQuestion(operation, difficulty, isMultiOp, multiType);
       setCurrentQ(nextQ);
       setQuestionStartTime(Date.now());
     }, 180);
-  }, [currentQ, inputVal, questionStartTime, streak, maxStreak, timeMode, operation, difficulty, finishGame]);
+  }, [currentQ, inputVal, questionStartTime, streak, maxStreak, timeMode, operation, difficulty, isMultiOp, multiType, finishGame]);
 
   // Physical Keyboard Listeners
   useEffect(() => {
@@ -271,59 +274,135 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
             </p>
           </div>
 
-          {/* Operation Selector */}
+          {/* Operation Complexity Selector (Single vs Multi-Op) */}
           <div className="space-y-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Operation</label>
-            <div className="grid grid-cols-5 gap-2">
-              {(
-                [
-                  { id: 'mixed', label: 'All Mixed', icon: '±' },
-                  { id: 'add', label: 'Add (+)', icon: '+' },
-                  { id: 'subtract', label: 'Subtract (-)', icon: '-' },
-                  { id: 'multiply', label: 'Multiply (×)', icon: '×' },
-                  { id: 'divide', label: 'Divide (÷)', icon: '÷' }
-                ] as const
-              ).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setOperation(item.id)}
-                  className={`p-2.5 sm:p-3 rounded-2xl border text-center font-bold text-xs sm:text-sm transition-all ${
-                    operation === item.id
-                      ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-600/30 scale-[1.02]'
-                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <div className="text-base sm:text-lg mb-0.5">{item.icon}</div>
-                  <div className="truncate text-[11px] sm:text-xs">{item.label}</div>
-                </button>
-              ))}
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Calculation Complexity</label>
+              <span className="text-[11px] text-cyan-400 font-semibold">
+                {isMultiOp ? 'Multi-Operation Chain Mode' : 'Single Operation Mode'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950/70 border border-white/10 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setIsMultiOp(false)}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 ${
+                  !isMultiOp
+                    ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Single Operation</span>
+                <span className="text-[10px] opacity-75 px-1.5 py-0.5 rounded bg-black/30">a ± b</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsMultiOp(true)}
+                className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 ${
+                  isMultiOp
+                    ? 'bg-gradient-to-r from-amber-600 to-rose-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Multi-Op (BODMAS)</span>
+                <span className="text-[10px] opacity-75 px-1.5 py-0.5 rounded bg-black/30">a × b + c</span>
+              </button>
             </div>
           </div>
 
-          {/* Difficulty Selector */}
+          {/* Operation / Chain Type Selector */}
+          {!isMultiOp ? (
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Single Operation</label>
+              <div className="grid grid-cols-5 gap-2">
+                {(
+                  [
+                    { id: 'mixed', label: 'All Mixed', icon: '±' },
+                    { id: 'add', label: 'Add (+)', icon: '+' },
+                    { id: 'subtract', label: 'Subtract (-)', icon: '-' },
+                    { id: 'multiply', label: 'Multiply (×)', icon: '×' },
+                    { id: 'divide', label: 'Divide (÷)', icon: '÷' }
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setOperation(item.id)}
+                    className={`p-2.5 sm:p-3 rounded-2xl border text-center font-bold text-xs sm:text-sm transition-all ${
+                      operation === item.id
+                        ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-600/30 scale-[1.02]'
+                        : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="text-base sm:text-lg mb-0.5">{item.icon}</div>
+                    <div className="truncate text-[11px] sm:text-xs">{item.label}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Multi-Op Chain Pattern</label>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {(
+                  [
+                    { id: 'mixed', label: 'All Mixed Chain', desc: 'Random BODMAS' },
+                    { id: 'chain_add_sub', label: 'Add & Sub', desc: 'a + b - c' },
+                    { id: 'chain_mult_add', label: 'Mult & Add', desc: 'a × b + c' },
+                    { id: 'chain_mult_sub', label: 'Mult & Sub', desc: 'a × b - c' },
+                    { id: 'chain_bodmas', label: 'Full BODMAS', desc: '(a ± b) × c' }
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setMultiType(m.id)}
+                    className={`p-2.5 sm:p-3 rounded-2xl border text-center font-bold text-xs transition-all ${
+                      multiType === m.id
+                        ? 'bg-amber-600 border-amber-400 text-white shadow-lg shadow-amber-600/30 scale-[1.02]'
+                        : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="text-xs sm:text-sm font-extrabold text-amber-200">{m.label}</div>
+                    <div className="text-[10px] text-slate-300 font-mono mt-0.5">{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Difficulty Selector (4 Levels: Easy, Medium, Hard, Extreme Hard) */}
           <div className="space-y-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty</label>
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty Level</label>
+              <span className="text-[11px] text-slate-400 font-medium">4 Scaled Tiers</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {(
                 [
-                  { id: 'easy', label: 'Beginner', desc: '1-2 digits, warm-up' },
-                  { id: 'medium', label: 'Intermediate', desc: '2-3 digits, competitive' },
-                  { id: 'hard', label: 'Exam Beast', desc: 'Large numbers, high speed' }
+                  { id: 'easy', label: 'Easy', tag: 'Beginner', desc: '1-2 digits, warm-up', color: 'border-emerald-500/50 text-emerald-400 bg-emerald-950/20' },
+                  { id: 'medium', label: 'Medium', tag: 'Intermediate', desc: '2-3 digits, competitive', color: 'border-cyan-500/50 text-cyan-400 bg-cyan-950/20' },
+                  { id: 'hard', label: 'Hard', tag: 'Exam Beast', desc: 'Large numbers, high speed', color: 'border-amber-500/50 text-amber-400 bg-amber-950/20' },
+                  { id: 'extreme', label: 'Extreme Hard', tag: 'God Level', desc: '3-4 digits, intense chains', color: 'border-rose-500/50 text-rose-400 bg-rose-950/20' }
                 ] as const
               ).map((d) => (
                 <button
                   key={d.id}
                   type="button"
                   onClick={() => setDifficulty(d.id)}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
+                  className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
                     difficulty === d.id
-                      ? 'bg-cyan-600/30 border-cyan-400/60 text-white shadow-lg shadow-cyan-600/20'
+                      ? `${d.color} shadow-lg ring-1 ring-white/20 scale-[1.02]`
                       : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <div className="font-bold text-xs sm:text-sm text-cyan-300">{d.label}</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">{d.desc}</div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-xs sm:text-sm">{d.label}</span>
+                    <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-white/10 font-bold">
+                      {d.tag}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 leading-snug">{d.desc}</div>
                 </button>
               ))}
             </div>
@@ -425,12 +504,23 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
                 : 'border-white/10'
             }`}
           >
+            {/* Difficulty & Mode Badge */}
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-white/10 text-slate-300 border border-white/10">
+                {currentQ.difficulty || difficulty}
+              </span>
+              {(currentQ.isMultiOp || isMultiOp) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  BODMAS CHAIN
+                </span>
+              )}
+            </div>
+
             {/* Math Expression */}
-            <div className="flex items-center gap-3 sm:gap-6 text-4xl sm:text-6xl font-black font-mono tracking-tight text-white select-none">
-              <span>{currentQ.num1}</span>
-              <span className="text-cyan-400">{currentQ.operation}</span>
-              <span>{currentQ.num2}</span>
+            <div className="flex items-center justify-center flex-wrap gap-2 sm:gap-4 text-3xl sm:text-5xl md:text-6xl font-black font-mono tracking-tight text-white select-none text-center px-2">
+              <span>{currentQ.expression || `${currentQ.num1} ${currentQ.operation} ${currentQ.num2}`}</span>
               <span className="text-slate-500">=</span>
+              <span className="text-cyan-400">?</span>
             </div>
 
             {/* Answer Display Box */}
@@ -453,7 +543,7 @@ export const SpeedArithmeticBlitz: React.FC<SpeedArithmeticBlitzProps> = ({ onBa
               onBackspace={() => setInputVal((prev) => prev.slice(0, -1))}
               onClear={() => setInputVal('')}
               onSubmit={submitAnswer}
-              allowNegative={operation === 'subtract' || operation === 'mixed'}
+              allowNegative={true}
             />
           </div>
 

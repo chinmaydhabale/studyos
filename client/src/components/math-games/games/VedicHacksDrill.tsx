@@ -14,7 +14,7 @@ import {
   Lightbulb,
   X
 } from 'lucide-react';
-import { VedicQuestion, GameSummary } from '../types.js';
+import { VedicQuestion, DifficultyLevel, GameSummary } from '../types.js';
 import { generateVedicQuestion } from '../engines/mathEngine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { MathNumpad } from '../shared/MathNumpad.js';
@@ -27,6 +27,8 @@ interface VedicHacksDrillProps {
 
 export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>('medium');
+  const [category, setCategory] = useState<string>('all');
   const [currentQ, setCurrentQ] = useState<VedicQuestion | null>(null);
   const [inputVal, setInputVal] = useState('');
   const [score, setScore] = useState(0);
@@ -57,10 +59,10 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
     setLastExplanation(null);
     setGameSummary(null);
 
-    const firstQ = generateVedicQuestion();
+    const firstQ = generateVedicQuestion(difficulty, category === 'all' ? undefined : category);
     setCurrentQ(firstQ);
     setIsPlaying(true);
-  }, []);
+  }, [difficulty, category]);
 
   const finishDrill = useCallback((finalResults: Array<VedicQuestion & { userAnswer: string; isCorrect: boolean }>, finalScore: number, finalMaxStreak: number) => {
     setIsPlaying(false);
@@ -141,10 +143,10 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
     setTimeout(() => {
       setFeedback(null);
       setInputVal('');
-      const nextQ = generateVedicQuestion();
+      const nextQ = generateVedicQuestion(difficulty, category === 'all' ? undefined : category);
       setCurrentQ(nextQ);
     }, 450);
-  }, [currentQ, inputVal, roundQuestions, score, streak, maxStreak, questionsRemaining, finishDrill]);
+  }, [currentQ, inputVal, roundQuestions, score, streak, maxStreak, questionsRemaining, finishDrill, difficulty, category]);
 
   // Keyboard shortcut listener for options (1-4) or numpad
   useEffect(() => {
@@ -239,46 +241,74 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
             </p>
           </div>
 
-          {/* 4 Feature Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 font-mono font-bold text-sm">
-                85²
-              </div>
-              <div>
-                <div className="text-xs font-bold text-white">Ending in 5 Squares</div>
-                <div className="text-[11px] text-slate-400">8 × 9 = 72, append 25 ➔ 7225</div>
-              </div>
+          {/* Category Filter */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Vedic Shortcut Category</label>
+              <span className="text-[11px] text-purple-400 font-semibold uppercase">
+                {category === 'all' ? 'All Hacks Mixed' : category}
+              </span>
             </div>
-
-            <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 font-mono font-bold text-sm">
-                ×11
-              </div>
-              <div>
-                <div className="text-xs font-bold text-white">Multiply by 11</div>
-                <div className="text-[11px] text-slate-400">Split digits, sum in middle</div>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {(
+                [
+                  { id: 'all', label: 'All Mixed', desc: 'Random Hacks' },
+                  { id: 'square5', label: 'Squares in 5', desc: '85², 115²...' },
+                  { id: 'multiply11', label: 'Multiply by 11', desc: '48 × 11, 352 × 11' },
+                  { id: 'base100', label: 'Base-100 / 1000', desc: '97 × 94, 104 × 106' },
+                  { id: 'multiply25_50', label: '×25 & ×50 Tricks', desc: 'Divide by 4 / 2' },
+                  { id: 'fractionPercent', label: 'Fraction to %', desc: '1/7, 1/8, 3/8' }
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setCategory(cat.id)}
+                  className={`p-2.5 rounded-2xl border text-left transition-all ${
+                    category === cat.id
+                      ? 'bg-purple-600/40 border-purple-400 text-white shadow-lg shadow-purple-600/30 scale-[1.01]'
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="font-extrabold text-xs sm:text-sm text-purple-200">{cat.label}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">{cat.desc}</div>
+                </button>
+              ))}
             </div>
+          </div>
 
-            <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 font-mono font-bold text-sm">
-                Base
-              </div>
-              <div>
-                <div className="text-xs font-bold text-white">Base-100 Deviation</div>
-                <div className="text-[11px] text-slate-400">97 × 94 ➔ -3 and -6 deviations</div>
-              </div>
+          {/* Difficulty Tier (4 Scaled Levels) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty Level</label>
+              <span className="text-[11px] text-slate-400 font-medium">4 Scaled Tiers</span>
             </div>
-
-            <div className="p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl flex items-start gap-3">
-              <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 font-mono font-bold text-sm">
-                1/8
-              </div>
-              <div>
-                <div className="text-xs font-bold text-white">Fraction to % Speed</div>
-                <div className="text-[11px] text-slate-400">Instant DI recall: 1/8 = 12.5%</div>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {(
+                [
+                  { id: 'easy', label: 'Easy', tag: 'Beginner', desc: 'Simple 11x, squares to 45', color: 'border-emerald-500/50 text-emerald-400 bg-emerald-950/20' },
+                  { id: 'medium', label: 'Medium', tag: 'Intermediate', desc: 'Carry 11x, base 100 close', color: 'border-cyan-500/50 text-cyan-400 bg-cyan-950/20' },
+                  { id: 'hard', label: 'Hard', tag: 'Exam Beast', desc: '3-digit 11x, squares 155', color: 'border-amber-500/50 text-amber-400 bg-amber-950/20' },
+                  { id: 'extreme', label: 'Extreme Hard', tag: 'God Level', desc: '4-digit 11x, base 1000', color: 'border-rose-500/50 text-rose-400 bg-rose-950/20' }
+                ] as const
+              ).map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setDifficulty(d.id)}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    difficulty === d.id
+                      ? `${d.color} shadow-lg ring-1 ring-white/20 scale-[1.02]`
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs sm:text-sm">{d.label}</span>
+                    <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-white/10 font-bold">{d.tag}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 leading-snug">{d.desc}</div>
+                </button>
+              ))}
             </div>
           </div>
 

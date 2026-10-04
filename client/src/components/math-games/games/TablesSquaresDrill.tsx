@@ -10,7 +10,7 @@ import {
   BookOpen,
   Award
 } from 'lucide-react';
-import { TableRecallQuestion, GameSummary } from '../types.js';
+import { TableRecallQuestion, DifficultyLevel, GameSummary } from '../types.js';
 import { generateTableRecallQuestion } from '../engines/mathEngine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { MathNumpad } from '../shared/MathNumpad.js';
@@ -23,6 +23,8 @@ interface TablesSquaresDrillProps {
 
 export const TablesSquaresDrill: React.FC<TablesSquaresDrillProps> = ({ onBackToHub }) => {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>('medium');
+  const [category, setCategory] = useState<'all' | 'table' | 'square' | 'cube'>('all');
   const [currentQ, setCurrentQ] = useState<TableRecallQuestion | null>(null);
   const [inputVal, setInputVal] = useState('');
   const [score, setScore] = useState(0);
@@ -50,10 +52,10 @@ export const TablesSquaresDrill: React.FC<TablesSquaresDrillProps> = ({ onBackTo
     setFeedback(null);
     setGameSummary(null);
 
-    const q = generateTableRecallQuestion();
+    const q = generateTableRecallQuestion(difficulty, category);
     setCurrentQ(q);
     setIsPlaying(true);
-  }, []);
+  }, [difficulty, category]);
 
   const finishDrill = useCallback((results: Array<TableRecallQuestion & { userAnswer: number; isCorrect: boolean }>, finalScore: number, finalStreak: number) => {
     setIsPlaying(false);
@@ -131,9 +133,9 @@ export const TablesSquaresDrill: React.FC<TablesSquaresDrillProps> = ({ onBackTo
     setTimeout(() => {
       setFeedback(null);
       setInputVal('');
-      setCurrentQ(generateTableRecallQuestion());
+      setCurrentQ(generateTableRecallQuestion(difficulty, category));
     }, 250);
-  }, [currentQ, inputVal, questionsAnswered, score, streak, maxStreak, questionsLeft, finishDrill]);
+  }, [currentQ, inputVal, questionsAnswered, score, streak, maxStreak, questionsLeft, finishDrill, difficulty, category]);
 
   // Keyboard support
   useEffect(() => {
@@ -209,18 +211,72 @@ export const TablesSquaresDrill: React.FC<TablesSquaresDrillProps> = ({ onBackTo
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 max-w-md mx-auto w-full">
-            <div className="p-3 bg-slate-950/60 border border-white/5 rounded-2xl">
-              <span className="text-xs font-bold text-amber-300">Tables</span>
-              <div className="text-[11px] text-slate-400 mt-0.5">11 × 17, 19 × 7...</div>
+          {/* Category Filter */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Drill Category</label>
+              <span className="text-[11px] text-amber-400 font-semibold uppercase">
+                {category === 'all' ? 'All Types Mixed' : category}
+              </span>
             </div>
-            <div className="p-3 bg-slate-950/60 border border-white/5 rounded-2xl">
-              <span className="text-xs font-bold text-cyan-300">Squares</span>
-              <div className="text-[11px] text-slate-400 mt-0.5">23², 29², 32²...</div>
+            <div className="grid grid-cols-4 gap-2">
+              {(
+                [
+                  { id: 'all', label: 'All Mixed', desc: 'Random Drill' },
+                  { id: 'table', label: 'Tables', desc: 'Multiplication' },
+                  { id: 'square', label: 'Squares', desc: 'x² Numbers' },
+                  { id: 'cube', label: 'Cubes', desc: 'x³ Numbers' }
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setCategory(cat.id)}
+                  className={`p-2.5 sm:p-3 rounded-2xl border text-center transition-all ${
+                    category === cat.id
+                      ? 'bg-amber-600 border-amber-400 text-white shadow-lg shadow-amber-600/30 scale-[1.02]'
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="font-extrabold text-xs sm:text-sm">{cat.label}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">{cat.desc}</div>
+                </button>
+              ))}
             </div>
-            <div className="p-3 bg-slate-950/60 border border-white/5 rounded-2xl">
-              <span className="text-xs font-bold text-purple-300">Cubes</span>
-              <div className="text-[11px] text-slate-400 mt-0.5">7³, 12³, 15³...</div>
+          </div>
+
+          {/* Difficulty Tier (4 Scaled Levels) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Difficulty Level</label>
+              <span className="text-[11px] text-slate-400 font-medium">4 Scaled Ranges</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {(
+                [
+                  { id: 'easy', label: 'Easy', tag: 'Beginner', desc: 'Tables 12, Sq 15, Cubes 10', color: 'border-emerald-500/50 text-emerald-400 bg-emerald-950/20' },
+                  { id: 'medium', label: 'Medium', tag: 'Intermediate', desc: 'Tables 20, Sq 30, Cubes 15', color: 'border-cyan-500/50 text-cyan-400 bg-cyan-950/20' },
+                  { id: 'hard', label: 'Hard', tag: 'Exam Beast', desc: 'Tables 30, Sq 50, Cubes 20', color: 'border-amber-500/50 text-amber-400 bg-amber-950/20' },
+                  { id: 'extreme', label: 'Extreme Hard', tag: 'God Level', desc: 'Tables 50, Sq 100, Cubes 30', color: 'border-rose-500/50 text-rose-400 bg-rose-950/20' }
+                ] as const
+              ).map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setDifficulty(d.id)}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    difficulty === d.id
+                      ? `${d.color} shadow-lg ring-1 ring-white/20 scale-[1.02]`
+                      : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs sm:text-sm">{d.label}</span>
+                    <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-white/10 font-bold">{d.tag}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1 leading-snug">{d.desc}</div>
+                </button>
+              ))}
             </div>
           </div>
 
