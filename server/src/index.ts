@@ -170,15 +170,21 @@ app.post('/api/rooms/create', async (req, res) => {
 
 app.post('/api/rooms/join', async (req, res) => {
   try {
-    const { roomId } = req.body;
+    const { roomId, userId, userName } = req.body;
     if (!roomId || !roomId.trim()) {
       return res.status(400).json({ error: 'Group ID is required to join' });
     }
     const cleanId = roomId.trim().toUpperCase();
-    const group = await storage.getStudyGroup(cleanId);
+    let group = await storage.getStudyGroup(cleanId);
     if (!group) {
-      return res.status(404).json({
-        error: `No study group exists with ID "${cleanId}". You must enter a valid Group ID or create a new group.`
+      // Auto-provision room so any custom or shared Group ID can be joined immediately
+      group = await storage.createStudyGroup({
+        roomId: cleanId,
+        name: cleanId.replace(/[-_]/g, ' '),
+        description: `Study group ${cleanId}`,
+        targetExam: 'RRB PO & IBPS PO',
+        creatorId: userId || 'member',
+        creatorName: userName || 'Study Partner'
       });
     }
     res.json({ success: true, group });
@@ -198,8 +204,16 @@ app.get('/api/rooms', async (req, res) => {
 
 app.get('/api/rooms/:roomId', async (req, res) => {
   const cleanId = req.params.roomId.trim().toUpperCase();
-  const group = await storage.getStudyGroup(cleanId);
-  if (!group) return res.status(404).json({ error: 'Study group not found' });
+  let group = await storage.getStudyGroup(cleanId);
+  if (!group) {
+    group = await storage.createStudyGroup({
+      roomId: cleanId,
+      name: cleanId.replace(/[-_]/g, ' '),
+      description: `Study group ${cleanId}`,
+      creatorId: 'system',
+      creatorName: 'StudyOS'
+    });
+  }
   res.json(group);
 });
 

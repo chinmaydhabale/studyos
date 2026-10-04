@@ -15,7 +15,10 @@ import {
   Tv,
   BarChart2,
   Eye,
-  ExternalLink
+  ExternalLink,
+  Users,
+  Copy,
+  Check
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
@@ -112,6 +115,41 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
     const m = Math.floor(diff / 60);
     const s = diff % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Ensure current user is ALWAYS present in the live feed (even if offline or alone in room)
+  const effectivePeers = React.useMemo(() => {
+    const list = [...peers];
+    const hasMe = list.some(p => p.userId === currentUser.id);
+    if (!hasMe && currentUser.id) {
+      list.unshift({
+        socketId: 'local',
+        userId: currentUser.id,
+        name: currentUser.name || 'Student Aspirant',
+        avatar: currentUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(currentUser.name || 'user')}&backgroundColor=6366f1`,
+        targetExam: currentUser.targetExam || 'RRB PO & IBPS PO',
+        college: currentUser.college || 'Aspirant',
+        status: isTimerRunning ? activeActivityName : (currentUser.status || 'Ready to Study'),
+        currentActivity: isTimerRunning ? activeActivityName : (currentUser.currentActivity || 'Ready to Study'),
+        activityCategory: isTimerRunning ? activeCategory : (currentUser.activityCategory || 'study'),
+        activityStartTime: isTimerRunning ? startTime : currentUser.activityStartTime,
+        isMuted: true,
+        isSpeaking: false,
+        joinedAt: Date.now(),
+        todayStudySeconds: (currentUser as any).todayStudySeconds || 0,
+        todayHours: (currentUser as any).todayHours || currentUser.totalStudyHours || 0
+      });
+    }
+    return list;
+  }, [peers, currentUser, isTimerRunning, activeActivityName, activeCategory, startTime]);
+
+  const [copiedRoomId, setCopiedRoomId] = useState(false);
+  const handleCopyRoom = () => {
+    if (!roomId) return;
+    navigator.clipboard?.writeText(roomId);
+    setCopiedRoomId(true);
+    addToast('Group ID Copied!', `Group ID "${roomId}" is in your clipboard. Share with friends!`, 'success');
+    setTimeout(() => setCopiedRoomId(false), 2000);
   };
 
   return (
@@ -231,11 +269,13 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
             <UserCheck className="w-4 h-4 text-emerald-400" />
             <span>Group Members' Live Situation Feed</span>
           </span>
-          <span className="text-[11px] text-slate-500">{peers.length} active in room</span>
+          <span className="text-[11px] text-slate-500 font-mono">
+            {effectivePeers.length} active in room ({roomId || 'STUDY-ROOM-ALPHA'})
+          </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-          {peers.map((peer) => {
+          {effectivePeers.map((peer) => {
             const isMe = peer.userId === currentUser.id;
             const currentAct = isMe && isTimerRunning ? activeActivityName : (peer.currentActivity || peer.status || 'Idle 💤');
             const currentCategory = isMe && isTimerRunning
@@ -288,7 +328,7 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
                     <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold ${
                       isStudying ? 'bg-emerald-500/10 text-emerald-300' : isBreak ? 'bg-amber-500/10 text-amber-300' : 'bg-white/5 text-slate-400'
                     }`}>
-                      {isMe ? formatStopwatch(elapsedSeconds) : getPeerElapsed(peer.activityStartTime)}
+                      {isMe ? (isTimerRunning ? formatStopwatch(elapsedSeconds) : 'Idle') : getPeerElapsed(peer.activityStartTime)}
                     </span>
                   </div>
                 </div>
@@ -378,6 +418,29 @@ export const LiveSituationTracker: React.FC<LiveSituationTrackerProps> = ({ onNa
               </div>
             );
           })}
+
+          {/* Invite Buddies Card if alone in room */}
+          {effectivePeers.length <= 1 && (
+            <div className="p-4 rounded-2xl border border-dashed border-white/10 bg-slate-900/40 flex flex-col items-center justify-center text-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">Study with Buddies</p>
+                <p className="text-[11px] text-slate-400 max-w-xs mt-0.5">
+                  Share Room ID to study together in real-time.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyRoom}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-300 text-xs font-mono font-bold transition-colors"
+              >
+                {copiedRoomId ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{roomId || 'STUDY-ROOM-ALPHA'}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

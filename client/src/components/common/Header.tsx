@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
+import { DEFAULT_PRODUCTION_TUNNEL } from '../../config.js';
 import { FocusCapsule } from './navbar/FocusCapsule.js';
 import { RoomContextChip } from './navbar/RoomContextChip.js';
 import { CommandSearchTrigger } from './navbar/CommandSearchTrigger.js';
@@ -740,7 +741,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setCustomUrlInput('https://reduction-bin-listings-train.trycloudflare.com');
+                    setCustomUrlInput(DEFAULT_PRODUCTION_TUNNEL);
                   }}
                   className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium border border-white/10 transition-colors"
                 >

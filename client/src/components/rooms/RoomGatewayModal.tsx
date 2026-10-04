@@ -34,18 +34,34 @@ export const RoomGatewayModal: React.FC<RoomGatewayModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const DEFAULT_ALPHA_ROOM: StudyGroup = {
+    roomId: 'STUDY-ROOM-ALPHA',
+    name: 'Main Alpha Co-Study Theater',
+    description: 'Default 24/7 collaborative banking & competitive study room',
+    targetExam: 'RRB PO & IBPS PO',
+    creatorId: 'system',
+    creatorName: 'StudyOS Official',
+    memberCount: 1,
+    voicePassword: 'study123',
+    isPrivate: false,
+    createdAt: new Date().toISOString()
+  };
+
   const fetchRooms = async () => {
     try {
       setLoadingRooms(true);
       const res = await fetch(`${API_BASE_URL}/api/rooms`);
       if (res.ok) {
         const data = await res.json();
-        if (data && Array.isArray(data.groups)) {
+        if (data && Array.isArray(data.groups) && data.groups.length > 0) {
           setAvailableRooms(data.groups);
+          return;
         }
       }
+      setAvailableRooms([DEFAULT_ALPHA_ROOM]);
     } catch (err) {
       console.warn('Failed to load study rooms:', err);
+      setAvailableRooms([DEFAULT_ALPHA_ROOM]);
     } finally {
       setLoadingRooms(false);
     }

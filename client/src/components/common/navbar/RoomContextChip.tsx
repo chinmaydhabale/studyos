@@ -15,6 +15,7 @@ import { useSocket } from '../../../context/SocketContext.js';
 export const RoomContextChip: React.FC = () => {
   const {
     roomId,
+    currentUser,
     peers,
     isConnected,
     setIsRoomModalOpen,
@@ -149,9 +150,11 @@ export const RoomContextChip: React.FC = () => {
                       <img src={peer.avatar} alt={peer.name} className="w-6 h-6 rounded-lg shrink-0" />
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-white truncate group-hover/peer:text-cyan-300">
-                          {peer.name}
+                          {peer.name} {peer.userId === currentUser.id && <span className="text-[10px] text-indigo-400 font-normal">(You)</span>}
                         </p>
-                        <p className="text-[10px] text-slate-400 truncate">{peer.targetExam || 'Competitive Exam'}</p>
+                        <p className="text-[10px] text-emerald-400 truncate font-mono">
+                          {peer.currentActivity || peer.status || 'Ready to Study'}
+                        </p>
                       </div>
                     </div>
                     <span className="text-[10px] text-cyan-400 shrink-0 opacity-0 group-hover/peer:opacity-100 transition-opacity">

@@ -5,7 +5,7 @@
  */
 
 // Active production tunnel endpoint on the VPS
-export const DEFAULT_PRODUCTION_TUNNEL = 'https://reduction-bin-listings-train.trycloudflare.com';
+export const DEFAULT_PRODUCTION_TUNNEL = 'https://ste-gourmet-camera-holder.trycloudflare.com';
 
 const resolveApiBaseUrl = (): string => {
   if (typeof window === 'undefined') return 'http://localhost:4000';
@@ -21,11 +21,21 @@ const resolveApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Check if user set custom backend in localStorage
+  // 2. Check if user set custom backend in localStorage (discard dead tunnel endpoints)
   try {
     const saved = localStorage.getItem('studyos_custom_api_url');
     if (saved && saved.trim().startsWith('http')) {
-      return saved.trim().replace(/\/+$/, '');
+      const isDead = [
+        'reduction-bin-listings-train',
+        'kingston-constraint-rights-complicated',
+        'then-gotta-funny-humor'
+      ].some(dead => saved.includes(dead));
+
+      if (isDead) {
+        localStorage.removeItem('studyos_custom_api_url');
+      } else {
+        return saved.trim().replace(/\/+$/, '');
+      }
     }
   } catch (e) {}
 
@@ -43,9 +53,15 @@ const resolveApiBaseUrl = (): string => {
   }
 
   // 5. If running on Vercel (*.vercel.app):
-  // Check if env var is set and NOT the old dead domain
+  // Check if env var is set and NOT an old dead domain
   const envUrl = (import.meta as any).env?.VITE_API_URL;
-  if (envUrl && envUrl.trim() && !envUrl.includes('kingston-constraint-rights-complicated')) {
+  if (
+    envUrl &&
+    envUrl.trim() &&
+    !envUrl.includes('kingston-constraint-rights-complicated') &&
+    !envUrl.includes('reduction-bin-listings-train') &&
+    !envUrl.includes('then-gotta-funny-humor')
+  ) {
     return envUrl.trim().replace(/\/+$/, '');
   }
 
