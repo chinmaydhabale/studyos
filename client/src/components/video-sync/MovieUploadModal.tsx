@@ -88,6 +88,13 @@ export const MovieUploadModal: React.FC<MovieUploadModalProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.mkv')) {
+        setUploadError('❌ MKV format web browsers (Chrome, Edge, Safari) me decode nahi hota. Watch party ke liye movie ko MP4 (.mp4) ya WebM format me convert karke upload karein.');
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
       setSelectedFile(file);
       // Auto-populate movie title from filename without extension
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
@@ -360,7 +367,7 @@ export const MovieUploadModal: React.FC<MovieUploadModalProps> = ({
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="video/mp4,video/webm,video/x-matroska,video/quicktime,.mp4,.webm,.mkv,.mov"
+                    accept="video/mp4,video/webm,.mp4,.webm"
                     className="hidden"
                     onChange={handleFileChange}
                     disabled={isUploading}
@@ -381,20 +388,14 @@ export const MovieUploadModal: React.FC<MovieUploadModalProps> = ({
                         Drop movie or video file here, or <span className="text-purple-400 underline">browse</span>
                       </p>
                       <p className="text-[11px] text-slate-400 mt-1">
-                        MP4 (recommended for all browsers) & WebM up to 2GB • Chunked streaming upload
+                        MP4 (H.264/AAC) & WebM up to 2GB • Browser-compatible streaming
+                      </p>
+                      <p className="text-[10px] text-amber-400/80 mt-1">
+                        ⚠️ MKV format is not supported by web browsers
                       </p>
                     </div>
                   )}
                 </div>
-
-                {selectedFile && selectedFile.name.toLowerCase().endsWith('.mkv') && (
-                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-                    <span>
-                      <strong>Format Notice:</strong> Browsers (Chrome, Edge, Safari) prefer <strong>MP4 (H.264)</strong> or <strong>WebM</strong>. MKV files might have limited browser audio/video playback support.
-                    </span>
-                  </div>
-                )}
 
                 {/* Movie Title Input */}
                 {selectedFile && (

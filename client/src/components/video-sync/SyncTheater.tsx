@@ -17,7 +17,8 @@ import {
   Unlock,
   Tv,
   Maximize,
-  Minimize
+  Minimize,
+  AlertCircle
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { VoiceChatPanel } from '../voice-chat/VoiceChatPanel.js';
@@ -551,22 +552,38 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
           
           {/* Dual-Engine Display */}
           {isMovie ? (
-            <video
-              ref={movieVideoRef}
-              src={videoState.videoUrl}
-              className="w-full h-full object-contain aspect-video pointer-events-auto"
-              playsInline
-              preload="metadata"
-              onClick={handleTogglePlay}
-              onError={(e) => {
-                console.warn('[SyncTheater] Video load error:', e);
-                addToast(
-                  'Format Notice',
-                  'If video fails to play, browsers require MP4 (H.264/AAC) or WebM format.',
-                  'warning'
-                );
-              }}
-            />
+            (videoState.videoUrl?.toLowerCase().includes('.mkv') || videoState.title?.toLowerCase().endsWith('.mkv')) ? (
+              <div className="flex flex-col items-center justify-center p-8 text-center max-w-md bg-slate-900/90 border border-amber-500/30 rounded-2xl m-4">
+                <AlertCircle className="w-12 h-12 text-amber-400 mb-3" />
+                <h3 className="text-base font-bold text-white mb-1">MKV Video Format Not Supported</h3>
+                <p className="text-xs text-slate-300 mb-4 leading-relaxed">
+                  Web browsers (Chrome, Edge, Safari, Mobile) cannot decode MKV video files directly. Watch party ke liye movie ko <strong className="text-amber-300">MP4 (H.264)</strong> ya <strong className="text-amber-300">WebM</strong> format me convert karke upload karein.
+                </p>
+                <button
+                  onClick={() => setIsUploadModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-all shadow-lg"
+                >
+                  Upload MP4 File
+                </button>
+              </div>
+            ) : (
+              <video
+                ref={movieVideoRef}
+                src={videoState.videoUrl}
+                className="w-full h-full object-contain aspect-video pointer-events-auto"
+                playsInline
+                preload="metadata"
+                onClick={handleTogglePlay}
+                onError={(e) => {
+                  console.warn('[SyncTheater] Video load error:', e);
+                  addToast(
+                    'Format Notice',
+                    'Browsers require MP4 (H.264/AAC) or WebM format.',
+                    'warning'
+                  );
+                }}
+              />
+            )
           ) : (
             <div id="yt-player-frame" className="w-full h-full aspect-video pointer-events-auto" />
           )}

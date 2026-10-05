@@ -77,6 +77,11 @@ export class MovieService {
       fs.mkdirSync(sessionDir, { recursive: true });
     }
 
+    const ext = path.extname(meta.originalName || '').toLowerCase();
+    if (ext === '.mkv') {
+      throw new Error('MKV format web browsers me support nahi hota. Watch party ke liye MP4 (H.264) ya WebM upload karein.');
+    }
+
     const uploadMeta: UploadMeta = {
       ...meta,
       createdAt: Date.now()
@@ -195,10 +200,15 @@ export class MovieService {
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
 
+    // Block streaming MKV container as HTML5 <video> can't decode it natively
+    if (movie.filename.toLowerCase().endsWith('.mkv')) {
+      res.status(415).send('MKV format is not supported for direct browser streaming. Please upload an MP4 or WebM video.');
+      return;
+    }
+
     // Content type
     let contentType = movie.mimeType || 'video/mp4';
     if (movie.filename.endsWith('.webm')) contentType = 'video/webm';
-    else if (movie.filename.endsWith('.mkv')) contentType = 'video/mp4';
     else if (movie.filename.endsWith('.mp4')) contentType = 'video/mp4';
 
     // Handle HEAD request for quick metadata probing
