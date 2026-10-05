@@ -224,26 +224,36 @@ export class MovieService {
     }
 
     const range = req.headers.range;
-    const MAX_CHUNK_WINDOW = 4 * 1024 * 1024; // 4MB safe window per range response
 
-    let start = 0;
-    let end = Math.min(MAX_CHUNK_WINDOW - 1, fileSize - 1);
-    let isPartial = false;
+    if (!range) {
+      // Initial probe or client without Range support: send full 200 with accurate Content-Length
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes'
+      });
+      const fileStream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024 });
+      const cleanup = () => {
+        if (!fileStream.destroyed) fileStream.destroy();
+      };
+      req.on('close', cleanup);
+      res.on('close', cleanup);
+      res.on('error', cleanup);
+      fileStream.on('error', cleanup);
+      fileStream.pipe(res);
+      return;
+    }
 
-    if (range) {
-      isPartial = true;
-      const parts = range.replace(/bytes=/, '').split('-');
-      start = parseInt(parts[0], 10) || 0;
-      const requestedEnd = parts[1] ? parseInt(parts[1], 10) : (start + MAX_CHUNK_WINDOW - 1);
-      // Clamp end to both requested window and file boundaries
-      end = Math.min(requestedEnd, start + MAX_CHUNK_WINDOW - 1, fileSize - 1);
+    // Parse requested byte range (e.g. bytes=0- or bytes=1000-5000)
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10) || 0;
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-      if (start >= fileSize || end >= fileSize || start > end) {
-        res.status(416).set({
-          'Content-Range': `bytes */${fileSize}`
-        }).send('Requested range not satisfiable');
-        return;
-      }
+    if (start >= fileSize || end >= fileSize || start > end) {
+      res.status(416).set({
+        'Content-Range': `bytes */${fileSize}`
+      }).send('Requested range not satisfiable');
+      return;
     }
 
     const chunkSize = (end - start) + 1;
@@ -257,7 +267,7 @@ export class MovieService {
       'Cache-Control': 'no-cache'
     };
 
-    res.writeHead(isPartial ? 206 : 200, headers);
+    res.writeHead(206, headers);
 
     const cleanup = () => {
       if (!fileStream.destroyed) {
@@ -268,12 +278,7 @@ export class MovieService {
     req.on('close', cleanup);
     res.on('close', cleanup);
     res.on('error', cleanup);
-    fileStream.on('error', (err: any) => {
-      cleanup();
-      if (!res.headersSent) {
-        res.status(500).end();
-      }
-    });
+    fileStream.on('error', cleanup);
 
     fileStream.pipe(res);
   }
