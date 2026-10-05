@@ -81,11 +81,18 @@ interface SocketContextType {
     isAiDoubt?: boolean,
     extraMeta?: { pdfPage?: number; pdfDocTitle?: string }
   ) => void;
-  sendVideoChange: (videoUrl: string, videoId: string) => void;
+  sendVideoChange: (
+    videoUrl: string,
+    videoId: string,
+    extra?: { mediaType?: 'youtube' | 'movie'; title?: string; duration?: number }
+  ) => void;
   sendVideoPlay: (currentTime: number) => void;
   sendVideoPause: (currentTime: number) => void;
   sendVideoSeek: (seekToTime: number) => void;
   sendVideoRate: (rate: number) => void;
+  sendMovieReaction: (emoji: string) => void;
+  movieReactions: Array<{ id: string; emoji: string; userName: string; timestamp: number }>;
+  toggleHostLock: (isHostLocked: boolean) => void;
   sendWhiteboardElement: (elem: WhiteboardElement) => void;
   clearWhiteboard: () => void;
   sendWhiteboardCursor: (x: number, y: number) => void;
@@ -159,6 +166,7 @@ const defaultVideo: VideoSyncState = {
   roomId: 'STUDY-ROOM-ALPHA',
   videoUrl: 'https://www.youtube.com/watch?v=k7YS_P_t3uA',
   videoId: 'k7YS_P_t3uA',
+  mediaType: 'youtube',
   isPlaying: false,
   currentTime: 0,
   playbackRate: 1,
@@ -214,6 +222,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(!initialUserData.isAuthenticated);
   const [isRoomModalOpen, setIsRoomModalOpen] = useState(!initialRoomId);
+  const [movieReactions, setMovieReactions] = useState<Array<{ id: string; emoji: string; userName: string; timestamp: number }>>([]);
 
   // Global persistent Live Activity State across all tabs
   const [activeActivity, setActiveActivity] = useState<ActiveActivityState>(getStoredActivity);
@@ -579,6 +588,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVideoState(prev => ({ ...prev, playbackRate: data.rate }));
     });
 
+    newSocket.on('movie:reaction', (reaction: { id: string; emoji: string; userName: string; timestamp: number }) => {
+      setMovieReactions(prev => [...prev.slice(-15), reaction]);
+    });
+
     newSocket.on('chat:history', (history: ChatMessage[]) => {
       setChatMessages(history);
     });
@@ -771,12 +784,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [roomId, currentUser, addToast]);
 
-  const sendVideoChange = useCallback((videoUrl: string, videoId: string) => {
+  const sendVideoChange = useCallback((
+    videoUrl: string,
+    videoId: string,
+    extra?: { mediaType?: 'youtube' | 'movie'; title?: string; duration?: number }
+  ) => {
     socketRef.current?.emit('video:change_url', {
       roomId,
       videoUrl,
       videoId,
-      userName: currentUser.name || 'Student'
+      userName: currentUser.name || 'Student',
+      mediaType: extra?.mediaType,
+      title: extra?.title,
+      duration: extra?.duration
     });
   }, [roomId, currentUser.name]);
 
@@ -806,6 +826,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const sendVideoRate = useCallback((rate: number) => {
     socketRef.current?.emit('video:rate', { roomId, rate });
+  }, [roomId]);
+
+  const sendMovieReaction = useCallback((emoji: string) => {
+    socketRef.current?.emit('movie:reaction', {
+      roomId,
+      emoji,
+      userName: currentUser.name || 'Friend'
+    });
+  }, [roomId, currentUser.name]);
+
+  const toggleHostLock = useCallback((isHostLocked: boolean) => {
+    socketRef.current?.emit('movie:lock_toggle', {
+      roomId,
+      isHostLocked
+    });
   }, [roomId]);
 
   const sendWhiteboardElement = useCallback((elem: WhiteboardElement) => {
@@ -1166,6 +1201,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         sendVideoPause,
         sendVideoSeek,
         sendVideoRate,
+        sendMovieReaction,
+        movieReactions,
+        toggleHostLock,
         sendWhiteboardElement,
         clearWhiteboard,
         sendWhiteboardCursor,

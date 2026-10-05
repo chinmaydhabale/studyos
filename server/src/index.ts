@@ -18,6 +18,7 @@ import { setupStudyRoomSocket, getExpectedVoicePassword, voicePasswordMatches } 
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
 import { neuralTts } from './services/neuralTtsService.js';
 import { extractArticleFromHtml } from './services/articleExtractorService.js';
+import { movieService } from './services/movieService.js';
 import { Flashcard } from './types.js';
 
 const app = express();
@@ -444,6 +445,111 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: err.message || 'Could not stream document' });
     }
+  }
+});
+
+// ==========================================
+// 🎬 Movie Upload & Watch Party Streaming APIs
+// ==========================================
+
+// 1. Initialize Chunked Upload
+app.post('/api/movies/upload/init', (req, res) => {
+  try {
+    const { uploadId, roomId, title, originalName, fileSize, totalChunks, mimeType, uploaderId, uploaderName } = req.body;
+    if (!uploadId || !originalName || !totalChunks) {
+      return res.status(400).json({ error: 'Missing required upload parameters (uploadId, originalName, totalChunks).' });
+    }
+    const result = movieService.initUpload({
+      uploadId: String(uploadId),
+      roomId: String(roomId || 'STUDY-ROOM-ALPHA'),
+      title: String(title || originalName),
+      originalName: String(originalName),
+      fileSize: Number(fileSize) || 0,
+      totalChunks: Number(totalChunks),
+      mimeType: String(mimeType || 'video/mp4'),
+      uploaderId: String(uploaderId || 'user'),
+      uploaderName: String(uploaderName || 'Student')
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('[movies/upload/init] error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to initialize upload session' });
+  }
+});
+
+// 2. Upload Chunk
+app.post('/api/movies/upload/chunk', upload.single('chunk'), (req, res) => {
+  try {
+    const { uploadId, chunkIndex } = req.body;
+    if (!uploadId || chunkIndex === undefined || !req.file) {
+      return res.status(400).json({ error: 'Missing chunk data, uploadId, or chunkIndex.' });
+    }
+    const result = movieService.saveChunk(String(uploadId), Number(chunkIndex), req.file.buffer);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('[movies/upload/chunk] error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to save chunk' });
+  }
+});
+
+// 3. Complete Upload & Finalize Movie
+app.post('/api/movies/upload/complete', async (req, res) => {
+  try {
+    const { uploadId } = req.body;
+    if (!uploadId) {
+      return res.status(400).json({ error: 'Missing uploadId parameter.' });
+    }
+    const movieRecord = await movieService.completeUpload(String(uploadId));
+    res.json({ success: true, movie: movieRecord });
+  } catch (err: any) {
+    console.error('[movies/upload/complete] error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to assemble movie file' });
+  }
+});
+
+// 4. List Movies
+app.get('/api/movies', async (req, res) => {
+  try {
+    const roomId = req.query.roomId ? String(req.query.roomId) : undefined;
+    const movies = await storage.getMovies(roomId);
+    res.json({ success: true, movies });
+  } catch (err: any) {
+    console.error('[movies/list] error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to list movies' });
+  }
+});
+
+// 5. Stream Movie (HTTP 206 Partial Content / Range Requests)
+app.get('/api/movies/stream/:id', async (req, res) => {
+  try {
+    const movieId = req.params.id;
+    const movie = await storage.getMovieById(movieId);
+    if (!movie) {
+      return res.status(404).json({ error: 'Movie not found.' });
+    }
+    movieService.streamMovie(req, res, movie);
+  } catch (err: any) {
+    console.error('[movies/stream] error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Failed to stream movie' });
+    }
+  }
+});
+
+// 6. Delete Movie
+app.delete('/api/movies/:id', async (req, res) => {
+  try {
+    const movieId = req.params.id;
+    const movie = await storage.getMovieById(movieId);
+    if (!movie) {
+      return res.status(404).json({ error: 'Movie not found.' });
+    }
+    movieService.deleteMovieFile(movie.filename);
+    await storage.deleteMovie(movieId);
+    res.json({ success: true, message: 'Movie deleted successfully.' });
+  } catch (err: any) {
+    console.error('[movies/delete] error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to delete movie' });
   }
 });
 

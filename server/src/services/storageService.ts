@@ -12,7 +12,8 @@ import {
   ActivitySession,
   StudyGroup,
   StudyDocument,
-  MockTestRecord
+  MockTestRecord,
+  MovieRecord
 } from '../types.js';
 import crypto from 'crypto';
 
@@ -32,6 +33,7 @@ import { WhiteboardModel } from '../models/Whiteboard.js';
 import { CalendarRecordModel } from '../models/CalendarRecord.js';
 import { StudyGroupModel } from '../models/StudyGroup.js';
 import { StudyDocumentModel } from '../models/StudyDocument.js';
+import { MovieRecordModel } from '../models/MovieRecord.js';
 
 // Documents loaded from MongoDB via toObject() carry `_id`/`__v`. MongoDB rejects
 // $set updates that touch the immutable `_id`, so always strip them before writing.
@@ -133,6 +135,7 @@ export class StorageService {
   private groups: Map<string, StudyGroup> = new Map();
   private documents: Map<string, StudyDocument> = new Map();
   private mockTestRecords: MockTestRecord[] = [];
+  private movies: Map<string, MovieRecord> = new Map();
   private dataDir: string;
 
   constructor() {
@@ -309,7 +312,16 @@ export class StorageService {
         this.mockTestRecords = mocksData;
       }
 
-      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups, ${this.mockTestRecords.length} mock tests.`);
+      // 10. Movies & Watch Party Videos
+      const moviesFile = path.join(this.dataDir, 'movies.json');
+      const moviesData = readJsonSafe<MovieRecord[]>(moviesFile, []);
+      for (const m of moviesData) {
+        if (m && m.id) {
+          this.movies.set(m.id, m);
+        }
+      }
+
+      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups, ${this.movies.size} movies, ${this.mockTestRecords.length} mock tests.`);
     } catch (err: any) {
       console.warn('[storage] Error loading from disk:', err.message);
     }
@@ -326,6 +338,11 @@ export class StorageService {
     this.saveNotesToDisk();
     this.saveFlashcardsToDisk();
     this.saveMockTestRecordsToDisk();
+    this.saveMoviesToDisk();
+  }
+
+  public saveMoviesToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'movies.json'), Array.from(this.movies.values()));
   }
 
   public saveMockTestRecordsToDisk(): void {
@@ -1067,6 +1084,54 @@ export class StorageService {
     if (isDbConnected()) {
       await StudyDocumentModel.updateOne({ id }, { $inc: { downloadCount: 1 } });
     }
+  }
+
+  // --- Movies & Watch Party Videos ---
+
+  public async saveMovie(movie: MovieRecord): Promise<MovieRecord> {
+    this.movies.set(movie.id, movie);
+    this.saveMoviesToDisk();
+    if (isDbConnected()) {
+      await MovieRecordModel.findOneAndUpdate(
+        { id: movie.id },
+        { $set: movie },
+        { upsert: true }
+      ).catch(err => console.warn('[storage] Failed to save movie to MongoDB:', err.message));
+    }
+    return movie;
+  }
+
+  public async getMovies(roomId?: string): Promise<MovieRecord[]> {
+    if (isDbConnected()) {
+      const filter: any = {};
+      if (roomId) filter.roomId = roomId.toUpperCase();
+      const dbMovies = await MovieRecordModel.find(filter).sort({ createdAt: -1 });
+      return dbMovies.map(m => m.toObject() as any);
+    }
+    const all = Array.from(this.movies.values());
+    if (roomId) {
+      return all.filter(m => m.roomId === roomId.toUpperCase());
+    }
+    return all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public async getMovieById(id: string): Promise<MovieRecord | undefined> {
+    const memory = this.movies.get(id);
+    if (memory) return memory;
+    if (isDbConnected()) {
+      const db = await MovieRecordModel.findOne({ id });
+      if (db) return db.toObject() as any;
+    }
+    return undefined;
+  }
+
+  public async deleteMovie(id: string): Promise<boolean> {
+    const existed = this.movies.delete(id);
+    this.saveMoviesToDisk();
+    if (isDbConnected()) {
+      await MovieRecordModel.deleteOne({ id }).catch(err => console.warn('[storage] Failed to delete movie in Mongo:', err.message));
+    }
+    return existed;
   }
 
   // --- Real Dynamic Activity Session Recording ---
