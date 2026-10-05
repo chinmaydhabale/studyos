@@ -1,7 +1,24 @@
 import { Server, Socket } from 'socket.io';
+import crypto from 'crypto';
 import { storage } from '../services/storageService.js';
 import { WhiteboardElement, LiveScreenShareState } from '../types.js';
 import { removeVoiceMember } from './voiceAndChatSocket.js';
+
+// A socket may only act on a room it has actually joined.
+export function isInRoom(socket: Socket, roomId: string): boolean {
+  return socket.rooms.has(roomId);
+}
+
+// Direct signalling (WebRTC, duels) is only allowed between sockets sharing a room.
+export function canSignal(io: Server, socket: Socket, targetId?: string): boolean {
+  if (!targetId || typeof targetId !== 'string') return false;
+  const target = io.sockets.sockets.get(targetId);
+  if (!target) return false;
+  for (const r of socket.rooms) {
+    if (r !== socket.id && target.rooms.has(r)) return true;
+  }
+  return false;
+}
 
 interface RoomPeer {
   socketId: string;
@@ -44,9 +61,6 @@ export interface PdfPresentation {
 const activeRoomPeers: Map<string, RoomPeer[]> = new Map();
 const activePdfPresentations: Map<string, PdfPresentation> = new Map();
 const activeScreenShares: Map<string, LiveScreenShareState> = new Map();
-const ROOM_VOICE_PASSWORDS: Map<string, string> = new Map([
-  ['STUDY-ROOM-ALPHA', 'study123']
-]);
 
 const DEFAULT_ROOM = 'STUDY-ROOM-ALPHA';
 
@@ -54,12 +68,20 @@ function cleanRoomId(roomId?: string): string {
   return (roomId || DEFAULT_ROOM).trim().toUpperCase();
 }
 
-// Single source of truth for a room's voice passkey: the stored study group first,
-// then the built-in rooms. Never fall back to a shared default password.
+// Single source of truth for a room's voice passkey: the stored study group.
+// Never fall back to a shared default password.
 export async function getExpectedVoicePassword(roomId: string): Promise<string | undefined> {
   const cleanRoomId = (roomId || '').trim().toUpperCase();
   const group = await storage.getStudyGroup(cleanRoomId);
-  return group?.voicePassword || ROOM_VOICE_PASSWORDS.get(cleanRoomId);
+  return group?.voicePassword || undefined;
+}
+
+// Timing-safe password comparison shared by every voice unlock path.
+export function voicePasswordMatches(input: unknown, expected: string): boolean {
+  if (typeof input !== 'string') return false;
+  const a = crypto.createHash('sha256').update(input.trim()).digest();
+  const b = crypto.createHash('sha256').update(expected.trim()).digest();
+  return crypto.timingSafeEqual(a, b);
 }
 
 // Voice state lives on the room roster so the presence bar shows live mic status.
@@ -95,7 +117,7 @@ export function performRoomLeaveCleanup(
   io.to(`voice_${cleanId}`).emit('voice:peer_left', { peerId: socket.id });
 
   const peers = activeRoomPeers.get(cleanId) || [];
-  const departingPeer = peers.find(p => p.socketId === socket.id || (userId && p.userId === userId));
+  const departingPeer = peers.find(p => p.socketId === socket.id);
 
   // Auto-save in-progress study activity on room exit
   if (departingPeer && departingPeer.activityStartTime && departingPeer.currentActivity && departingPeer.currentActivity !== 'Idle 💤') {
@@ -116,7 +138,7 @@ export function performRoomLeaveCleanup(
     departingPeer.activityStartTime = null;
   }
 
-  const remaining = peers.filter(p => p.socketId !== socket.id && (!userId || p.userId !== userId));
+  const remaining = peers.filter(p => p.socketId !== socket.id);
   // Bug 10 fix: delete empty room from Map to prevent unbounded memory growth
   if (remaining.length === 0) {
     activeRoomPeers.delete(cleanId);
@@ -174,6 +196,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       activityStartTime?: number | null;
     }
   }) => {
+    if (!data || !data.user || typeof data.user.id !== 'string' || !data.user.id.trim()) return;
     const cleanRoomId = (data.roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
     const oldRoomId = (socket as any).currentStudyRoom;
 
@@ -258,7 +281,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   socket.on('user:status_change', (data: { roomId: string; status: string; userId?: string }) => {
     const roomId = cleanRoomId(data.roomId);
     const peers = activeRoomPeers.get(roomId) || [];
-    const peer = peers.find(p => (data.userId && p.userId === data.userId) || p.socketId === socket.id);
+    const peer = peers.find(p => p.socketId === socket.id);
     if (peer) {
       peer.status = data.status;
       peer.currentActivity = data.status;
@@ -279,7 +302,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   }) => {
     const roomId = cleanRoomId(data.roomId);
     const peers = activeRoomPeers.get(roomId) || [];
-    const peer = peers.find(p => p.userId === data.userId || p.socketId === socket.id);
+    const peer = peers.find(p => p.socketId === socket.id);
 
     const now = Date.now();
     if (peer) {
@@ -323,8 +346,18 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     localDate?: string;
   }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     const peers = activeRoomPeers.get(roomId) || [];
-    const peer = peers.find(p => p.userId === data.userId || p.socketId === socket.id);
+    const peer = peers.find(p => p.socketId === socket.id);
+
+    // Never trust the client's duration: clamp to what the server saw running, when known.
+    let safeDuration = Math.max(0, Math.floor(Number(data.durationSeconds) || 0));
+    if (peer?.activityStartTime) {
+      const serverElapsed = Math.floor((Date.now() - peer.activityStartTime) / 1000);
+      safeDuration = Math.min(safeDuration, serverElapsed + 5);
+    }
+    safeDuration = Math.min(safeDuration, 12 * 3600);
+    data.durationSeconds = safeDuration;
 
     // Record session into persistent storage & update user study hours + XP
     storage.recordActivitySession(
@@ -373,7 +406,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   }) => {
     const roomId = (data.roomId || (socket as any).currentStudyRoom || 'study-room-alpha').trim().toUpperCase();
     const peers = activeRoomPeers.get(roomId) || [];
-    const peer = peers.find(p => p.userId === data.userId || p.socketId === socket.id);
+    const peer = peers.find(p => p.socketId === socket.id);
     if (peer) {
       if (data.currentDocument !== undefined) peer.currentDocument = data.currentDocument || undefined;
       if (data.currentVideo !== undefined) peer.currentVideo = data.currentVideo || undefined;
@@ -392,6 +425,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     currentPage: number;
   }) => {
     const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+    if (!isInRoom(socket, roomId)) return;
     const pres: PdfPresentation = {
       ...data,
       roomId,
@@ -414,7 +448,8 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   }) => {
     const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
     const pres = activePdfPresentations.get(roomId);
-    if (pres && pres.isActive) {
+    const presenterPeer = (activeRoomPeers.get(roomId) || []).find(p => p.socketId === socket.id);
+    if (pres && pres.isActive && presenterPeer && presenterPeer.userId === pres.presenterId) {
       pres.currentPage = data.currentPage;
       if (data.documentId) pres.documentId = data.documentId;
       socket.to(roomId).emit('pdf:page_sync', {
@@ -427,6 +462,9 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Stop Group PDF Presentation
   socket.on('pdf:stop_present', (data: { roomId: string }) => {
     const roomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
+    const activePres = activePdfPresentations.get(roomId);
+    const stopper = (activeRoomPeers.get(roomId) || []).find(p => p.socketId === socket.id);
+    if (!activePres || !stopper || stopper.userId !== activePres.presenterId) return;
     activePdfPresentations.delete(roomId);
     io.to(roomId).emit('pdf:presentation_state', { isActive: false, roomId });
   });
@@ -442,6 +480,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     platformName?: string;
   }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     const shareState: LiveScreenShareState = {
       roomId,
       presenterSocketId: socket.id,
@@ -523,19 +562,23 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   });
 
   socket.on('screen:offer', (data: { to: string; offer: any }) => {
+    if (!canSignal(io, socket, data?.to)) return;
     io.to(data.to).emit('screen:offer', { from: socket.id, offer: data.offer });
   });
 
   socket.on('screen:answer', (data: { to: string; answer: any }) => {
+    if (!canSignal(io, socket, data?.to)) return;
     io.to(data.to).emit('screen:answer', { from: socket.id, answer: data.answer });
   });
 
   socket.on('screen:ice_candidate', (data: { to: string; candidate: any }) => {
+    if (!canSignal(io, socket, data?.to)) return;
     io.to(data.to).emit('screen:ice_candidate', { from: socket.id, candidate: data.candidate });
   });
 
   // Voice Password Verification
-  socket.on('voice:verify_password', async (data: { roomId: string; password: string }, callback: (res: { success: boolean; message: string }) => void) => {
+  socket.on('voice:verify_password', async (data: { roomId: string; password: string }, cb: (res: { success: boolean; message: string }) => void) => {
+    const callback = typeof cb === 'function' ? cb : () => {};
     const cleanRoomId = (data.roomId || 'study-room-alpha').trim().toUpperCase();
     const expected = await getExpectedVoicePassword(cleanRoomId);
 
@@ -544,7 +587,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
       return;
     }
 
-    if (data.password === expected) {
+    if (voicePasswordMatches(data.password, expected)) {
       (socket as any).unlockedVoiceRooms = (socket as any).unlockedVoiceRooms || new Set<string>();
       (socket as any).unlockedVoiceRooms.add(cleanRoomId);
       callback({ success: true, message: 'Voice room unlocked! Microphone enabled.' });
@@ -556,18 +599,21 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Whiteboard
   socket.on('wb:element', (data: { roomId: string; element: WhiteboardElement }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     storage.saveWhiteboardElement(roomId, data.element);
     socket.to(roomId).emit('wb:element', data.element);
   });
 
   socket.on('wb:clear', (data: { roomId: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     storage.clearWhiteboard(roomId);
     socket.to(roomId).emit('wb:clear');
   });
 
   socket.on('wb:cursor', (data: { roomId: string; x: number; y: number; userName: string; color: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     socket.to(roomId).emit('wb:cursor', {
       socketId: socket.id,
       ...data
@@ -577,6 +623,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
   // Notes
   socket.on('notes:update', (data: { roomId: string; content: string; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     const updated = storage.updateNote(roomId, data.content, data.userName);
     socket.to(roomId).emit('notes:update', updated);
   });
@@ -596,7 +643,9 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     timeLimit: number;
   }) => {
     const cleanId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, cleanId)) return;
     if (data.targetSocketId) {
+      if (!canSignal(io, socket, data.targetSocketId)) return;
       io.to(data.targetSocketId).emit('math:duel_received', data);
     } else {
       // Room-wide challenge broadcast
@@ -615,13 +664,14 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     gameMode: string;
     timeLimit: number;
   }) => {
-    const cleanId = cleanRoomId(data.roomId);
+    if (!canSignal(io, socket, data.challengerSocketId)) return;
     // Broadcast match start to both players
     io.to(data.challengerSocketId).emit('math:duel_start', data);
     socket.emit('math:duel_start', data);
   });
 
   socket.on('math:duel_decline', (data: { challengerSocketId: string; duelId: string; message?: string }) => {
+    if (!canSignal(io, socket, data.challengerSocketId)) return;
     io.to(data.challengerSocketId).emit('math:duel_declined', data);
   });
 
@@ -633,6 +683,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     streak: number;
     questionIndex: number;
   }) => {
+    if (!canSignal(io, socket, data.opponentSocketId)) return;
     io.to(data.opponentSocketId).emit('math:duel_opponent_progress', data);
   });
 
@@ -644,6 +695,7 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     accuracy: number;
     highestStreak: number;
   }) => {
+    if (!canSignal(io, socket, data.opponentSocketId)) return;
     io.to(data.opponentSocketId).emit('math:duel_opponent_finished', data);
   });
 

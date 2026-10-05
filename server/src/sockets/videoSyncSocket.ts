@@ -26,6 +26,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client changes video URL (e.g. pastes a YouTube class link)
   socket.on('video:change_url', (data: { roomId: string; videoUrl: string; videoId: string; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!socket.rooms.has(`video_${roomId}`)) return;
     const updated = storage.updateVideoState(roomId, {
       videoUrl: data.videoUrl,
       videoId: data.videoId,
@@ -45,6 +46,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client plays video
   socket.on('video:play', (data: { roomId: string; currentTime: number; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!socket.rooms.has(`video_${roomId}`)) return;
     const updated = storage.updateVideoState(roomId, {
       isPlaying: true,
       currentTime: data.currentTime,
@@ -61,6 +63,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client pauses video
   socket.on('video:pause', (data: { roomId: string; currentTime: number; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!socket.rooms.has(`video_${roomId}`)) return;
     const updated = storage.updateVideoState(roomId, {
       isPlaying: false,
       currentTime: data.currentTime,
@@ -76,6 +79,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client seeks forward or backward
   socket.on('video:seek', (data: { roomId: string; seekToTime: number; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!socket.rooms.has(`video_${roomId}`)) return;
     const updated = storage.updateVideoState(roomId, {
       currentTime: data.seekToTime,
       updatedBy: data.userName
@@ -90,6 +94,7 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
   // Client changes playback rate
   socket.on('video:rate', (data: { roomId: string; rate: number }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!socket.rooms.has(`video_${roomId}`)) return;
     storage.updateVideoState(roomId, { playbackRate: data.rate });
     socket.to(`video_${roomId}`).emit('video:rate', { rate: data.rate });
   });

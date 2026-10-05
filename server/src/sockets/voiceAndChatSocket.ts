@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { storage } from '../services/storageService.js';
 import { aiCoach } from '../services/aiCoachService.js';
-import { updateRoomPeerVoiceState, getExpectedVoicePassword } from './studyRoomSocket.js';
+import { updateRoomPeerVoiceState, getExpectedVoicePassword, voicePasswordMatches, isInRoom, canSignal } from './studyRoomSocket.js';
 import { ChatMessage } from '../types.js';
 
 const DEFAULT_ROOM = 'STUDY-ROOM-ALPHA';
@@ -55,7 +55,13 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     isAiDoubt?: boolean;
   }) => {
     const roomId = cleanRoomId(data.roomId);
-    const safeText = typeof data.text === 'string' ? data.text : '';
+    if (!isInRoom(socket, roomId)) return;
+    const safeText = typeof data.text === 'string' ? data.text.slice(0, 4000) : '';
+    if (!safeText.trim()) return;
+    // The authenticated-at-join identity wins over whatever the client claims.
+    const trustedUserId: string | undefined = (socket as any).userId;
+    if (trustedUserId) data.userId = trustedUserId;
+    const isAiCommand = /^\/ai(\s|$)/i.test(safeText);
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       roomId,
@@ -66,7 +72,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       videoTimestamp: data.videoTimestamp,
       pdfPage: data.pdfPage,
       pdfDocTitle: data.pdfDocTitle,
-      isAiDoubt: Boolean(data.isAiDoubt || safeText.startsWith('/ai')),
+      isAiDoubt: Boolean(data.isAiDoubt || isAiCommand),
       createdAt: new Date().toISOString()
     };
 
@@ -77,12 +83,23 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     // If it's a doubt for AI
     if (newMsg.isAiDoubt) {
       const query = safeText.replace(/^\/ai\s*/i, '');
-      const doubtResult = await aiCoach.explainDoubt(query, {
-        videoTimestamp: data.videoTimestamp,
-        pdfPage: data.pdfPage,
-        pdfTitle: data.pdfDocTitle,
-        userId: data.userId
-      });
+      let doubtResult;
+      try {
+        doubtResult = await aiCoach.explainDoubt(query, {
+          videoTimestamp: data.videoTimestamp,
+          pdfPage: data.pdfPage,
+          pdfTitle: data.pdfDocTitle,
+          userId: data.userId
+        });
+      } catch (err) {
+        console.error('[chat] AI doubt failed:', err);
+        socket.emit('notification:toast', {
+          title: 'AI Teacher Unavailable',
+          message: 'Could not answer that doubt right now. Please try again.',
+          type: 'warning'
+        });
+        return;
+      }
 
       const contextHeader = data.pdfPage
         ? `📖 *Context: ${data.pdfDocTitle || 'Study PDF'} (Page ${data.pdfPage})*\n\n`
@@ -116,6 +133,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       console.warn('[webrtc] Drop offer: missing recipient "to"');
       return;
     }
+    if (!canSignal(io, socket, data.to)) return;
     io.to(data.to).emit('webrtc:offer', { from: socket.id, offer: data.offer });
   });
 
@@ -124,6 +142,7 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       console.warn('[webrtc] Drop answer: missing recipient "to"');
       return;
     }
+    if (!canSignal(io, socket, data.to)) return;
     io.to(data.to).emit('webrtc:answer', { from: socket.id, answer: data.answer });
   });
 
@@ -132,16 +151,18 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
       console.warn('[webrtc] Drop candidate: missing recipient "to"');
       return;
     }
+    if (!canSignal(io, socket, data.to)) return;
     io.to(data.to).emit('webrtc:ice_candidate', { from: socket.id, candidate: data.candidate });
   });
 
   // Join voice room (Password gate strictly enforced on server)
   socket.on('voice:join', async (data: { roomId: string; userName?: string; password?: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     const expected = await getExpectedVoicePassword(roomId);
     if (expected) {
       const isUnlocked = (socket as any).unlockedVoiceRooms?.has(roomId);
-      const matchesPassword = data.password && typeof data.password === 'string' && data.password.trim() === expected.trim();
+      const matchesPassword = voicePasswordMatches(data.password, expected);
       if (!isUnlocked && !matchesPassword) {
         socket.emit('notification:toast', {
           title: 'Voice Room Locked',
@@ -183,11 +204,13 @@ export function setupVoiceAndChatSocket(io: Server, socket: Socket) {
     removeVoiceMember(roomId, socket.id);
     socket.to(`voice_${roomId}`).emit('voice:peer_left', { peerId: socket.id });
     (socket as any).currentVoiceRoom = null;
+    (socket as any).unlockedVoiceRooms?.delete(roomId);
   });
 
   // Mic state & Voice Activity Detection (Speaking indicator)
   socket.on('voice:state', (data: { roomId: string; isMuted: boolean; isSpeaking: boolean; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
+    if (!isInRoom(socket, roomId)) return;
     const payload = {
       socketId: socket.id,
       userName: data.userName,

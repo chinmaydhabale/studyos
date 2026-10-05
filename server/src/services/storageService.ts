@@ -15,6 +15,12 @@ import {
   MockTestRecord
 } from '../types.js';
 import crypto from 'crypto';
+
+function hashesMatch(a: string, b: string): boolean {
+  const bufA = Buffer.from(a || '', 'hex');
+  const bufB = Buffer.from(b || '', 'hex');
+  return bufA.length > 0 && bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
 import fs from 'fs';
 import path from 'path';
 import { isDbConnected } from '../db.js';
@@ -139,6 +145,11 @@ export class StorageService {
   public ensureDefaultGroup(): StudyGroup {
     const existing = this.groups.get('STUDY-ROOM-ALPHA');
     if (existing) return existing;
+    let alphaPassword = (process.env.DEFAULT_ROOM_VOICE_PASSWORD || '').trim();
+    if (!alphaPassword) {
+      alphaPassword = crypto.randomBytes(6).toString('hex');
+      console.warn(`[security] DEFAULT_ROOM_VOICE_PASSWORD not set; generated voice password for STUDY-ROOM-ALPHA: ${alphaPassword}`);
+    }
     const defaultAlpha: StudyGroup = {
       roomId: 'STUDY-ROOM-ALPHA',
       name: 'Main Alpha Co-Study Theater',
@@ -147,7 +158,7 @@ export class StorageService {
       creatorId: 'system',
       creatorName: 'StudyOS Official',
       memberCount: 1,
-      voicePassword: 'study123',
+      voicePassword: alphaPassword,
       isPrivate: false,
       createdAt: new Date().toISOString()
     };
@@ -158,12 +169,12 @@ export class StorageService {
 
   public ensureChinmayAccount(): void {
     const targetUsername = 'chinmay';
-    const targetPassword = '7717';
+    const targetPassword = (process.env.SEED_CHINMAY_PASSWORD || '').trim();
     const targetUserId = 'user_1790089573198_ucnf';
 
-    // 1. Ensure credentials exist
+    // 1. Ensure credentials exist (only when a seed password is explicitly configured)
     let creds = this.userCredentials.get(targetUsername);
-    if (!creds || !creds.passwordHash || !creds.salt) {
+    if (targetPassword && (!creds || !creds.passwordHash || !creds.salt)) {
       const salt = crypto.randomBytes(16).toString('hex');
       const passwordHash = crypto.pbkdf2Sync(targetPassword, salt, 100000, 64, 'sha512').toString('hex');
       creds = { passwordHash, salt };
@@ -752,8 +763,11 @@ export class StorageService {
       const actualUsername = (dbUser.username || resolvedUsername).toLowerCase();
       const salt = dbUser.salt || '';
       const expectedHash = dbUser.passwordHash || '';
+      if (!salt || !expectedHash) {
+        throw new Error('Invalid username or password.');
+      }
       const inputHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-      if (inputHash !== expectedHash) {
+      if (!hashesMatch(inputHash, expectedHash)) {
         throw new Error('Invalid username or password.');
       }
 
@@ -777,7 +791,7 @@ export class StorageService {
     }
 
     const inputHash = crypto.pbkdf2Sync(password, inMemoryCreds.salt, 100000, 64, 'sha512').toString('hex');
-    if (inputHash !== inMemoryCreds.passwordHash) {
+    if (!hashesMatch(inputHash, inMemoryCreds.passwordHash)) {
       throw new Error('Invalid username or password.');
     }
 
@@ -865,7 +879,7 @@ export class StorageService {
       creatorId: groupData.creatorId,
       creatorName: groupData.creatorName,
       memberCount: 1,
-      voicePassword: groupData.voicePassword || 'study123',
+      voicePassword: groupData.voicePassword?.trim() || crypto.randomBytes(4).toString('hex'),
       isPrivate: true,
       createdAt: new Date().toISOString()
     };

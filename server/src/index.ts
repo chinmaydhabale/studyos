@@ -4,9 +4,9 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns';
+import net from 'net';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import multer from 'multer';
 import { connectDatabase } from './db.js';
 import { storage, localDateKey } from './services/storageService.js';
@@ -14,13 +14,11 @@ import { aiCoach } from './services/aiCoachService.js';
 import { telegramService } from './services/telegramService.js';
 import { setupVideoSyncSocket } from './sockets/videoSyncSocket.js';
 import { setupVoiceAndChatSocket } from './sockets/voiceAndChatSocket.js';
-import { setupStudyRoomSocket, getExpectedVoicePassword } from './sockets/studyRoomSocket.js';
+import { setupStudyRoomSocket, getExpectedVoicePassword, voicePasswordMatches } from './sockets/studyRoomSocket.js';
 import { generateSamplePdf } from './services/samplePdfGenerator.js';
 import { neuralTts } from './services/neuralTtsService.js';
 import { extractArticleFromHtml } from './services/articleExtractorService.js';
 import { Flashcard } from './types.js';
-
-dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
@@ -52,6 +50,29 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
   }
   next();
 };
+
+// --- Basic in-memory rate limiter for brute-forceable endpoints ---
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+function isRateLimited(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+  bucket.count++;
+  return bucket.count > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  rateBuckets.forEach((bucket, key) => { if (bucket.resetAt <= now) rateBuckets.delete(key); });
+}, 60_000).unref();
+
+// Never expose a group's voice passkey to anyone but its creator at creation time.
+function sanitizeGroup<T extends { voicePassword?: string }>(group: T): Omit<T, 'voicePassword'> {
+  const { voicePassword, ...rest } = group as any;
+  return rest;
+}
 
 // Initialize Socket.IO
 const io = new Server(server, {
@@ -131,6 +152,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (!username || typeof username !== 'string' || !username.trim() || !password || typeof password !== 'string') {
       return res.status(400).json({ error: 'Please enter both username and password.' });
     }
+    if (isRateLimited('login:' + req.ip + ':' + username.trim().toLowerCase(), 10, 15 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Too many login attempts. Please try again later.' });
+    }
     const result = await storage.authenticateUser(username, password);
     res.json(result);
   } catch (err: any) {
@@ -187,7 +211,7 @@ app.post('/api/rooms/join', async (req, res) => {
         creatorName: userName || 'Study Partner'
       });
     }
-    res.json({ success: true, group });
+    res.json({ success: true, group: sanitizeGroup(group) });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error joining study group' });
   }
@@ -196,25 +220,29 @@ app.post('/api/rooms/join', async (req, res) => {
 app.get('/api/rooms', async (req, res) => {
   try {
     const groups = await storage.getStudyGroups();
-    res.json({ success: true, groups });
+    res.json({ success: true, groups: groups.map(sanitizeGroup) });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to list study groups' });
   }
 });
 
 app.get('/api/rooms/:roomId', async (req, res) => {
-  const cleanId = req.params.roomId.trim().toUpperCase();
-  let group = await storage.getStudyGroup(cleanId);
-  if (!group) {
-    group = await storage.createStudyGroup({
-      roomId: cleanId,
-      name: cleanId.replace(/[-_]/g, ' '),
-      description: `Study group ${cleanId}`,
-      creatorId: 'system',
-      creatorName: 'StudyOS'
-    });
+  try {
+    const cleanId = req.params.roomId.trim().toUpperCase();
+    let group = await storage.getStudyGroup(cleanId);
+    if (!group) {
+      group = await storage.createStudyGroup({
+        roomId: cleanId,
+        name: cleanId.replace(/[-_]/g, ' '),
+        description: `Study group ${cleanId}`,
+        creatorId: 'system',
+        creatorName: 'StudyOS'
+      });
+    }
+    res.json(sanitizeGroup(group));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to load study group' });
   }
-  res.json(group);
 });
 
 // --- TELEGRAM CLOUD STORAGE (Documents & Notes) ---
@@ -228,11 +256,7 @@ app.post('/api/telegram/detect', async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/telegram/config', async (req, res) => {
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (adminToken && req.header('x-admin-token') !== adminToken) {
-    return res.status(401).json({ error: 'Unauthorized: valid x-admin-token required' });
-  }
+app.post('/api/telegram/config', requireAdmin, async (req, res) => {
   const { channelId, channelTitle } = req.body;
   if (!channelId) return res.status(400).json({ error: 'Channel ID required' });
   const result = await telegramService.setChannelConfig(channelId, channelTitle);
@@ -293,7 +317,7 @@ app.post('/api/telegram/upload', upload.single('file'), async (req, res) => {
     );
 
     const docRecord = await storage.saveStudyDocument({
-      roomId: roomId.toUpperCase(),
+      roomId: cleanRoomId,
       title,
       subject: subject || 'Quantitative Aptitude',
       fileName: telegramRes.fileName,
@@ -307,7 +331,7 @@ app.post('/api/telegram/upload', upload.single('file'), async (req, res) => {
     });
 
     // Notify room members in real-time via Socket.IO
-    io.to(roomId.toUpperCase()).emit('vault:document-added', docRecord);
+    io.to(cleanRoomId).emit('vault:document-added', docRecord);
 
     res.json({ success: true, document: docRecord });
   } catch (err: any) {
@@ -351,7 +375,19 @@ app.get('/api/telegram/download/:fileId', async (req, res) => {
     }
 
     const url = await telegramService.getFileDownloadUrl(fileId);
-    res.redirect(url);
+    const upstream = await fetch(url);
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).json({ error: 'Could not retrieve file from Telegram storage' });
+    }
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+    const upstreamLength = upstream.headers.get('content-length');
+    if (upstreamLength) res.setHeader('Content-Length', upstreamLength);
+    res.setHeader('Content-Disposition', 'attachment');
+    const { Readable } = await import('stream');
+    // @ts-ignore
+    const downloadStream = Readable.fromWeb(upstream.body);
+    downloadStream.on('error', () => res.destroy());
+    return downloadStream.pipe(res);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Could not retrieve file from Telegram storage' });
   }
@@ -386,18 +422,10 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
     const url = await telegramService.getFileDownloadUrl(fileId);
     const response = await fetch(url);
     if (!response.ok) {
-      const fallbackPdf = generateSamplePdf('StudyOS Revision Notes', 'Exam Preparation');
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'inline');
-      res.setHeader('Content-Length', fallbackPdf.length);
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      return res.send(fallbackPdf);
+      return res.status(502).json({ error: 'Could not retrieve document from storage' });
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline');
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     const contentLength = response.headers.get('content-length');
     if (contentLength) {
       res.setHeader('Content-Length', contentLength);
@@ -407,18 +435,15 @@ app.get('/api/telegram/stream/:fileId', async (req, res) => {
       const { Readable } = await import('stream');
       // @ts-ignore
       const nodeStream = Readable.fromWeb(response.body);
+      nodeStream.on('error', () => res.destroy());
       return nodeStream.pipe(res);
     }
     const arrayBuffer = await response.arrayBuffer();
     res.send(Buffer.from(arrayBuffer));
   } catch (err: any) {
-    const fallbackPdf = generateSamplePdf('StudyOS Revision Notes', 'Exam Preparation');
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline');
-    res.setHeader('Content-Length', fallbackPdf.length);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.send(fallbackPdf);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Could not stream document' });
+    }
   }
 });
 
@@ -434,11 +459,23 @@ function escapeHtml(str: string): string {
 }
 
 // --- SSRF & Private IP Protection for Web Proxy ---
-function isPrivateIp(ip: string): boolean {
-  if (ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' || ip === '::') return true;
-  if (ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('169.254.') || ip.startsWith('127.')) return true;
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
-  if (/^(fc00|fe80)/i.test(ip)) return true;
+function isPrivateIp(rawIp: string): boolean {
+  let ip = rawIp.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) ip = mapped[1];
+  const kind = net.isIP(ip);
+  if (kind === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      a >= 224;
+  }
+  if (kind === 6) {
+    return ip === '::' || ip === '::1' || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip) || ip.startsWith('::ffff:');
+  }
   return false;
 }
 
@@ -457,8 +494,8 @@ async function isSafeUrlForProxy(urlString: string): Promise<{ safe: boolean; re
     }
 
     try {
-      const lookupResult = await dns.promises.lookup(host);
-      if (lookupResult && isPrivateIp(lookupResult.address)) {
+      const lookupResults = await dns.promises.lookup(host, { all: true });
+      if (lookupResults.some(r => isPrivateIp(r.address))) {
         return { safe: false, reason: 'Destination domain resolves to a private or internal IP' };
       }
     } catch {
@@ -469,6 +506,23 @@ async function isSafeUrlForProxy(urlString: string): Promise<{ safe: boolean; re
   } catch (e: any) {
     return { safe: false, reason: 'Malformed URL' };
   }
+}
+
+// Fetch that re-validates every redirect hop so a public URL cannot bounce into the internal network.
+async function safeFetch(url: string, init: RequestInit = {}, maxRedirects = 5): Promise<Response> {
+  let current = url;
+  for (let i = 0; i <= maxRedirects; i++) {
+    const check = await isSafeUrlForProxy(current);
+    if (!check.safe) throw new Error('Blocked: ' + (check.reason || 'unsafe destination'));
+    const resp = await fetch(current, { ...init, redirect: 'manual' });
+    const location = resp.headers.get('location');
+    if (resp.status >= 300 && resp.status < 400 && location) {
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return resp;
+  }
+  throw new Error('Too many redirects');
 }
 
 // --- SECURE WEB EMBED PROXY & CLEAN READER (Study Notes & Portals) ---
@@ -487,9 +541,8 @@ app.get('/api/proxy/web', async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
 
-    const response = await fetch(targetUrl, {
+    const response = await safeFetch(targetUrl, {
       signal: controller.signal,
-      redirect: 'follow',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -518,7 +571,7 @@ app.get('/api/proxy/web', async (req, res) => {
     res.removeHeader('Cross-Origin-Embedder-Policy');
     res.removeHeader('Cross-Origin-Opener-Policy');
     res.removeHeader('Cross-Origin-Resource-Policy');
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Security-Policy', 'sandbox allow-scripts allow-popups allow-forms');
     res.setHeader('Content-Type', rawContentType);
 
     const safeUrl = escapeHtml(finalUrl);
@@ -530,6 +583,9 @@ app.get('/api/proxy/web', async (req, res) => {
       }
 
       let html = await response.text();
+      if (html.length > 15 * 1024 * 1024) {
+        return res.status(413).send('Content too large to proxy (exceeds 15MB limit).');
+      }
 
       // Remove meta tags that enforce frame protection or restrictive CSP
       html = html.replace(/<meta[^>]*http-equiv=["']?(?:X-Frame-Options|Content-Security-Policy)["']?[^>]*>/gi, '');
@@ -574,7 +630,8 @@ app.get('/api/proxy/web', async (req, res) => {
         const { Readable } = await import('stream');
         // @ts-ignore
         const nodeStream = Readable.fromWeb(response.body);
-        return nodeStream.pipe(res);
+        nodeStream.on('error', () => res.destroy());
+      return nodeStream.pipe(res);
       }
       const arrayBuffer = await response.arrayBuffer();
       return res.send(Buffer.from(arrayBuffer));
@@ -614,7 +671,7 @@ app.get('/api/proxy/web', async (req, res) => {
               <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
                 Open in Companion Tab ↗
               </a>
-              <button onclick="window.parent.postMessage({ type: 'STUDYOS_SWITCH_READER', url: '${safeUrl}' }, '*')" class="btn btn-secondary">
+              <button data-url="${safeUrl}" onclick="window.parent.postMessage({ type: 'STUDYOS_SWITCH_READER', url: this.dataset.url }, '*')" class="btn btn-secondary">
                 📖 Switch to Clean Reader Mode
               </button>
               <button onclick="window.location.reload()" class="btn btn-secondary">
@@ -647,9 +704,8 @@ app.get('/api/proxy/article', async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
 
-    const response = await fetch(targetUrl, {
+    const response = await safeFetch(targetUrl, {
       signal: controller.signal,
-      redirect: 'follow',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -718,6 +774,10 @@ app.post('/api/mock/record', (req, res) => {
   const numTotal = Number(totalMarks);
   if (isNaN(numScore) || isNaN(numTotal) || !isFinite(numScore) || !isFinite(numTotal) || numScore < 0 || numTotal <= 0) {
     return res.status(400).json({ error: 'Score and total marks must be valid positive numbers' });
+  }
+
+  if (numScore > numTotal) {
+    return res.status(400).json({ error: 'Score cannot exceed total marks' });
   }
 
   const rawAccuracy = accuracy !== undefined ? Number(accuracy) : Math.round((numScore / numTotal) * 100);
@@ -802,6 +862,9 @@ app.post('/api/activity/session', (req, res) => {
 app.post('/api/voice/verify-password', async (req, res) => {
   const { roomId, password } = req.body || {};
   const cleanId = (roomId || 'STUDY-ROOM-ALPHA').trim().toUpperCase();
+  if (isRateLimited('voice:' + req.ip + ':' + cleanId, 10, 15 * 60 * 1000)) {
+    return res.status(429).json({ success: false, message: 'Too many attempts. Please try again later.' });
+  }
   const expected = await getExpectedVoicePassword(cleanId);
   if (!expected) {
     return res.status(404).json({
@@ -809,7 +872,7 @@ app.post('/api/voice/verify-password', async (req, res) => {
       message: `No voice password is configured for study group "${cleanId}". Create or join the group first.`
     });
   }
-  if (password && typeof password === 'string' && password.trim() === expected.trim()) {
+  if (voicePasswordMatches(password, expected)) {
     res.json({ success: true, message: 'Voice room unlocked.' });
   } else {
     res.status(401).json({ success: false, message: 'Incorrect Voice Room Password' });
@@ -828,7 +891,7 @@ app.post('/api/tasks', (req, res) => {
     return res.status(400).json({ error: 'Valid userId is required to create a task' });
   }
   const newTask = storage.addTask({
-    id: `task-${Date.now()}`,
+    id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     userId: userId.trim(),
     title: req.body.title || 'Untitled Study Task',
     subject: req.body.subject || 'General',
@@ -1149,14 +1212,21 @@ if (fs.existsSync(clientDistPath)) {
   });
 }
 
-server.listen(PORT, async () => {
-  console.log(`🚀 StudyOS Server running on http://localhost:${PORT}`);
-  console.log(`📡 WebSocket & Real-time Live Situation Engine active`);
-
-  // Connect to MongoDB Atlas
+async function startServer() {
+  // Connect to MongoDB Atlas and load persisted state before accepting any traffic
   const connected = await connectDatabase();
   if (connected) {
     await storage.syncWithDatabase();
   }
   await telegramService.init();
+
+  server.listen(PORT, () => {
+    console.log(`🚀 StudyOS Server running on http://localhost:${PORT}`);
+    console.log(`📡 WebSocket & Real-time Live Situation Engine active`);
+  });
+}
+
+startServer().catch(err => {
+  console.error('Fatal: server failed to start', err);
+  process.exit(1);
 });
