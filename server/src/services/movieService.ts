@@ -128,13 +128,23 @@ export class MovieService {
     const finalFileName = `${movieId}${ext}`;
     const destinationPath = path.join(MOVIES_DIR, finalFileName);
 
-    // Concatenate all chunks using streams
+    // Concatenate all chunks using sequential streams with backpressure
     const writeStream = fs.createWriteStream(destinationPath);
     for (let i = 0; i < totalChunks; i++) {
       const chunkPath = path.join(sessionDir, `chunk_${i}`);
-      const data = fs.readFileSync(chunkPath);
-      writeStream.write(data);
+      if (!fs.existsSync(chunkPath)) {
+        throw new Error(`Missing chunk ${i} of ${totalChunks} for upload ${uploadId}.`);
+      }
+      const chunkRead = fs.createReadStream(chunkPath);
+      await new Promise<void>((resolve, reject) => {
+        chunkRead.pipe(writeStream, { end: false });
+        chunkRead.on('end', () => resolve());
+        chunkRead.on('error', reject);
+      });
+      // Delete temporary chunk immediately to keep disk & memory usage minimal
+      try { fs.unlinkSync(chunkPath); } catch (e) {}
     }
+
     await new Promise<void>((resolve, reject) => {
       writeStream.end(() => resolve());
       writeStream.on('error', reject);
@@ -171,7 +181,8 @@ export class MovieService {
   }
 
   /**
-   * High performance HTTP 206 Partial Content Range streaming
+   * High performance, memory-safe HTTP 206 Partial Content Range streaming
+   * Clamped to 4MB max window per response to keep Cloudflare tunnels and RAM rock solid.
    */
   public streamMovie(req: Request, res: Response, movie: MovieRecord): void {
     const filePath = path.join(MOVIES_DIR, movie.filename);
@@ -183,18 +194,39 @@ export class MovieService {
 
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
-    const range = req.headers.range;
 
     // Content type
     let contentType = movie.mimeType || 'video/mp4';
     if (movie.filename.endsWith('.webm')) contentType = 'video/webm';
-    else if (movie.filename.endsWith('.mkv')) contentType = 'video/x-matroska';
+    else if (movie.filename.endsWith('.mkv')) contentType = 'video/mp4';
     else if (movie.filename.endsWith('.mp4')) contentType = 'video/mp4';
 
+    // Handle HEAD request for quick metadata probing
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=3600'
+      });
+      res.end();
+      return;
+    }
+
+    const range = req.headers.range;
+    const MAX_CHUNK_WINDOW = 4 * 1024 * 1024; // 4MB safe window per range response
+
+    let start = 0;
+    let end = Math.min(MAX_CHUNK_WINDOW - 1, fileSize - 1);
+    let isPartial = false;
+
     if (range) {
+      isPartial = true;
       const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      start = parseInt(parts[0], 10) || 0;
+      const requestedEnd = parts[1] ? parseInt(parts[1], 10) : (start + MAX_CHUNK_WINDOW - 1);
+      // Clamp end to both requested window and file boundaries
+      end = Math.min(requestedEnd, start + MAX_CHUNK_WINDOW - 1, fileSize - 1);
 
       if (start >= fileSize || end >= fileSize || start > end) {
         res.status(416).set({
@@ -202,36 +234,38 @@ export class MovieService {
         }).send('Requested range not satisfiable');
         return;
       }
-
-      const chunkSize = (end - start) + 1;
-      const fileStream = fs.createReadStream(filePath, { start, end });
-
-      const headers = {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize,
-        'Content-Type': contentType,
-        'Cache-Control': 'no-cache'
-      };
-
-      res.writeHead(206, headers);
-      fileStream.on('error', (err) => {
-        console.error('[stream] ReadStream error:', err);
-        if (!res.headersSent) res.status(500).end();
-        else res.destroy();
-      });
-      fileStream.pipe(res);
-    } else {
-      const headers = {
-        'Content-Length': fileSize,
-        'Content-Type': contentType,
-        'Accept-Ranges': 'bytes'
-      };
-      res.writeHead(200, headers);
-      const fileStream = fs.createReadStream(filePath);
-      fileStream.on('error', () => res.destroy());
-      fileStream.pipe(res);
     }
+
+    const chunkSize = (end - start) + 1;
+    const fileStream = fs.createReadStream(filePath, { start, end, highWaterMark: 64 * 1024 });
+
+    const headers: Record<string, any> = {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache'
+    };
+
+    res.writeHead(isPartial ? 206 : 200, headers);
+
+    const cleanup = () => {
+      if (!fileStream.destroyed) {
+        fileStream.destroy();
+      }
+    };
+
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+    res.on('error', cleanup);
+    fileStream.on('error', (err: any) => {
+      cleanup();
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    fileStream.pipe(res);
   }
 
   /**

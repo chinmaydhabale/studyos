@@ -556,8 +556,16 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
               src={videoState.videoUrl}
               className="w-full h-full object-contain aspect-video pointer-events-auto"
               playsInline
-              preload="auto"
+              preload="metadata"
               onClick={handleTogglePlay}
+              onError={(e) => {
+                console.warn('[SyncTheater] Video load error:', e);
+                addToast(
+                  'Format Notice',
+                  'If video fails to play, browsers require MP4 (H.264/AAC) or WebM format.',
+                  'warning'
+                );
+              }}
             />
           ) : (
             <div id="yt-player-frame" className="w-full h-full aspect-video pointer-events-auto" />

@@ -30,6 +30,19 @@ const upload = multer({
 
 const PORT = process.env.PORT || 4000;
 
+// Resilience: trap EPIPE and premature socket close from video streaming
+process.on('uncaughtException', (err: any) => {
+  if (err.code === 'EPIPE' || err.code === 'ECONNRESET' || err.message?.includes('premature close') || err.message?.includes('aborted')) {
+    // Expected client / proxy disconnect during video streaming range requests
+    return;
+  }
+  console.error('[server] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[server] Unhandled Rejection:', reason);
+});
+
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
@@ -519,8 +532,11 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
-// 5. Stream Movie (HTTP 206 Partial Content / Range Requests)
-app.get('/api/movies/stream/:id', async (req, res) => {
+// 5. Stream Movie (HTTP 206 Partial Content / Range Requests / HEAD Probe)
+app.all('/api/movies/stream/:id', async (req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
   try {
     const movieId = req.params.id;
     const movie = await storage.getMovieById(movieId);
