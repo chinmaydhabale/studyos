@@ -23,25 +23,13 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
     socket.emit('video:state', currentState);
   });
 
-  // Client changes video URL (e.g. pastes a YouTube class link or loads an uploaded movie)
-  socket.on('video:change_url', (data: {
-    roomId: string;
-    videoUrl: string;
-    videoId: string;
-    userName: string;
-    mediaType?: 'youtube' | 'movie';
-    title?: string;
-    duration?: number;
-  }) => {
+  // Client changes video URL (e.g. pastes a YouTube class link)
+  socket.on('video:change_url', (data: { roomId: string; videoUrl: string; videoId: string; userName: string }) => {
     const roomId = cleanRoomId(data.roomId);
     if (!socket.rooms.has(`video_${roomId}`)) return;
-    const mediaType = data.mediaType || (data.videoUrl.includes('youtube.com') || data.videoUrl.includes('youtu.be') ? 'youtube' : 'movie');
     const updated = storage.updateVideoState(roomId, {
       videoUrl: data.videoUrl,
       videoId: data.videoId,
-      mediaType,
-      title: data.title || (mediaType === 'movie' ? 'Watch Party Movie' : 'YouTube Video'),
-      duration: data.duration || 0,
       currentTime: 0,
       isPlaying: false,
       updatedBy: data.userName
@@ -49,8 +37,8 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
 
     io.to(`video_${roomId}`).emit('video:state', updated);
     io.to(roomId).emit('notification:toast', {
-      title: mediaType === 'movie' ? '🎬 Watch Party Movie Loaded' : 'New Class Video Loaded',
-      message: `${data.userName} loaded ${data.title ? `"${data.title}"` : (mediaType === 'movie' ? 'a movie for watch party' : 'a YouTube video')}!`,
+      title: 'New Class Video Loaded',
+      message: `${data.userName} loaded a new YouTube lecture!`,
       type: 'info'
     });
   });
@@ -117,25 +105,4 @@ export function setupVideoSyncSocket(io: Server, socket: Socket) {
     const currentState = storage.getVideoState(roomId);
     socket.emit('video:sync_response', currentState);
   });
-
-  // Floating Reaction Broadcast (🍿, ❤️, 😂, 🔥, 😱)
-  socket.on('movie:reaction', (data: { roomId: string; emoji: string; userName?: string }) => {
-    const roomId = cleanRoomId(data.roomId);
-    if (!socket.rooms.has(`video_${roomId}`)) return;
-    io.to(`video_${roomId}`).emit('movie:reaction', {
-      emoji: data.emoji || '🍿',
-      userName: data.userName || 'Friend',
-      id: `react-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: Date.now()
-    });
-  });
-
-  // Host lock toggle
-  socket.on('movie:lock_toggle', (data: { roomId: string; isHostLocked: boolean }) => {
-    const roomId = cleanRoomId(data.roomId);
-    if (!socket.rooms.has(`video_${roomId}`)) return;
-    const updated = storage.updateVideoState(roomId, { isHostLocked: data.isHostLocked });
-    io.to(`video_${roomId}`).emit('video:state', updated);
-  });
 }
-

@@ -41,32 +41,11 @@ export interface VideoSyncState {
   roomId: string;
   videoUrl: string;
   videoId: string;
-  mediaType?: 'youtube' | 'movie';
-  title?: string;
-  duration?: number;
   isPlaying: boolean;
   currentTime: number;
   playbackRate: number;
   lastUpdated: number;
   updatedBy: string;
-  isHostLocked?: boolean;
-}
-
-export interface MovieRecord {
-  id: string;
-  roomId: string;
-  title: string;
-  filename: string;
-  originalName: string;
-  fileSize: number;
-  fileSizeFormatted: string;
-  mimeType: string;
-  durationSeconds?: number;
-  durationFormatted?: string;
-  uploadedBy: string;
-  uploaderId: string;
-  createdAt: string;
-  streamUrl: string;
 }
 
 export interface ChatMessage {

@@ -142,26 +142,3 @@
   user-select: text;
   -webkit-user-select: text;
 }
-
-@keyframes float-reaction {
-  0% {
-    opacity: 0;
-    transform: translateY(0) scale(0.6);
-  }
-  15% {
-    opacity: 1;
-    transform: translateY(-20px) scale(1.1);
-  }
-  80% {
-    opacity: 1;
-    transform: translateY(-160px) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-220px) scale(0.8);
-  }
-}
-
-.animate-float-reaction {
-  animation: float-reaction 2.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}

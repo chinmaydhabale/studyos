@@ -1,29 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Play,
   Pause,
   RotateCcw,
   RotateCw,
+  FastForward,
   Link,
   Users,
   MessageSquare,
   Volume2,
   VolumeX,
+  Maximize2,
   CheckCircle2,
   HelpCircle,
-  Sparkles,
-  Film,
-  Lock,
-  Unlock,
-  Tv,
-  Maximize,
-  Minimize,
-  AlertCircle
+  Sparkles
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { VoiceChatPanel } from '../voice-chat/VoiceChatPanel.js';
-import { MovieUploadModal } from './MovieUploadModal.js';
-import { MovieReactions } from './MovieReactions.js';
 
 // YouTube IFrame Player Window global declaration
 declare global {
@@ -45,10 +38,8 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     sendVideoPause,
     sendVideoSeek,
     sendVideoRate,
-    toggleHostLock,
     peers,
     currentUser,
-    roomId,
     addToast
   } = useSocket();
 
@@ -62,27 +53,20 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const [isMuted, setIsMuted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing'>('synced');
   const [isChatOpen, setIsChatOpen] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const playerRef = useRef<any>(null); // YouTube player ref
-  const movieVideoRef = useRef<HTMLVideoElement | null>(null); // HTML5 Video player ref
-  const stageContainerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const isInternalActionRef = useRef<boolean>(false);
+  // Always-current mirrors so the mount-time player init effect never reads stale state
+  const videoStateRef = useRef(videoState);
+  const volumeRef = useRef(volume);
+  videoStateRef.current = videoState;
+  volumeRef.current = volume;
+  // Tracks the last rate we applied locally so remote echoes don't re-apply / loop
   const lastAppliedRateRef = useRef<number>(1);
 
-  // Check if current video source is an uploaded movie or direct stream
-  const isMovie = Boolean(
-    videoState.mediaType === 'movie' ||
-    (videoState.videoUrl && (
-      videoState.videoUrl.includes('/api/movies/stream') ||
-      videoState.videoUrl.endsWith('.mp4') ||
-      videoState.videoUrl.endsWith('.webm') ||
-      videoState.videoUrl.endsWith('.mkv')
-    ))
-  );
-
-  // Extract YouTube ID from full URL
+  // Helper to extract YouTube ID from full URL. Returns '' for anything unparseable
+  // so callers can warn the user instead of silently loading an unrelated lecture.
   const extractVideoId = (url: string): string => {
     if (!url) return '';
     const trimmed = url.trim();
@@ -91,12 +75,8 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     return /^[\w-]{11}$/.test(trimmed) ? trimmed : '';
   };
 
-  // ==========================================
-  // 1. YouTube Player Engine Initialization
-  // ==========================================
+  // Load YouTube IFrame API script
   useEffect(() => {
-    if (isMovie) return; // Do not initialize YouTube if playing a movie
-
     if (!window.YT) {
       const tag = document.createElement('script');
       tag.src = 'https://www.youtube.com/iframe_api';
@@ -108,14 +88,18 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       const el = document.getElementById('yt-player-frame');
       if (!el) return;
       if (window.YT && window.YT.Player && !playerRef.current) {
+        // Read the freshest state at init time instead of the mount-time closure
+        const latest = videoStateRef.current;
         try {
           playerRef.current = new window.YT.Player('yt-player-frame', {
+            // The API replaces our div with an iframe and drops its className,
+            // so size the iframe explicitly to fill the stage.
             width: '100%',
             height: '100%',
-            videoId: videoState.videoId || 'k7YS_P_t3uA',
+            videoId: latest.videoId || 'k7YS_P_t3uA',
             playerVars: {
               autoplay: 0,
-              controls: 0,
+              controls: 0, // Custom synchronized controls
               rel: 0,
               modestbranding: 1,
               disablekb: 1,
@@ -125,15 +109,18 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
               onReady: (event: any) => {
                 setPlayerReady(true);
                 setDuration(event.target.getDuration());
-                event.target.setVolume(volume);
-                if (videoState.currentTime > 0) {
-                  event.target.seekTo(videoState.currentTime, true);
+                event.target.setVolume(volumeRef.current);
+                // Re-read the latest state here too — the room may have moved on
+                // between mount and the player actually becoming ready.
+                const ready = videoStateRef.current;
+                if (ready.currentTime > 0) {
+                  event.target.seekTo(ready.currentTime, true);
                 }
-                if (videoState.playbackRate && videoState.playbackRate !== 1) {
-                  event.target.setPlaybackRate(videoState.playbackRate);
-                  lastAppliedRateRef.current = videoState.playbackRate;
+                if (ready.playbackRate && ready.playbackRate !== 1) {
+                  event.target.setPlaybackRate(ready.playbackRate);
+                  lastAppliedRateRef.current = ready.playbackRate;
                 }
-                if (videoState.isPlaying) {
+                if (ready.isPlaying) {
                   event.target.playVideo();
                 }
               },
@@ -170,11 +157,11 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       playerRef.current = null;
       setPlayerReady(false);
     };
-  }, [isMovie]);
+  }, []);
 
-  // Update YouTube video ID if room videoId changes while in YouTube mode
+  // Update video ID if room videoId changes
   useEffect(() => {
-    if (!isMovie && playerReady && playerRef.current && videoState.videoId) {
+    if (playerReady && playerRef.current && videoState.videoId) {
       const currentVideoUrl = playerRef.current.getVideoUrl?.() || '';
       if (!currentVideoUrl.includes(videoState.videoId)) {
         if (videoState.isPlaying) {
@@ -184,117 +171,56 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         }
       }
     }
-  }, [videoState.videoId, playerReady, isMovie, videoState.isPlaying]);
+  }, [videoState.videoId, playerReady, videoState.isPlaying]);
 
-  // ==========================================
-  // 2. HTML5 Video Player (Movie Engine) Handlers
-  // ==========================================
+  // Synchronize remote play / pause / seek from peers
   useEffect(() => {
-    if (!isMovie || !movieVideoRef.current) return;
-    const vid = movieVideoRef.current;
+    if (!playerReady || !playerRef.current) return;
 
-    const onLoadedMetadata = () => {
-      setDuration(vid.duration || 0);
-      setPlayerReady(true);
-      if (videoState.currentTime > 0) {
-        vid.currentTime = videoState.currentTime;
-      }
-      if (videoState.playbackRate) {
-        vid.playbackRate = videoState.playbackRate;
-      }
-      if (videoState.isPlaying) {
-        vid.play().catch(() => {});
-      }
-    };
-
-    const onPlay = () => setLocalIsPlaying(true);
-    const onPause = () => setLocalIsPlaying(false);
-    const onTimeUpdate = () => setCurrentTime(vid.currentTime);
-
-    vid.addEventListener('loadedmetadata', onLoadedMetadata);
-    vid.addEventListener('play', onPlay);
-    vid.addEventListener('pause', onPause);
-    vid.addEventListener('timeupdate', onTimeUpdate);
-
-    return () => {
-      vid.removeEventListener('loadedmetadata', onLoadedMetadata);
-      vid.removeEventListener('play', onPlay);
-      vid.removeEventListener('pause', onPause);
-      vid.removeEventListener('timeupdate', onTimeUpdate);
-    };
-  }, [isMovie, videoState.videoUrl]);
-
-  // ==========================================
-  // 3. Remote Room Play / Pause / Seek Synchronization
-  // ==========================================
-  useEffect(() => {
+    // Only swallow the echo of our own action. A remote update that arrives right
+    // after a local one must still be applied, so we clear the flag and continue
+    // instead of returning early.
     if (isInternalActionRef.current) {
       isInternalActionRef.current = false;
     }
 
     try {
-      if (isMovie) {
-        // HTML5 Video synchronization
-        if (!movieVideoRef.current) return;
-        const vid = movieVideoRef.current;
-        const drift = Math.abs(vid.currentTime - videoState.currentTime);
+      const currentLocalTime = playerRef.current.getCurrentTime?.() || 0;
+      const drift = Math.abs(currentLocalTime - videoState.currentTime);
 
-        // Anti-Drift: seek if drift > 1.2 seconds
-        if (drift > 1.2) {
-          setSyncStatus('syncing');
-          vid.currentTime = videoState.currentTime;
-          setTimeout(() => setSyncStatus('synced'), 800);
-        }
+      // If drift is significant (>1.5s), seek to match partner
+      if (drift > 1.5) {
+        setSyncStatus('syncing');
+        playerRef.current.seekTo(videoState.currentTime, true);
+        setTimeout(() => setSyncStatus('synced'), 800);
+      }
 
-        if (videoState.isPlaying && vid.paused) {
-          vid.play().catch(() => {});
-        } else if (!videoState.isPlaying && !vid.paused) {
-          vid.pause();
-        }
-      } else {
-        // YouTube synchronization
-        if (!playerReady || !playerRef.current) return;
-        const currentLocalTime = playerRef.current.getCurrentTime?.() || 0;
-        const drift = Math.abs(currentLocalTime - videoState.currentTime);
-
-        if (drift > 1.5) {
-          setSyncStatus('syncing');
-          playerRef.current.seekTo(videoState.currentTime, true);
-          setTimeout(() => setSyncStatus('synced'), 800);
-        }
-
-        if (videoState.isPlaying && playerRef.current.getPlayerState?.() !== window.YT.PlayerState.PLAYING) {
-          playerRef.current.playVideo();
-        } else if (!videoState.isPlaying && playerRef.current.getPlayerState?.() === window.YT.PlayerState.PLAYING) {
-          playerRef.current.pauseVideo();
-        }
+      if (videoState.isPlaying && playerRef.current.getPlayerState?.() !== window.YT.PlayerState.PLAYING) {
+        playerRef.current.playVideo();
+      } else if (!videoState.isPlaying && playerRef.current.getPlayerState?.() === window.YT.PlayerState.PLAYING) {
+        playerRef.current.pauseVideo();
       }
     } catch (e) {
       console.warn('Sync error:', e);
     }
-  }, [videoState.isPlaying, videoState.currentTime, videoState.lastUpdated, playerReady, isMovie]);
+  }, [videoState.isPlaying, videoState.currentTime, videoState.lastUpdated, playerReady]);
 
-  // Apply remote playback rate
+  // Apply remote playback-rate changes to the local player
   useEffect(() => {
+    if (!playerReady || !playerRef.current) return;
     const rate = videoState.playbackRate;
     if (!rate || rate === lastAppliedRateRef.current) return;
-
-    if (isMovie && movieVideoRef.current) {
-      movieVideoRef.current.playbackRate = rate;
+    try {
+      playerRef.current.setPlaybackRate(rate);
       lastAppliedRateRef.current = rate;
       setPlaybackRate(rate);
-    } else if (!isMovie && playerReady && playerRef.current) {
-      try {
-        playerRef.current.setPlaybackRate(rate);
-        lastAppliedRateRef.current = rate;
-        setPlaybackRate(rate);
-      } catch (e) {}
+    } catch (e) {
+      console.warn('Rate sync error:', e);
     }
-  }, [videoState.playbackRate, playerReady, isMovie]);
+  }, [videoState.playbackRate, playerReady]);
 
-  // Periodic YouTube time tracker
+  // Periodic time tracker for slider & time display
   useEffect(() => {
-    if (isMovie) return;
     const interval = setInterval(() => {
       if (playerReady && playerRef.current && playerRef.current.getCurrentTime) {
         try {
@@ -304,306 +230,178 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
       }
     }, 500);
     return () => clearInterval(interval);
-  }, [playerReady, isMovie]);
+  }, [playerReady]);
 
-  // ==========================================
-  // 4. Unified Controls Handlers
-  // ==========================================
+  // Controls Handlers
   const handleTogglePlay = () => {
-    if (videoState.isHostLocked && currentUser.id !== 'admin' && videoState.updatedBy && videoState.updatedBy !== currentUser.name) {
-      addToast('Host Locked', 'Controls are currently locked by the host.', 'warning');
-      return;
-    }
-
+    if (!playerReady || !playerRef.current) return;
     isInternalActionRef.current = true;
 
-    if (isMovie && movieVideoRef.current) {
-      const vid = movieVideoRef.current;
-      if (!vid.paused) {
-        vid.pause();
-        sendVideoPause(vid.currentTime);
-        addToast('Movie Paused', `You paused playback at ${formatTime(vid.currentTime)} for everyone.`, 'info');
-      } else {
-        vid.play().catch(() => {});
-        sendVideoPlay(vid.currentTime);
-        addToast('Movie Playing', `You started synchronized playback for everyone.`, 'info');
-      }
-    } else if (!isMovie && playerReady && playerRef.current) {
-      if (localIsPlaying) {
-        playerRef.current.pauseVideo();
-        sendVideoPause(currentTime);
-        addToast('Video Paused', `You paused the video for everyone at ${formatTime(currentTime)}.`, 'info');
-      } else {
-        playerRef.current.playVideo();
-        sendVideoPlay(currentTime);
-        addToast('Video Playing', `You started synchronized playback for everyone.`, 'info');
-      }
+    if (localIsPlaying) {
+      playerRef.current.pauseVideo();
+      sendVideoPause(currentTime);
+      addToast('Video Paused', `You paused the video for everyone at ${formatTime(currentTime)}.`, 'info');
+    } else {
+      playerRef.current.playVideo();
+      sendVideoPlay(currentTime);
+      addToast('Video Playing', `You started synchronized playback for everyone.`, 'info');
     }
   };
 
   const handleSeekDelta = (deltaSeconds: number) => {
+    if (!playerReady || !playerRef.current) return;
     isInternalActionRef.current = true;
+    // Only clamp to the end when the duration is actually known; otherwise a
+    // forward seek while duration is still 0 would snap back to the start.
     const upperBound = duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
     const newTime = Math.max(0, Math.min(upperBound, currentTime + deltaSeconds));
-
-    if (isMovie && movieVideoRef.current) {
-      movieVideoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-      sendVideoSeek(newTime);
-    } else if (!isMovie && playerReady && playerRef.current) {
-      playerRef.current.seekTo(newTime, true);
-      setCurrentTime(newTime);
-      sendVideoSeek(newTime);
-    }
-    addToast('Jumped Timeline', `${deltaSeconds > 0 ? '+10s' : '-10s'} jumped for all members.`, 'info');
+    playerRef.current.seekTo(newTime, true);
+    setCurrentTime(newTime);
+    sendVideoSeek(newTime);
+    addToast('Jumped Video', `${deltaSeconds > 0 ? '+10s' : '-10s'} jumped for all students.`, 'info');
   };
 
   const handleSliderSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
+    if (!playerReady || !playerRef.current) return;
     isInternalActionRef.current = true;
+    playerRef.current.seekTo(newTime, true);
     setCurrentTime(newTime);
-
-    if (isMovie && movieVideoRef.current) {
-      movieVideoRef.current.currentTime = newTime;
-      sendVideoSeek(newTime);
-    } else if (!isMovie && playerReady && playerRef.current) {
-      playerRef.current.seekTo(newTime, true);
-      sendVideoSeek(newTime);
-    }
+    sendVideoSeek(newTime);
   };
 
-  const handleRateChange = (rate: number) => {
-    if (isMovie && movieVideoRef.current) {
-      movieVideoRef.current.playbackRate = rate;
-      setPlaybackRate(rate);
-      lastAppliedRateRef.current = rate;
-      sendVideoRate(rate);
-    } else if (!isMovie && playerReady && playerRef.current) {
-      playerRef.current.setPlaybackRate(rate);
-      setPlaybackRate(rate);
-      lastAppliedRateRef.current = rate;
-      sendVideoRate(rate);
-    }
-  };
-
-  const handleToggleMute = () => {
-    if (isMovie && movieVideoRef.current) {
-      const vid = movieVideoRef.current;
-      vid.muted = !isMuted;
-      setIsMuted(!isMuted);
-    } else if (!isMovie && playerRef.current) {
-      if (isMuted) {
-        playerRef.current.unMute();
-        setIsMuted(false);
-      } else {
-        playerRef.current.mute();
-        setIsMuted(true);
-      }
-    }
-  };
-
-  const handleToggleFullscreen = () => {
-    if (!stageContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      stageContainerRef.current.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
-    }
-  };
-
-  const handleLoadYouTubeUrl = (url: string) => {
+  const handleLoadNewVideo = (url: string) => {
     const targetUrl = url || inputUrl;
     if (!targetUrl.trim()) return;
     const vid = extractVideoId(targetUrl);
     if (!vid) {
-      addToast('Invalid YouTube Link', 'Please paste a valid YouTube video URL.', 'warning');
+      // Keep the current video and warn instead of loading an unrelated lecture
+      addToast('Invalid YouTube Link', 'That link could not be parsed. Please paste a valid YouTube video URL.', 'warning');
       return;
     }
-    sendVideoChange(targetUrl, vid, { mediaType: 'youtube', title: 'YouTube Lecture' });
+    sendVideoChange(targetUrl, vid);
     setInputUrl('');
-    addToast('Video Loaded', 'YouTube video loaded for the room!', 'success');
+    addToast('Class Loaded', 'New YouTube lecture loaded for both students!', 'success');
   };
 
-  const handleSelectMovieFromModal = (selected: { videoUrl: string; videoId: string; title: string; mediaType: 'movie' }) => {
-    sendVideoChange(selected.videoUrl, selected.videoId, {
-      mediaType: 'movie',
-      title: selected.title
-    });
-    addToast('🎬 Movie Loaded', `"${selected.title}" is now playing in the watch party!`, 'success');
+  const handleRateChange = (rate: number) => {
+    if (!playerReady || !playerRef.current) return;
+    playerRef.current.setPlaybackRate(rate);
+    setPlaybackRate(rate);
+    lastAppliedRateRef.current = rate;
+    sendVideoRate(rate);
   };
 
   const formatTime = (secs: number) => {
-    if (isNaN(secs)) return '00:00';
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
+    const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  // Popular Co-Study Lectures presets
+  const presets = [
+    { title: 'Thermodynamics Masterclass', url: 'https://www.youtube.com/watch?v=k7YS_P_t3uA', subject: 'Physics' },
+    { title: 'Current Affairs & Editorial Analysis', url: 'https://www.youtube.com/watch?v=7X8II6J-6mU', subject: 'Current Affairs' },
+    { title: 'Calculus: Integration by Parts', url: 'https://www.youtube.com/watch?v=2I-_SV8cwsw', subject: 'Math' },
+    { title: 'Organic Chemistry Mechanisms', url: 'https://www.youtube.com/watch?v=8m6fm78R45k', subject: 'Chemistry' }
+  ];
 
   return (
     <div className="w-full max-w-7xl mx-auto p-2 sm:p-4 flex flex-col lg:flex-row gap-3 sm:gap-4 h-auto lg:h-[calc(100vh-4.5rem)]">
       
-      {/* Left: Synchronized Video & Movie Theater Stage */}
+      {/* Left: Synchronized Video Player Stage */}
       <div className="flex-1 flex flex-col bg-slate-900/90 rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
         
-        {/* Top Header & Watch Party Toolbar */}
-        <div className="p-3 border-b border-white/10 bg-slate-950/80 flex flex-wrap items-center justify-between gap-2">
+        {/* Top Video URL Bar & Peer Status */}
+        <div className="p-3 border-b border-white/10 bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
           
-          {/* Movie / YouTube Action Controls */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Watch Party Movie Upload / Library Button */}
-            <button
-              onClick={() => setIsUploadModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-purple-500/25 flex items-center gap-2 transition-all"
-            >
-              <Film className="w-4 h-4 text-purple-200" />
-              <span>Movie Library / Upload</span>
-            </button>
-
-            {/* Current Media Badge */}
-            <div className={`px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1.5 border ${
-              isMovie
-                ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
-                : 'bg-red-500/10 border-red-500/20 text-red-300'
-            }`}>
-              {isMovie ? <Film className="w-3.5 h-3.5 text-purple-400" /> : <Tv className="w-3.5 h-3.5 text-red-400" />}
-              <span className="truncate max-w-[180px] sm:max-w-[240px]">
-                {videoState.title || (isMovie ? 'Watch Party Movie' : 'YouTube Video')}
-              </span>
-            </div>
-          </div>
-
-          {/* Quick YouTube URL Loader */}
-          <div className="flex-1 min-w-[220px] max-w-md flex items-center gap-1.5">
+          {/* URL Input */}
+          <div className="flex-1 min-w-0 sm:min-w-[280px] flex items-center gap-2">
             <div className="relative flex-1">
-              <Link className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <Link className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={inputUrl}
                 onChange={(e) => setInputUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLoadYouTubeUrl(inputUrl)}
-                placeholder="Or paste YouTube lecture URL..."
-                className="w-full pl-8 pr-2.5 py-1 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                onKeyDown={(e) => e.key === 'Enter' && handleLoadNewVideo(inputUrl)}
+                placeholder="Paste any YouTube class/lecture link..."
+                className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
               />
             </div>
             <button
-              onClick={() => handleLoadYouTubeUrl(inputUrl)}
-              className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium transition-colors whitespace-nowrap border border-white/10"
+              onClick={() => handleLoadNewVideo(inputUrl)}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors whitespace-nowrap shadow-sm shadow-indigo-500/20"
             >
-              Load YT
+              Load Class
             </button>
           </div>
 
-          {/* Presence, Sync Status & Chat Toggle */}
+          {/* Sync Status Badge & Partner Presence */}
           <div className="flex items-center gap-2">
             {syncStatus === 'syncing' ? (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
                 <RotateCw className="w-3.5 h-3.5 animate-spin" />
-                <span className="font-semibold hidden sm:inline">Syncing…</span>
+                <span className="font-semibold">Resyncing…</span>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span className="font-semibold hidden sm:inline">Synced</span>
+                <span className="font-semibold">Synced</span>
               </div>
             )}
-
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs">
               <Users className="w-3.5 h-3.5" />
-              <span className="font-semibold">{peers.length + 1} Watching</span>
+              <span className="font-semibold">{peers.length + 1} Studying Together</span>
             </div>
 
-            {/* Host Lock Control */}
-            <button
-              onClick={() => toggleHostLock(!videoState.isHostLocked)}
-              className={`p-1.5 rounded-xl border text-xs transition-colors ${
-                videoState.isHostLocked
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                  : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
-              }`}
-              title={videoState.isHostLocked ? 'Host Lock: Enabled (Only host can pause/seek)' : 'Host Lock: Disabled (Anyone can control)'}
-            >
-              {videoState.isHostLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-            </button>
+            {/* Quick Presets Dropdown */}
+            <div className="hidden xl:flex items-center gap-1">
+              {presets.slice(0, 2).map((p, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleLoadNewVideo(p.url)}
+                  className="px-2 py-1 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-[140px]"
+                  title={p.title}
+                >
+                  ⚡ {p.subject}
+                </button>
+              ))}
+            </div>
 
-            {/* Toggle Chat Box */}
+            {/* Toggle Chatbox Hide / Show */}
             <button
               onClick={() => setIsChatOpen(!isChatOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
                 isChatOpen
-                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
-                  : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white'
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/25'
+                  : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white hover:border-white/20'
               }`}
+              title={isChatOpen ? 'Hide Chat (Full Screen Video)' : 'Show Chat'}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{isChatOpen ? 'Chat' : 'Chat'}</span>
+              <span className="hidden sm:inline">{isChatOpen ? 'Hide Chat' : 'Show Chat'}</span>
             </button>
           </div>
 
         </div>
 
-        {/* Video Stage Canvas (Unified Engine Container) */}
-        <div ref={stageContainerRef} className="relative flex-1 bg-black flex items-center justify-center min-h-[340px] overflow-hidden group">
-          
-          {/* Dual-Engine Display */}
-          {isMovie ? (
-            (videoState.videoUrl?.toLowerCase().includes('.mkv') || videoState.title?.toLowerCase().endsWith('.mkv')) ? (
-              <div className="flex flex-col items-center justify-center p-8 text-center max-w-md bg-slate-900/90 border border-amber-500/30 rounded-2xl m-4">
-                <AlertCircle className="w-12 h-12 text-amber-400 mb-3" />
-                <h3 className="text-base font-bold text-white mb-1">MKV Video Format Not Supported</h3>
-                <p className="text-xs text-slate-300 mb-4 leading-relaxed">
-                  Web browsers (Chrome, Edge, Safari, Mobile) cannot decode MKV video files directly. Watch party ke liye movie ko <strong className="text-amber-300">MP4 (H.264)</strong> ya <strong className="text-amber-300">WebM</strong> format me convert karke upload karein.
-                </p>
-                <button
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-all shadow-lg"
-                >
-                  Upload MP4 File
-                </button>
-              </div>
-            ) : (
-              <video
-                ref={movieVideoRef}
-                src={videoState.videoUrl}
-                className="w-full h-full object-contain aspect-video pointer-events-auto"
-                playsInline
-                preload="metadata"
-                onClick={handleTogglePlay}
-                onError={(e) => {
-                  console.warn('[SyncTheater] Video load error:', e);
-                  addToast(
-                    'Format Notice',
-                    'Browsers require MP4 (H.264/AAC) or WebM format.',
-                    'warning'
-                  );
-                }}
-              />
-            )
-          ) : (
-            <div id="yt-player-frame" className="w-full h-full aspect-video pointer-events-auto" />
-          )}
+        {/* Video Frame Canvas Area */}
+        <div ref={containerRef} className="relative flex-1 bg-black flex items-center justify-center min-h-[300px]">
+          <div id="yt-player-frame" className="w-full h-full aspect-video pointer-events-auto" />
 
-          {/* Floating Live Emoji Reactions Component */}
-          <MovieReactions />
-
-          {/* Sync Drift Notification Banner */}
+          {/* Sync Drift Overlay notification */}
           {syncStatus === 'syncing' && (
-            <div className="absolute top-4 left-4 z-30 px-3 py-1.5 rounded-xl bg-purple-600/90 text-white text-xs font-semibold backdrop-blur-md animate-pulse flex items-center gap-2 shadow-lg">
+            <div className="absolute top-4 left-4 z-20 px-3 py-1.5 rounded-xl bg-indigo-600/90 text-white text-xs font-semibold backdrop-blur-md animate-pulse flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-cyan-300" />
-              <span>Resyncing playback with study partner...</span>
+              <span>Resyncing playback with partner...</span>
             </div>
           )}
 
-          {/* Ask AI Doubt Button at Current Timestamp */}
+          {/* "Ask AI Doubt at Current Timestamp" Quick Overlay button */}
           <button
             onClick={() => onAskAiDoubtAtTimestamp?.(currentTime)}
-            className="absolute top-4 right-4 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-indigo-600 text-white text-xs font-medium border border-white/20 backdrop-blur-md shadow-lg transition-all"
-            title="Ask AI Teacher about this timestamp"
+            className="absolute top-4 right-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-indigo-600 text-white text-xs font-medium border border-white/20 backdrop-blur-md shadow-lg transition-all"
+            title="Ask AI Teacher about the concept right now"
           >
             <HelpCircle className="w-3.5 h-3.5 text-cyan-300" />
             <span>Ask AI at {formatTime(currentTime)}</span>
@@ -613,26 +411,25 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         {/* Synchronized Custom Control Bar */}
         <div className="p-3 bg-slate-950 border-t border-white/10 flex flex-col gap-2">
           
-          {/* Progress Timeline Slider */}
+          {/* Progress Slider */}
           <div className="flex items-center gap-3">
-            <span className="text-xs font-mono font-medium text-purple-300 min-w-[45px]">
+            <span className="text-xs font-mono font-medium text-indigo-300 min-w-[42px]">
               {formatTime(currentTime)}
             </span>
             <input
               type="range"
               min="0"
               max={duration || 100}
-              step="0.5"
               value={currentTime}
               onChange={handleSliderSeek}
-              className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400"
+              className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
             />
-            <span className="text-xs font-mono text-slate-400 min-w-[45px]">
+            <span className="text-xs font-mono text-slate-400 min-w-[42px]">
               {formatTime(duration)}
             </span>
           </div>
 
-          {/* Play/Pause, Seek Buttons, Speed, Volume, Fullscreen */}
+          {/* Play/Pause, Seek buttons, Speed, Volume */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               
@@ -648,18 +445,18 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
               {/* Master Play / Pause */}
               <button
                 onClick={handleTogglePlay}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-500/25 transition-all"
-                title={localIsPlaying ? 'Pause for everyone' : 'Play for everyone'}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-500/25 transition-all"
+                title={localIsPlaying ? 'Pause for both' : 'Play for both'}
               >
                 {localIsPlaying ? (
                   <>
                     <Pause className="w-4 h-4 fill-white" />
-                    <span>Pause</span>
+                    <span>Pause Class</span>
                   </>
                 ) : (
                   <>
                     <Play className="w-4 h-4 fill-white" />
-                    <span>Play Together</span>
+                    <span>Play Class</span>
                   </>
                 )}
               </button>
@@ -674,22 +471,22 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
               </button>
 
               <span className="text-[11px] text-slate-400 hidden sm:inline ml-2">
-                Last updated by: <span className="text-purple-300 font-medium">{videoState.updatedBy || 'You'}</span>
+                Last updated by: <span className="text-cyan-300 font-medium">{videoState.updatedBy || 'You'}</span>
               </span>
             </div>
 
-            {/* Playback speed, Volume, Fullscreen */}
+            {/* Playback speed & Volume */}
             <div className="flex items-center gap-3">
               
               {/* Speed Switcher */}
               <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl p-0.5 text-xs">
-                {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                {[1, 1.25, 1.5, 2].map((rate) => (
                   <button
                     key={rate}
                     onClick={() => handleRateChange(rate)}
                     className={`px-2 py-0.5 rounded-lg font-medium transition-colors ${
                       playbackRate === rate
-                        ? 'bg-purple-600 text-white'
+                        ? 'bg-indigo-600 text-white'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -698,22 +495,23 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
                 ))}
               </div>
 
-              {/* Volume & Mute */}
+              {/* Volume */}
               <button
-                onClick={handleToggleMute}
+                onClick={() => {
+                  if (playerRef.current) {
+                    if (isMuted) {
+                      playerRef.current.unMute();
+                      setIsMuted(false);
+                    } else {
+                      playerRef.current.mute();
+                      setIsMuted(true);
+                    }
+                  }
+                }}
                 className="p-2 text-slate-400 hover:text-white transition-colors"
                 title={isMuted ? 'Unmute Player' : 'Mute Player'}
               >
                 {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
-              </button>
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={handleToggleFullscreen}
-                className="p-2 text-slate-400 hover:text-white transition-colors"
-                title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Theater'}
-              >
-                {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
               </button>
 
             </div>
@@ -724,7 +522,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
 
       </div>
 
-      {/* Right: Real-time Live Voice & Watch Party Chat Panel */}
+      {/* Right: Real-time Live Voice & In-Lecture Doubt Chat Panel */}
       {isChatOpen && (
         <div className="w-full lg:w-96 flex flex-col h-[480px] lg:h-full animate-in slide-in-from-right duration-200">
           <VoiceChatPanel
@@ -735,25 +533,17 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         </div>
       )}
 
-      {/* Floating Chat Re-open Button */}
+      {/* Floating Summon Chat Button when collapsed */}
       {!isChatOpen && (
         <button
           onClick={() => setIsChatOpen(true)}
-          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-2xl shadow-purple-600/50 border border-purple-400/30 hover:scale-105 active:scale-95 transition-all"
+          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-2xl shadow-indigo-600/50 border border-indigo-400/30 hover:scale-105 active:scale-95 transition-all"
+          title="Open Live Chat & Doubts"
         >
-          <MessageSquare className="w-4 h-4 text-purple-200" />
-          <span>Live Watch Chat</span>
+          <MessageSquare className="w-4 h-4 text-cyan-300" />
+          <span>Live Discussion</span>
         </button>
       )}
-
-      {/* Movie Upload & Watchlist Modal */}
-      <MovieUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onSelectMovie={handleSelectMovieFromModal}
-        roomId={roomId}
-        currentUser={currentUser}
-      />
 
     </div>
   );
