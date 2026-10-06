@@ -31,9 +31,24 @@ export interface ArithmeticQuestion {
   timeSpentMs?: number;
 }
 
+export type VedicCategory =
+  | 'square5'
+  | 'multiply11'
+  | 'base100'
+  | 'multiply25_50'
+  | 'fractionPercent'
+  | 'crossMultiply'
+  | 'sumTenSameTens'
+  | 'squareNear50'
+  | 'base50'
+  | 'seriesOf9'
+  | 'cubeRoot'
+  | 'squareRoot'
+  | 'divisionHacks';
+
 export interface VedicQuestion {
   id: string;
-  category: 'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent';
+  category: VedicCategory;
   title: string;
   questionText: string;
   answer: number | string;

@@ -1,6 +1,7 @@
 import {
   ArithmeticQuestion,
   VedicQuestion,
+  VedicCategory,
   DetectiveQuestion,
   CompareQuestion,
   TableRecallQuestion,
@@ -320,23 +321,32 @@ export function generateVedicQuestion(
   diff: DifficultyLevel = 'medium',
   category?: string
 ): VedicQuestion {
-  const allCategories: Array<'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent'> = [
+  const allCategories: VedicCategory[] = [
     'square5',
     'multiply11',
     'base100',
     'multiply25_50',
-    'fractionPercent'
+    'fractionPercent',
+    'crossMultiply',
+    'sumTenSameTens',
+    'squareNear50',
+    'base50',
+    'seriesOf9',
+    'cubeRoot',
+    'squareRoot',
+    'divisionHacks'
   ];
   const cat = (category && allCategories.includes(category as any))
-    ? (category as 'square5' | 'multiply11' | 'base100' | 'multiply25_50' | 'fractionPercent')
+    ? (category as VedicCategory)
     : allCategories[Math.floor(Math.random() * allCategories.length)];
 
+  // 1. Squares of Numbers Ending in 5
   if (cat === 'square5') {
     let tens = 2;
-    if (diff === 'easy') tens = randomInt(2, 4);      // 25, 35, 45
-    else if (diff === 'medium') tens = randomInt(5, 9); // 55 to 95
-    else if (diff === 'hard') tens = randomInt(10, 15); // 105 to 155
-    else tens = randomInt(16, 25);                      // 165 to 255 (Extreme)
+    if (diff === 'easy') tens = randomInt(2, 4);        // 25, 35, 45
+    else if (diff === 'medium') tens = randomInt(5, 9);   // 55 to 95
+    else if (diff === 'hard') tens = randomInt(10, 15);   // 105 to 155
+    else tens = randomInt(16, 25);                        // 165 to 255 (Extreme)
 
     const num = tens * 10 + 5;
     const ans = num * num;
@@ -351,21 +361,18 @@ export function generateVedicQuestion(
     };
   }
 
+  // 2. Multiply by 11
   if (cat === 'multiply11') {
     let num = 23;
     if (diff === 'easy') {
-      // Digits whose sum is < 10 (no carry)
       const d1 = randomInt(2, 6);
       const d2 = randomInt(1, 9 - d1);
       num = d1 * 10 + d2;
     } else if (diff === 'medium') {
-      // 2-digit with carry
       num = randomInt(56, 98);
     } else if (diff === 'hard') {
-      // 3-digit multiplication by 11
       num = randomInt(125, 485);
     } else {
-      // Extreme: 4-digit multiplication by 11
       num = randomInt(1124, 6875);
     }
 
@@ -381,6 +388,7 @@ export function generateVedicQuestion(
     };
   }
 
+  // 3. Base 100 Multiplication
   if (cat === 'base100') {
     let maxDev = 5;
     if (diff === 'easy') maxDev = 4;
@@ -422,6 +430,7 @@ export function generateVedicQuestion(
     }
   }
 
+  // 4. Multiply by 25 & 50
   if (cat === 'multiply25_50') {
     const is25 = Math.random() > 0.5;
     let factor = 12;
@@ -457,63 +466,319 @@ export function generateVedicQuestion(
     }
   }
 
-  // Fraction to Percentage
-  const easyFractions = [
-    { frac: '1/2', pct: '50%' },
-    { frac: '1/4', pct: '25%' },
-    { frac: '1/5', pct: '20%' },
-    { frac: '1/10', pct: '10%' }
-  ];
-  const medFractions = [
-    { frac: '1/3', pct: '33.33%' },
-    { frac: '1/6', pct: '16.66%' },
-    { frac: '1/7', pct: '14.28%' },
-    { frac: '1/8', pct: '12.5%' },
-    { frac: '3/8', pct: '37.5%' },
-    { frac: '5/8', pct: '62.5%' },
-    { frac: '2/3', pct: '66.66%' }
-  ];
-  const hardFractions = [
-    { frac: '1/9', pct: '11.11%' },
-    { frac: '1/11', pct: '9.09%' },
-    { frac: '1/12', pct: '8.33%' },
-    { frac: '2/7', pct: '28.57%' },
-    { frac: '3/7', pct: '42.85%' },
-    { frac: '5/6', pct: '83.33%' },
-    { frac: '7/8', pct: '87.5%' }
-  ];
-  const extremeFractions = [
-    { frac: '1/13', pct: '7.69%' },
-    { frac: '1/14', pct: '7.14%' },
-    { frac: '1/15', pct: '6.66%' },
-    { frac: '1/16', pct: '6.25%' },
-    { frac: '7/16', pct: '43.75%' },
-    { frac: '9/16', pct: '56.25%' },
-    { frac: '11/14', pct: '78.57%' }
-  ];
+  // 5. Fraction to Percentage
+  if (cat === 'fractionPercent') {
+    const easyFractions = [
+      { frac: '1/2', pct: '50%' },
+      { frac: '1/4', pct: '25%' },
+      { frac: '1/5', pct: '20%' },
+      { frac: '1/10', pct: '10%' }
+    ];
+    const medFractions = [
+      { frac: '1/3', pct: '33.33%' },
+      { frac: '1/6', pct: '16.66%' },
+      { frac: '1/7', pct: '14.28%' },
+      { frac: '1/8', pct: '12.5%' },
+      { frac: '3/8', pct: '37.5%' },
+      { frac: '5/8', pct: '62.5%' },
+      { frac: '2/3', pct: '66.66%' }
+    ];
+    const hardFractions = [
+      { frac: '1/9', pct: '11.11%' },
+      { frac: '1/11', pct: '9.09%' },
+      { frac: '1/12', pct: '8.33%' },
+      { frac: '2/7', pct: '28.57%' },
+      { frac: '3/7', pct: '42.85%' },
+      { frac: '5/6', pct: '83.33%' },
+      { frac: '7/8', pct: '87.5%' }
+    ];
+    const extremeFractions = [
+      { frac: '1/13', pct: '7.69%' },
+      { frac: '1/14', pct: '7.14%' },
+      { frac: '1/15', pct: '6.66%' },
+      { frac: '1/16', pct: '6.25%' },
+      { frac: '7/16', pct: '43.75%' },
+      { frac: '9/16', pct: '56.25%' },
+      { frac: '11/14', pct: '78.57%' }
+    ];
 
-  let fracPool = medFractions;
-  if (diff === 'easy') fracPool = easyFractions;
-  else if (diff === 'hard') fracPool = hardFractions;
-  else if (diff === 'extreme') fracPool = extremeFractions;
+    let fracPool = medFractions;
+    if (diff === 'easy') fracPool = easyFractions;
+    else if (diff === 'hard') fracPool = hardFractions;
+    else if (diff === 'extreme') fracPool = extremeFractions;
 
-  const item = fracPool[Math.floor(Math.random() * fracPool.length)];
-  const options = [item.pct];
-  const allPcts = [...easyFractions, ...medFractions, ...hardFractions, ...extremeFractions].map(f => f.pct);
+    const item = fracPool[Math.floor(Math.random() * fracPool.length)];
+    const options = [item.pct];
+    const allPcts = [...easyFractions, ...medFractions, ...hardFractions, ...extremeFractions].map(f => f.pct);
+    while (options.length < 4) {
+      const rnd = allPcts[Math.floor(Math.random() * allPcts.length)];
+      if (!options.includes(rnd)) options.push(rnd);
+    }
+    options.sort(() => Math.random() - 0.5);
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'fractionPercent',
+      title: 'Fraction to Percentage Shortcut',
+      questionText: `Convert fraction ${item.frac} to Percentage:`,
+      answer: item.pct,
+      options,
+      trickExplanation: `Fraction ${item.frac} equals exactly ${item.pct}. Memorize standard fraction tables to supercharge your DI speed.`,
+      difficulty: diff
+    };
+  }
+
+  // 6. Urdhva Tiryagbhyam (Cross-Multiplication)
+  if (cat === 'crossMultiply') {
+    let n1 = 23;
+    let n2 = 14;
+
+    if (diff === 'easy') {
+      // Small digits, no carries
+      const t1 = randomInt(1, 2);
+      const u1 = randomInt(1, 3);
+      const t2 = randomInt(1, 3);
+      const u2 = randomInt(1, 3);
+      n1 = t1 * 10 + u1;
+      n2 = t2 * 10 + u2;
+    } else if (diff === 'medium') {
+      n1 = randomInt(24, 58);
+      n2 = randomInt(13, 42);
+    } else if (diff === 'hard') {
+      n1 = randomInt(52, 98);
+      n2 = randomInt(34, 86);
+    } else {
+      // Extreme: 3-digit x 2-digit
+      n1 = randomInt(112, 245);
+      n2 = randomInt(23, 45);
+    }
+
+    const ans = n1 * n2;
+    const u1 = n1 % 10;
+    const t1 = Math.floor(n1 / 10);
+    const u2 = n2 % 10;
+    const t2 = Math.floor(n2 / 10);
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'crossMultiply',
+      title: 'Urdhva Tiryagbhyam (Cross-Multiplication)',
+      questionText: `${n1} × ${n2} = ?`,
+      answer: ans,
+      trickExplanation: `Urdhva Tiryagbhyam (Vertically & Crosswise): 1) Units: ${u1} × ${u2} = ${u1 * u2}. 2) Cross: (${t1} × ${u2}) + (${u1} × ${t2}) = ${t1 * u2 + u1 * t2}. 3) Tens: ${t1} × ${t2} = ${t1 * t2}. With carries ➔ ${ans}.`,
+      difficulty: diff
+    };
+  }
+
+  // 7. Antyayor Dashakepi (Units sum to 10, Tens digits same)
+  if (cat === 'sumTenSameTens') {
+    let tens = 4;
+    if (diff === 'easy') tens = randomInt(2, 4);
+    else if (diff === 'medium') tens = randomInt(5, 9);
+    else if (diff === 'hard') tens = randomInt(10, 15);
+    else tens = randomInt(16, 25);
+
+    const u1 = randomInt(1, 9);
+    const u2 = 10 - u1;
+    const n1 = tens * 10 + u1;
+    const n2 = tens * 10 + u2;
+    const ans = n1 * n2;
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'sumTenSameTens',
+      title: 'Antyayor Dashakepi (Units Sum to 10)',
+      questionText: `${n1} × ${n2} = ?`,
+      answer: ans,
+      trickExplanation: `Antyayor Dashakepi: Since units add to 10 (${u1} + ${u2} = 10) and tens are both ${tens}: Left = ${tens} × (${tens} + 1) = ${tens * (tens + 1)}, Right = ${u1} × ${u2} = ${String(u1 * u2).padStart(2, '0')}. Result ➔ ${ans}.`,
+      difficulty: diff
+    };
+  }
+
+  // 8. Squares of Numbers Near 50 (26 to 75)
+  if (cat === 'squareNear50') {
+    let dev = 4;
+    if (diff === 'easy') {
+      dev = randomInt(1, 6) * (Math.random() > 0.5 ? 1 : -1);
+    } else if (diff === 'medium') {
+      dev = randomInt(7, 14) * (Math.random() > 0.5 ? 1 : -1);
+    } else if (diff === 'hard') {
+      dev = randomInt(15, 20) * (Math.random() > 0.5 ? 1 : -1);
+    } else {
+      dev = randomInt(21, 24) * (Math.random() > 0.5 ? 1 : -1);
+    }
+
+    const num = 50 + dev;
+    const ans = num * num;
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'squareNear50',
+      title: 'Squares of Numbers Near 50',
+      questionText: `${num}² = ?`,
+      answer: ans,
+      trickExplanation: `Base 50 Shortcut: Deviation from 50 is ${dev > 0 ? '+' : ''}${dev}. First part = 25 + (${dev}) = ${25 + dev}. Second part = (${dev})² = ${dev * dev}. With carry if any ➔ ${ans}.`,
+      difficulty: diff
+    };
+  }
+
+  // 9. Base 50 Multiplication
+  if (cat === 'base50') {
+    let d1 = 2;
+    let d2 = 4;
+
+    if (diff === 'easy') {
+      const isBelow = Math.random() > 0.5;
+      d1 = randomInt(1, 4) * (isBelow ? -1 : 1);
+      d2 = randomInt(1, 4) * (isBelow ? -1 : 1);
+    } else if (diff === 'medium') {
+      const isBelow = Math.random() > 0.5;
+      d1 = randomInt(3, 8) * (isBelow ? -1 : 1);
+      d2 = randomInt(3, 8) * (isBelow ? -1 : 1);
+    } else if (diff === 'hard') {
+      d1 = randomInt(5, 12) * (Math.random() > 0.5 ? 1 : -1);
+      d2 = randomInt(5, 12) * (Math.random() > 0.5 ? 1 : -1);
+    } else {
+      // Extreme: mixed signs (one above, one below)
+      d1 = randomInt(4, 15);
+      d2 = -randomInt(4, 15);
+    }
+
+    const n1 = 50 + d1;
+    const n2 = 50 + d2;
+    const ans = n1 * n2;
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'base50',
+      title: 'Base 50 Multiplication',
+      questionText: `${n1} × ${n2} = ?`,
+      answer: ans,
+      trickExplanation: `Working Base 50 (100 ÷ 2): Cross-add deviations: (${n1} + (${d2})) = ${n1 + d2}. Halve it = ${(n1 + d2) / 2}. Product of deviations = ${d1 * d2}. Combine ➔ ${ans}.`,
+      difficulty: diff
+    };
+  }
+
+  // 10. Series of 9s (Ekanyunena Purvena)
+  if (cat === 'seriesOf9') {
+    let num = 43;
+    let multiplier = 99;
+
+    if (diff === 'easy') {
+      num = randomInt(12, 98);
+      multiplier = 99;
+    } else if (diff === 'medium') {
+      num = randomInt(112, 895);
+      multiplier = 999;
+    } else if (diff === 'hard') {
+      num = randomInt(1234, 7895);
+      multiplier = 9999;
+    } else {
+      // Extreme: 2-digit x 999 or 3-digit x 9999
+      num = randomInt(34, 98);
+      multiplier = 999;
+    }
+
+    const ans = num * multiplier;
+    const left = num - 1;
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'seriesOf9',
+      title: 'Multiply by Series of 9s (99, 999)',
+      questionText: `${num} × ${multiplier} = ?`,
+      answer: ans,
+      trickExplanation: `Ekanyunena Purvena: 1) Subtract 1 from ${num} = ${left}. 2) Subtract ${left} from ${multiplier} = ${multiplier - left}. Combine left & right ➔ ${ans}.`,
+      difficulty: diff
+    };
+  }
+
+  // 11. Vilokanam Cube Roots
+  if (cat === 'cubeRoot') {
+    let root = 15;
+    if (diff === 'easy') root = randomInt(11, 25);
+    else if (diff === 'medium') root = randomInt(26, 50);
+    else if (diff === 'hard') root = randomInt(51, 75);
+    else root = randomInt(76, 99);
+
+    const cube = root * root * root;
+    const tens = Math.floor(root / 10);
+    const units = root % 10;
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'cubeRoot',
+      title: 'Instant Cube Root (Vilokanam)',
+      questionText: `∛${cube} = ?`,
+      answer: root,
+      trickExplanation: `Vilokanam Sutra: Last digit ${cube % 10} yields unit digit ${units}. Strike last 3 digits (${cube % 1000}), remaining is ${Math.floor(cube / 1000)}. Nearest cube ≤ ${Math.floor(cube / 1000)} is ${tens}³ = ${tens * tens * tens} ➔ tens digit is ${tens}. Cube root = ${root}.`,
+      difficulty: diff
+    };
+  }
+
+  // 12. Vilokanam Square Roots
+  if (cat === 'squareRoot') {
+    let root = 24;
+    if (diff === 'easy') root = randomInt(21, 40);
+    else if (diff === 'medium') root = randomInt(41, 65);
+    else if (diff === 'hard') root = randomInt(66, 95);
+    else root = randomInt(96, 130);
+
+    const square = root * root;
+    const tens = Math.floor(root / 10);
+    const units = root % 10;
+    const remaining = Math.floor(square / 100);
+    const comp = tens * (tens + 1);
+
+    return {
+      id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      category: 'squareRoot',
+      title: 'Instant Square Root (Vilokanam)',
+      questionText: `√${square} = ?`,
+      answer: root,
+      trickExplanation: `Vilokanam Square Root: Strike last 2 digits, remaining ${remaining} has nearest square ${tens}² = ${tens * tens} ➔ tens digit is ${tens}. Compare ${remaining} with ${tens} × (${tens} + 1) = ${comp}: since ${remaining} ${remaining >= comp ? '≥' : '<'} ${comp}, choose ${units}. Square root = ${root}.`,
+      difficulty: diff
+    };
+  }
+
+  // 13. Fast Division Hacks (÷5, ÷25, ÷50)
+  const isDiv25 = diff === 'hard' || (diff === 'medium' && Math.random() > 0.5);
+  const divisor = isDiv25 ? 25 : 5;
+  let num = 145;
+
+  if (diff === 'easy') num = randomInt(25, 120);
+  else if (diff === 'medium') num = randomInt(125, 395);
+  else if (diff === 'hard') num = randomInt(415, 875);
+  else num = randomInt(1125, 4850);
+
+  const rawAns = num / divisor;
+  const ansStr = Number.isInteger(rawAns) ? String(rawAns) : rawAns.toFixed(rawAns * 100 % 10 === 0 ? 1 : 2);
+
+  // Generate 4 clean options for division
+  const options = [ansStr];
+  const delta = divisor === 5 ? 0.2 : 0.04;
+  const offsets = [-2 * delta, -delta, delta, 2 * delta, 4 * delta];
+  for (const off of offsets) {
+    if (options.length >= 4) break;
+    const distractorVal = rawAns + off;
+    if (distractorVal > 0) {
+      const dStr = Number.isInteger(distractorVal) ? String(distractorVal) : distractorVal.toFixed(rawAns * 100 % 10 === 0 ? 1 : 2);
+      if (!options.includes(dStr)) options.push(dStr);
+    }
+  }
   while (options.length < 4) {
-    const rnd = allPcts[Math.floor(Math.random() * allPcts.length)];
-    if (!options.includes(rnd)) options.push(rnd);
+    options.push(String((rawAns + options.length).toFixed(1)));
   }
   options.sort(() => Math.random() - 0.5);
 
   return {
     id: `vedic_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    category: 'fractionPercent',
-    title: 'Fraction to Percentage Shortcut',
-    questionText: `Convert fraction ${item.frac} to Percentage:`,
-    answer: item.pct,
+    category: 'divisionHacks',
+    title: `Mental Division Shortcut (÷${divisor})`,
+    questionText: `${num} ÷ ${divisor} = ?`,
+    answer: ansStr,
     options,
-    trickExplanation: `Fraction ${item.frac} equals exactly ${item.pct}. Memorize standard fraction tables to supercharge your DI speed.`,
+    trickExplanation: `Mental Division Hack: To divide by ${divisor}, ${divisor === 5 ? 'double the number and move decimal 1 place left' : 'multiply by 4 and move decimal 2 places left'}. (${num} × ${divisor === 5 ? 2 : 4}) ÷ ${divisor === 5 ? 10 : 100} = ${ansStr}.`,
     difficulty: diff
   };
 }

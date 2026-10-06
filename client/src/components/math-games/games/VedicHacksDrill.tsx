@@ -249,7 +249,7 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
                 {category === 'all' ? 'All Hacks Mixed' : category}
               </span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               {(
                 [
                   { id: 'all', label: 'All Mixed', desc: 'Random Hacks' },
@@ -257,6 +257,14 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
                   { id: 'multiply11', label: 'Multiply by 11', desc: '48 × 11, 352 × 11' },
                   { id: 'base100', label: 'Base-100 / 1000', desc: '97 × 94, 104 × 106' },
                   { id: 'multiply25_50', label: '×25 & ×50 Tricks', desc: 'Divide by 4 / 2' },
+                  { id: 'crossMultiply', label: 'Cross Multiply', desc: 'ab × cd (Urdhva)' },
+                  { id: 'sumTenSameTens', label: 'Units Sum to 10', desc: '74 × 76, 91 × 99' },
+                  { id: 'squareNear50', label: 'Squares Near 50', desc: '54², 46², 38²...' },
+                  { id: 'base50', label: 'Base 50 Multiply', desc: '52 × 54, 48 × 46' },
+                  { id: 'seriesOf9', label: 'Multiply by 9s', desc: '×99, ×999, ×9999' },
+                  { id: 'cubeRoot', label: 'Instant Cube Root', desc: '∛12167 = 23 (2s)' },
+                  { id: 'squareRoot', label: 'Instant Square Root', desc: '√2209 = 47, √3136' },
+                  { id: 'divisionHacks', label: 'Fast ÷5, ÷25, ÷50', desc: 'Double & Decimals' },
                   { id: 'fractionPercent', label: 'Fraction to %', desc: '1/7, 1/8, 3/8' }
                 ] as const
               ).map((cat) => (
@@ -270,8 +278,8 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
                       : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <div className="font-extrabold text-xs sm:text-sm text-purple-200">{cat.label}</div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">{cat.desc}</div>
+                  <div className="font-extrabold text-xs text-purple-200">{cat.label}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5 truncate">{cat.desc}</div>
                 </button>
               ))}
             </div>
@@ -440,42 +448,144 @@ export const VedicHacksDrill: React.FC<VedicHacksDrillProps> = ({ onBackToHub })
               </button>
             </div>
 
-            <div className="space-y-3.5 text-xs">
+            <div className="space-y-3 text-xs">
+              {/* 1 */}
               <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
-                <h4 className="font-bold text-purple-300">1. Squares of Numbers Ending in 5 (e.g. 75²)</h4>
+                <h4 className="font-bold text-purple-300">1. Squares Ending in 5 (Ekadhikena Purvena)</h4>
                 <p className="text-slate-300">
-                  Formula: Multiply tens digit by (tens digit + 1), then suffix 25.
+                  Formula: Multiply tens digit by (tens + 1), then append 25.
                   <br />
                   <span className="font-mono text-cyan-400">75² ➔ (7 × 8 = 56) + 25 = 5625</span>
                 </p>
               </div>
 
+              {/* 2 */}
               <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
-                <h4 className="font-bold text-cyan-300">2. Multiplication by 11 (e.g. 43 × 11)</h4>
+                <h4 className="font-bold text-cyan-300">2. Multiplication by 11</h4>
                 <p className="text-slate-300">
-                  Formula: Place sum of digits between the two digits.
+                  Formula: Add adjacent digits from right to left with carry.
                   <br />
                   <span className="font-mono text-cyan-400">43 × 11 ➔ 4 _ 3 with (4+3=7) in middle = 473</span>
                 </p>
               </div>
 
+              {/* 3 */}
               <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
-                <h4 className="font-bold text-amber-300">3. Base 100 Multiplication (e.g. 96 × 93)</h4>
+                <h4 className="font-bold text-amber-300">3. Base 100 Multiplication (Nikhilam Sutra)</h4>
                 <p className="text-slate-300">
-                  Formula: Deviations are -4 and -7.
+                  Formula: Cross-add deviations from 100, then append product of deviations.
                   <br />
-                  Left: 96 - 7 = 89. Right: (-4) × (-7) = 28.
-                  <br />
-                  <span className="font-mono text-cyan-400">Result = 8928</span>
+                  <span className="font-mono text-cyan-400">96 × 93 (dev -4, -7) ➔ Left: 96-7=89, Right: (-4)×(-7)=28 ➔ 8928</span>
                 </p>
               </div>
 
+              {/* 4 */}
               <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
                 <h4 className="font-bold text-emerald-300">4. Multiply by 25 & 50</h4>
                 <p className="text-slate-300">
                   • ×25 is (÷ 4) × 100: <span className="font-mono text-cyan-400">64 × 25 = (64 ÷ 4)00 = 1600</span>
                   <br />
                   • ×50 is (÷ 2) × 100: <span className="font-mono text-cyan-400">38 × 50 = (38 ÷ 2)00 = 1900</span>
+                </p>
+              </div>
+
+              {/* 5 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-indigo-300">5. Cross-Multiplication (Urdhva Tiryagbhyam)</h4>
+                <p className="text-slate-300">
+                  Universal formula: 1) Units × Units, 2) Cross-multiply & sum, 3) Tens × Tens.
+                  <br />
+                  <span className="font-mono text-cyan-400">23 × 14 ➔ Units: 12 (carry 1) | Cross: 8+3+1=12 (carry 1) | Tens: 2+1=3 ➔ 322</span>
+                </p>
+              </div>
+
+              {/* 6 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-rose-300">6. Units Sum to 10 & Same Tens (Antyayor Dashakepi)</h4>
+                <p className="text-slate-300">
+                  Formula: Left: Tens × (Tens + 1), Right: Units₁ × Units₂ (2 digits).
+                  <br />
+                  <span className="font-mono text-cyan-400">74 × 76 ➔ (7 × 8 = 56) | (4 × 6 = 24) ➔ 5624</span>
+                  <br />
+                  <span className="font-mono text-cyan-400">91 × 99 ➔ (9 × 10 = 90) | (1 × 9 = 09) ➔ 9009</span>
+                </p>
+              </div>
+
+              {/* 7 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-teal-300">7. Squares of Numbers Near 50 (26 to 75)</h4>
+                <p className="text-slate-300">
+                  Formula: Let dev = N - 50. First part = 25 + dev, Last part = dev² (2 digits).
+                  <br />
+                  <span className="font-mono text-cyan-400">54² ➔ (25 + 4 = 29) | (4² = 16) ➔ 2916</span>
+                  <br />
+                  <span className="font-mono text-cyan-400">46² ➔ (25 - 4 = 21) | (4² = 16) ➔ 2116</span>
+                </p>
+              </div>
+
+              {/* 8 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-orange-300">8. Base 50 Multiplication (Working Base)</h4>
+                <p className="text-slate-300">
+                  Formula: Base = 100 ÷ 2. Cross-add deviations, divide by 2, append product of deviations.
+                  <br />
+                  <span className="font-mono text-cyan-400">52 × 54 (dev +2, +4) ➔ (52+4)/2 = 28 | (2×4 = 08) ➔ 2808</span>
+                </p>
+              </div>
+
+              {/* 9 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-pink-300">9. Multiply by Series of 9s (Ekanyunena Purvena)</h4>
+                <p className="text-slate-300">
+                  Formula: Left: Number - 1, Right: 9's complement of each digit.
+                  <br />
+                  <span className="font-mono text-cyan-400">64 × 99 ➔ (64 - 1 = 63) | (99 - 63 = 36) ➔ 6336</span>
+                  <br />
+                  <span className="font-mono text-cyan-400">483 × 999 ➔ (483 - 1 = 482) | (999 - 482 = 517) ➔ 482517</span>
+                </p>
+              </div>
+
+              {/* 10 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-sky-300">10. Instant Cube Root in 2 Seconds (Vilokanam)</h4>
+                <p className="text-slate-300">
+                  Formula: Unit digit comes from last digit. Strike last 3 digits; tens digit is nearest cube root below remaining part.
+                  <br />
+                  <span className="font-mono text-cyan-400">∛12167 ➔ Ends in 7 ➔ unit is 3. Strike 167 ➔ 12 (nearest cube 2³=8) ➔ 23!</span>
+                  <br />
+                  <span className="font-mono text-cyan-400">∛54872 ➔ Ends in 2 ➔ unit is 8. Strike 872 ➔ 54 (nearest cube 3³=27) ➔ 38!</span>
+                </p>
+              </div>
+
+              {/* 11 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-violet-300">11. Instant Square Root (Vilokanam)</h4>
+                <p className="text-slate-300">
+                  Formula: Strike last 2 digits, find tens digit from nearest square. Compare with tens × (tens + 1) to pick unit digit.
+                  <br />
+                  <span className="font-mono text-cyan-400">√3136 ➔ Strike 36 ➔ 31 (5²=25). 31 &gt; 5×6(30) ➔ pick larger (6) ➔ 56!</span>
+                  <br />
+                  <span className="font-mono text-cyan-400">√2209 ➔ Strike 09 ➔ 22 (4²=16). 22 &gt; 4×5(20) ➔ pick larger (7) ➔ 47!</span>
+                </p>
+              </div>
+
+              {/* 12 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-lime-300">12. Mental Division Hacks (÷5, ÷25, ÷50)</h4>
+                <p className="text-slate-300">
+                  • ÷5: Double number & divide by 10: <span className="font-mono text-cyan-400">243 ÷ 5 = 486 ÷ 10 = 48.6</span>
+                  <br />
+                  • ÷25: Multiply by 4 & divide by 100: <span className="font-mono text-cyan-400">312 ÷ 25 = 1248 ÷ 100 = 12.48</span>
+                </p>
+              </div>
+
+              {/* 13 */}
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                <h4 className="font-bold text-yellow-300">13. Fraction to Percentage Equivalents</h4>
+                <p className="text-slate-300">
+                  High-yield DI table:
+                  <br />
+                  <span className="font-mono text-cyan-400">1/7 = 14.28% | 1/8 = 12.5% | 1/9 = 11.11% | 1/11 = 9.09% | 3/8 = 37.5%</span>
                 </p>
               </div>
             </div>
