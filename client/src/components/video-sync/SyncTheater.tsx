@@ -13,10 +13,16 @@ import {
   Maximize2,
   CheckCircle2,
   HelpCircle,
-  Sparkles
+  Sparkles,
+  ListVideo,
+  SkipForward,
+  Repeat,
+  Plus,
+  X
 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext.js';
 import { VoiceChatPanel } from '../voice-chat/VoiceChatPanel.js';
+import { VideoPlaylistDrawer, PlaylistItem } from './VideoPlaylistDrawer.js';
 
 // YouTube IFrame Player Window global declaration
 declare global {
@@ -53,6 +59,43 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   const [isMuted, setIsMuted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing'>('synced');
   const [isChatOpen, setIsChatOpen] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
+  const [sidebarTab, setSidebarTab] = useState<'chat' | 'playlist'>('chat');
+
+  // Video Queue & Playback preferences with localStorage persistence
+  const [queue, setQueue] = useState<PlaylistItem[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem('studyos_video_queue');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  const [autoPlayNext, setAutoPlayNext] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const saved = localStorage.getItem('studyos_video_autoplay_next');
+      if (saved !== null) return JSON.parse(saved);
+    } catch {}
+    return true;
+  });
+
+  const [loopCurrent, setLoopCurrent] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const saved = localStorage.getItem('studyos_video_loop_current');
+      if (saved !== null) return JSON.parse(saved);
+    } catch {}
+    return false;
+  });
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('studyos_video_queue', JSON.stringify(queue));
+      }
+    } catch {}
+  }, [queue]);
 
   const playerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -60,8 +103,14 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
   // Always-current mirrors so the mount-time player init effect never reads stale state
   const videoStateRef = useRef(videoState);
   const volumeRef = useRef(volume);
+  const queueRef = useRef(queue);
+  const autoPlayNextRef = useRef(autoPlayNext);
+  const loopCurrentRef = useRef(loopCurrent);
   videoStateRef.current = videoState;
   volumeRef.current = volume;
+  queueRef.current = queue;
+  autoPlayNextRef.current = autoPlayNext;
+  loopCurrentRef.current = loopCurrent;
   // Tracks the last rate we applied locally so remote echoes don't re-apply / loop
   const lastAppliedRateRef = useRef<number>(1);
 
@@ -74,6 +123,23 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     if (match) return match[1];
     return /^[\w-]{11}$/.test(trimmed) ? trimmed : '';
   };
+
+  // Load YouTube lecture helper
+  const handleLoadNewVideo = (url: string, title?: string) => {
+    const targetUrl = url || inputUrl;
+    if (!targetUrl.trim()) return;
+    const vid = extractVideoId(targetUrl);
+    if (!vid) {
+      addToast('Invalid YouTube Link', 'That link could not be parsed. Please paste a valid YouTube video URL.', 'warning');
+      return;
+    }
+    sendVideoChange(targetUrl, vid);
+    setInputUrl('');
+    addToast('Class Loaded', title ? `Playing: ${title}` : 'New YouTube lecture loaded for both students!', 'success');
+  };
+
+  const handleLoadNewVideoRef = useRef(handleLoadNewVideo);
+  handleLoadNewVideoRef.current = handleLoadNewVideo;
 
   // Load YouTube IFrame API script
   useEffect(() => {
@@ -132,6 +198,21 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
                   }
                 } else if (event.data === window.YT.PlayerState.PAUSED) {
                   setLocalIsPlaying(false);
+                } else if (event.data === window.YT.PlayerState.ENDED) {
+                  setLocalIsPlaying(false);
+                  if (loopCurrentRef.current) {
+                    try {
+                      playerRef.current?.seekTo(0, true);
+                      playerRef.current?.playVideo();
+                      sendVideoSeek(0);
+                      sendVideoPlay(0);
+                      addToast('Looping Lecture', 'Replaying current lecture from start.', 'info');
+                    } catch (e) {}
+                  } else if (autoPlayNextRef.current && queueRef.current.length > 0) {
+                    const [nextItem, ...remainingQueue] = queueRef.current;
+                    setQueue(remainingQueue);
+                    handleLoadNewVideoRef.current(nextItem.url, nextItem.title);
+                  }
                 }
               }
             }
@@ -270,18 +351,34 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     sendVideoSeek(newTime);
   };
 
-  const handleLoadNewVideo = (url: string) => {
+  const handleAddToQueue = (url: string) => {
     const targetUrl = url || inputUrl;
     if (!targetUrl.trim()) return;
     const vid = extractVideoId(targetUrl);
     if (!vid) {
-      // Keep the current video and warn instead of loading an unrelated lecture
-      addToast('Invalid YouTube Link', 'That link could not be parsed. Please paste a valid YouTube video URL.', 'warning');
+      addToast('Invalid YouTube Link', 'Please paste a valid YouTube video URL to add to queue.', 'warning');
       return;
     }
-    sendVideoChange(targetUrl, vid);
+    const newItem: PlaylistItem = {
+      id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      videoId: vid,
+      url: targetUrl.trim(),
+      title: `YouTube Lecture (${vid})`,
+      addedAt: Date.now()
+    };
+    setQueue(prev => [...prev, newItem]);
     setInputUrl('');
-    addToast('Class Loaded', 'New YouTube lecture loaded for both students!', 'success');
+    addToast('Added to Queue', 'Lecture added to Up Next queue!', 'success');
+  };
+
+  const handleSkipToNextInQueue = () => {
+    if (queue.length === 0) {
+      addToast('Queue Empty', 'No more lectures in the queue.', 'info');
+      return;
+    }
+    const [nextItem, ...remainingQueue] = queue;
+    setQueue(remainingQueue);
+    handleLoadNewVideo(nextItem.url, nextItem.title);
   };
 
   const handleRateChange = (rate: number) => {
@@ -298,14 +395,6 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Popular Co-Study Lectures presets
-  const presets = [
-    { title: 'Thermodynamics Masterclass', url: 'https://www.youtube.com/watch?v=k7YS_P_t3uA', subject: 'Physics' },
-    { title: 'Current Affairs & Editorial Analysis', url: 'https://www.youtube.com/watch?v=7X8II6J-6mU', subject: 'Current Affairs' },
-    { title: 'Calculus: Integration by Parts', url: 'https://www.youtube.com/watch?v=2I-_SV8cwsw', subject: 'Math' },
-    { title: 'Organic Chemistry Mechanisms', url: 'https://www.youtube.com/watch?v=8m6fm78R45k', subject: 'Chemistry' }
-  ];
-
   return (
     <div className="w-full max-w-7xl mx-auto p-2 sm:p-4 flex flex-col lg:flex-row gap-3 sm:gap-4 h-auto lg:h-[calc(100vh-4.5rem)]">
       
@@ -315,7 +404,7 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
         {/* Top Video URL Bar & Peer Status */}
         <div className="p-3 border-b border-white/10 bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
           
-          {/* URL Input */}
+          {/* URL Input & Actions */}
           <div className="flex-1 min-w-0 sm:min-w-[280px] flex items-center gap-2">
             <div className="relative flex-1">
               <Link className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -334,6 +423,14 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
             >
               Load Class
             </button>
+            <button
+              onClick={() => handleAddToQueue(inputUrl)}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1"
+              title="Add to Up Next Queue"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Queue</span>
+            </button>
           </div>
 
           {/* Sync Status Badge & Partner Presence */}
@@ -351,22 +448,25 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
             )}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs">
               <Users className="w-3.5 h-3.5" />
-              <span className="font-semibold">{peers.length + 1} Studying Together</span>
+              <span className="font-semibold">{Math.max(1, peers.length)} Studying Together</span>
             </div>
 
-            {/* Quick Presets Dropdown */}
-            <div className="hidden xl:flex items-center gap-1">
-              {presets.slice(0, 2).map((p, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleLoadNewVideo(p.url)}
-                  className="px-2 py-1 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 truncate max-w-[140px]"
-                  title={p.title}
-                >
-                  ⚡ {p.subject}
-                </button>
-              ))}
-            </div>
+            {/* Quick Playlist & Queue Toggle */}
+            <button
+              onClick={() => {
+                setIsChatOpen(true);
+                setSidebarTab('playlist');
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium border transition-all ${
+                isChatOpen && sidebarTab === 'playlist'
+                  ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+                  : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+              }`}
+              title="Open Video Playlist & Queue"
+            >
+              <ListVideo className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Playlist {queue.length > 0 ? `(${queue.length})` : ''}</span>
+            </button>
 
             {/* Toggle Chatbox Hide / Show */}
             <button
@@ -470,6 +570,44 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
                 <RotateCw className="w-4 h-4" />
               </button>
 
+              {/* Skip to Next in Queue */}
+              <button
+                onClick={handleSkipToNextInQueue}
+                disabled={queue.length === 0}
+                className={`p-2 rounded-xl transition-colors ${
+                  queue.length > 0
+                    ? 'text-slate-300 hover:text-white hover:bg-white/10'
+                    : 'text-slate-600 cursor-not-allowed'
+                }`}
+                title={queue.length > 0 ? `Play Next in Queue (${queue.length} lectures waiting)` : 'Queue is empty'}
+              >
+                <SkipForward className="w-4 h-4" />
+              </button>
+
+              {/* Repeat / Loop Current Video Toggle */}
+              <button
+                onClick={() => {
+                  const next = !loopCurrent;
+                  setLoopCurrent(next);
+                  try {
+                    localStorage.setItem('studyos_video_loop_current', JSON.stringify(next));
+                  } catch {}
+                  addToast(
+                    next ? 'Repeat Mode Enabled' : 'Repeat Mode Disabled',
+                    next ? 'Current lecture will loop continuously.' : 'Queue auto-advance restored.',
+                    'info'
+                  );
+                }}
+                className={`p-2 rounded-xl transition-colors ${
+                  loopCurrent
+                    ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-white/10'
+                }`}
+                title={loopCurrent ? 'Disable Repeat' : 'Repeat Current Video'}
+              >
+                <Repeat className="w-4 h-4" />
+              </button>
+
               <span className="text-[11px] text-slate-400 hidden sm:inline ml-2">
                 Last updated by: <span className="text-cyan-300 font-medium">{videoState.updatedBy || 'You'}</span>
               </span>
@@ -522,27 +660,109 @@ export const SyncTheater: React.FC<SyncTheaterProps> = ({ onAskAiDoubtAtTimestam
 
       </div>
 
-      {/* Right: Real-time Live Voice & In-Lecture Doubt Chat Panel */}
+      {/* Right: Real-time Live Voice & In-Lecture Doubt Chat Panel OR Playlists/Queue Drawer */}
       {isChatOpen && (
         <div className="w-full lg:w-96 flex flex-col h-[480px] lg:h-full animate-in slide-in-from-right duration-200">
-          <VoiceChatPanel
-            currentVideoTime={currentTime}
-            onSeekVideo={handleSeekDelta}
-            onClose={() => setIsChatOpen(false)}
-          />
+          {/* Top Panel Tab Switcher */}
+          <div className="flex items-center gap-1.5 p-1.5 bg-slate-950/80 rounded-2xl border border-white/10 mb-2 shadow-lg shrink-0">
+            <button
+              onClick={() => setSidebarTab('chat')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-xs font-semibold transition-all ${
+                sidebarTab === 'chat'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>Discussion</span>
+            </button>
+            <button
+              onClick={() => setSidebarTab('playlist')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-xs font-semibold transition-all ${
+                sidebarTab === 'playlist'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <ListVideo className="w-3.5 h-3.5" />
+              <span>Playlist {queue.length > 0 ? `(${queue.length})` : ''}</span>
+            </button>
+            <button
+              onClick={() => setIsChatOpen(false)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+              title="Close panel"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="flex-1 min-h-0 flex flex-col">
+            {sidebarTab === 'chat' ? (
+              <VoiceChatPanel
+                currentVideoTime={currentTime}
+                onSeekVideo={handleSeekDelta}
+                onClose={() => setIsChatOpen(false)}
+              />
+            ) : (
+              <VideoPlaylistDrawer
+                currentVideoId={videoState.videoId}
+                currentVideoUrl={`https://www.youtube.com/watch?v=${videoState.videoId}`}
+                onPlayVideo={(url, vid, title) => {
+                  sendVideoChange(url, vid);
+                  addToast('Now Playing', title || 'Lecture loaded for everyone!', 'success');
+                }}
+                queue={queue}
+                onUpdateQueue={(newQueue) => setQueue(newQueue)}
+                autoPlayNext={autoPlayNext}
+                onToggleAutoPlayNext={() => {
+                  setAutoPlayNext(prev => {
+                    const next = !prev;
+                    try { localStorage.setItem('studyos_video_autoplay_next', JSON.stringify(next)); } catch {}
+                    return next;
+                  });
+                }}
+                loopCurrent={loopCurrent}
+                onToggleLoopCurrent={() => {
+                  setLoopCurrent(prev => {
+                    const next = !prev;
+                    try { localStorage.setItem('studyos_video_loop_current', JSON.stringify(next)); } catch {}
+                    return next;
+                  });
+                }}
+                onClose={() => setIsChatOpen(false)}
+                addToast={addToast}
+              />
+            )}
+          </div>
         </div>
       )}
 
-      {/* Floating Summon Chat Button when collapsed */}
+      {/* Floating Summon Chat / Playlist Button when collapsed */}
       {!isChatOpen && (
-        <button
-          onClick={() => setIsChatOpen(true)}
-          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-2xl shadow-indigo-600/50 border border-indigo-400/30 hover:scale-105 active:scale-95 transition-all"
-          title="Open Live Chat & Doubts"
-        >
-          <MessageSquare className="w-4 h-4 text-cyan-300" />
-          <span>Live Discussion</span>
-        </button>
+        <div className="fixed bottom-6 right-6 z-30 flex items-center gap-2">
+          <button
+            onClick={() => {
+              setIsChatOpen(true);
+              setSidebarTab('playlist');
+            }}
+            className="flex items-center gap-2 px-3 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-2xl border border-white/20 hover:scale-105 active:scale-95 transition-all"
+            title="Open Playlist & Queue"
+          >
+            <ListVideo className="w-4 h-4 text-indigo-400" />
+            <span>Queue {queue.length > 0 ? `(${queue.length})` : ''}</span>
+          </button>
+          <button
+            onClick={() => {
+              setIsChatOpen(true);
+              setSidebarTab('chat');
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-2xl shadow-indigo-600/50 border border-indigo-400/30 hover:scale-105 active:scale-95 transition-all"
+            title="Open Live Chat & Doubts"
+          >
+            <MessageSquare className="w-4 h-4 text-cyan-300" />
+            <span>Live Discussion</span>
+          </button>
+        </div>
       )}
 
     </div>
