@@ -46,39 +46,81 @@ export interface AIModelOption {
 
 const DEFAULT_MODELS: AIModelOption[] = [
   {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    tag: 'Default • Ultra Fast',
+    description: 'Instant answers for quick formula checks, rapid doubt resolution, and exam shortcuts',
+    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
     tag: 'Recommended & Stable',
     description: 'Rock solid, comprehensive textbook explanations with guaranteed instant availability',
     badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
   },
   {
-    id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
     tag: 'Next-Gen Reasoning',
     description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & complex math solver',
     badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
   },
   {
-    id: 'gemini-2.0-flash',
-    name: 'Gemini 2.0 Flash',
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
     tag: 'Math & Logic',
     description: 'Deep analytical thinking for complex mathematical derivations & proofs',
     badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
   },
   {
-    id: 'gemini-1.5-flash',
-    name: 'Gemini 1.5 Flash',
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
     tag: 'High Precision',
     description: 'Rigorous calculation accuracy and formula verification',
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
   },
   {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    tag: 'Fast & Balanced',
+    description: 'High reliability, balanced speed and comprehensive derivations',
+    badgeColor: 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+  },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    tag: 'Deep Analytical',
+    description: 'High capability model for intricate multi-step problem solving',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+  },
+  {
+    id: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
+    tag: 'Low Latency',
+    description: 'Fast response times for rapid revision blocks',
+    badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+  },
+  {
     id: 'gemini-2.0-flash-lite',
     name: 'Gemini 2.0 Flash Lite',
-    tag: 'Lightning Fast',
-    description: 'Instant answers for quick formula checks and rapid doubt lookup',
-    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+    tag: 'Lite Engine',
+    description: 'Lightweight and instant concept clarifications',
+    badgeColor: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+  },
+  {
+    id: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
+    tag: 'Classic Stable',
+    description: 'Proven long-context understanding for dense multi-page chapters',
+    badgeColor: 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+  },
+  {
+    id: 'gemini-1.5-pro',
+    name: 'Gemini 1.5 Pro',
+    tag: 'Classic Pro',
+    description: 'High context window with deep exam-level precision',
+    badgeColor: 'bg-violet-500/20 text-violet-300 border-violet-500/30'
   }
 ];
 
@@ -128,12 +170,12 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [models, setModels] = useState<AIModelOption[]>(DEFAULT_MODELS);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'gemini-2.5-flash';
+    if (typeof window === 'undefined') return 'gemini-3.5-flash-lite';
     try {
       const saved = localStorage.getItem('studyos_pdf_ai_model');
-      if (saved && !saved.startsWith('gemini-3.')) return saved;
+      if (saved) return saved;
     } catch {}
-    return 'gemini-2.5-flash';
+    return 'gemini-3.5-flash-lite';
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);

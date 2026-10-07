@@ -903,7 +903,7 @@ export class AICoachService {
     const selectedText = this.cleanString(input.selectedText, MAX_SELECTION_CHARS);
     const question = this.cleanString(input.question, 2000);
     const pageText = (input.pageText || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_CHARS);
-    const selectedModel = (input.model || 'gemini-2.5-flash').trim();
+    const selectedModel = (input.model || 'gemini-3.5-flash-lite').trim();
 
     // Scanned / image-only pages have no text layer, so say so plainly rather
     // than inventing an explanation.
@@ -1115,7 +1115,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         `The selected AI model is currently experiencing temporary high traffic. Here is the reference text extracted directly from Page ${page} of "${docTitle}":\n\n` +
         `> ${focus.slice(0, 600)}\n\n` +
         `**Recommended Action:**\n` +
-        `- Select **Gemini 2.5 Flash** (Recommended & Stable) in the model selector above for instant response.\n` +
+        `- Select **Gemini 3.5 Flash Lite** or **Gemini 2.5 Flash** in the model selector above for instant response.\n` +
         `- Click **"Clear & Ask Again"**.\n` +
         (question ? `- Your question: *"${question}"*` : '');
     } else {

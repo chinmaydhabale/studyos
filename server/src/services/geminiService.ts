@@ -8,15 +8,15 @@
  */
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 export type GeminiModelTier = 'heavy' | 'lite' | 'balanced' | 'flashcards';
 
 export const GEMINI_MODELS = {
-  heavy: 'gemini-2.5-pro',
-  flashcards: 'gemini-2.5-flash',
-  balanced: 'gemini-2.5-flash',
-  lite: 'gemini-2.0-flash-lite'
+  heavy: 'gemini-3.8-flash',
+  flashcards: 'gemini-3.5-flash-lite',
+  balanced: 'gemini-3.5-flash',
+  lite: 'gemini-3.5-flash-lite'
 };
 
 const REQUEST_TIMEOUT_MS = 60000;
@@ -91,23 +91,39 @@ export class GeminiService {
     if (customModel) {
       modelsToTry = [
         customModel,
+        'gemini-3.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
         'gemini-2.5-flash',
-        'gemini-2.0-flash',
         'gemini-flash-latest',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
         'gemini-1.5-flash',
         'gemini-2.5-pro',
         'gemini-1.5-pro'
       ];
     } else if (tier === 'lite') {
-      modelsToTry = ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-1.5-flash'];
+      modelsToTry = [
+        'gemini-3.5-flash-lite',
+        'gemini-flash-lite-latest',
+        'gemini-2.0-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-flash-latest',
+        'gemini-1.5-flash'
+      ];
     } else {
       // Default, heavy or balanced
       const primary = this.getModel();
       modelsToTry = [
         primary,
+        'gemini-3.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-3.8-flash',
         'gemini-2.5-flash',
-        'gemini-2.0-flash',
         'gemini-flash-latest',
+        'gemini-2.0-flash',
         'gemini-1.5-flash',
         'gemini-2.5-pro'
       ];
