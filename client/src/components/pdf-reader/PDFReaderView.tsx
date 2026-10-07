@@ -644,7 +644,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     if (!selectedText) return;
     setIsAiOpen(true);
     setIsChatOpen(false);
-    setAutoRunSelection(Date.now());
+    setAutoRunSelection(prev => prev + 1);
   };
 
   const handleZoom = (delta: number) => {
@@ -847,8 +847,12 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
           <button
             data-preserve-pdf-selection
             onClick={() => {
-              setIsAiOpen(!isAiOpen);
-              if (!isAiOpen) setIsChatOpen(false);
+              const nextState = !isAiOpen;
+              setIsAiOpen(nextState);
+              if (nextState) {
+                setIsChatOpen(false);
+                setAutoRunSelection(0);
+              }
             }}
             disabled={!activePdfDoc}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 ${
@@ -1216,6 +1220,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               userId={currentUser.id}
               selectedText={selectedText}
               autoRunSelection={autoRunSelection}
+              onClearAutoRun={() => setAutoRunSelection(0)}
               onClearSelection={clearPdfSelection}
               onClose={() => setIsAiOpen(false)}
               getPageText={getPageText}

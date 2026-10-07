@@ -101,7 +101,7 @@ export interface NotebookStudyPack {
 }
 
 // Keeps prompts (and therefore cost/latency) bounded on large or dense pages.
-const MAX_PAGE_CHARS = 6000;
+const MAX_PAGE_CHARS = 10000;
 const MAX_SELECTION_CHARS = 1500;
 const MAX_NOTEBOOK_SOURCE_CHARS = 120000;
 
@@ -185,8 +185,12 @@ export class AICoachService {
   private cleanString(value: unknown, maxLength = 400): string | undefined {
     if (typeof value !== 'string') return undefined;
     let trimmed = value.trim();
-    // Normalize literal escaped newlines and tabs from LLM outputs
-    trimmed = trimmed.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '  ');
+    // Normalize literal escaped newlines and tabs from LLM outputs without corrupting LaTeX commands
+    trimmed = trimmed
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n(?![a-zA-Z])/g, '\n')
+      .replace(/\\r(?![a-zA-Z])/g, '\n')
+      .replace(/\\t(?![a-zA-Z])/g, '  ');
     return trimmed ? trimmed.slice(0, maxLength) : undefined;
   }
 
@@ -899,7 +903,7 @@ export class AICoachService {
     const selectedText = this.cleanString(input.selectedText, MAX_SELECTION_CHARS);
     const question = this.cleanString(input.question, 2000);
     const pageText = (input.pageText || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_CHARS);
-    const selectedModel = (input.model || 'gemini-3.8-flash').trim();
+    const selectedModel = (input.model || 'gemini-2.5-flash').trim();
 
     // Scanned / image-only pages have no text layer, so say so plainly rather
     // than inventing an explanation.
@@ -912,13 +916,20 @@ export class AICoachService {
           'You can still type a general question below, or select text on a page with digital text.',
         keyPoints: [],
         source: 'fallback',
-        modelUsed: selectedModel
+        modelUsed: 'offline-extracted'
       };
     }
 
     // A typed question chooses the task, but any selected passage still gives it context.
+    // Explicit 'page' mode must always take precedence over stale selected text.
     const mode: PdfAssistMode =
-      input.mode === 'question' && question ? 'question' : selectedText ? 'selection' : input.mode === 'question' ? 'page' : input.mode || 'page';
+      input.mode === 'page'
+        ? 'page'
+        : input.mode === 'question' && question
+        ? 'question'
+        : selectedText
+        ? 'selection'
+        : 'page';
 
     const focus =
       mode === 'question'
@@ -980,7 +991,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
 5. RESPOND WITH VALID JSON ONLY adhering strictly to the schema provided.`;
 
-    const result = await gemini.generateJson<{
+    const jsonRes = await gemini.generateJsonWithMeta<{
       heading?: string;
       explanation?: string;
       keyPoints?: string[];
@@ -1016,7 +1027,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       conversationHistory: input.conversationHistory
     });
 
-    if (result) {
+    if (jsonRes?.data) {
+      const result = jsonRes.data;
       const explanation = this.cleanString(result.explanation, 16000);
       const keyPoints = this.cleanStringArray(result.keyPoints, 8, 800);
       if (explanation) {
@@ -1028,7 +1040,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
           formula: this.cleanString(result.formula, 500),
           followUp: this.cleanString(result.followUp, 500),
           source: 'gemini',
-          modelUsed: selectedModel
+          modelUsed: jsonRes.modelUsed || selectedModel
         };
       }
     }
@@ -1037,7 +1049,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     if (gemini.isConfigured()) {
       try {
         console.warn('[ai] pdf-assist generateJson yielded null, trying generateText fallback...');
-        const textResult = await gemini.generateText({
+        const textRes = await gemini.generateTextWithMeta({
           systemInstruction: pdfSystemInstruction,
           prompt:
             `Learner profile:\n${this.buildLearnerContext(input.userId)}\n\n` +
@@ -1051,7 +1063,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
           conversationHistory: input.conversationHistory
         });
 
-        if (textResult && textResult.trim()) {
+        if (textRes?.text && textRes.text.trim()) {
+          const textResult = textRes.text;
           const headingMatch = textResult.match(/^#+\s*(.+)$/m);
           const heading = headingMatch ? headingMatch[1].trim() : (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
           return {
@@ -1064,7 +1077,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
               'Cross-check units and edge-case boundary conditions'
             ],
             source: 'gemini',
-            modelUsed: selectedModel
+            modelUsed: textRes.modelUsed || selectedModel
           };
         }
       } catch (textErr) {
@@ -1075,7 +1088,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     return {
       ...this.fallbackPdfAssist(mode, page, docTitle, pageText, selectedText, question),
       source: 'fallback',
-      modelUsed: selectedModel
+      modelUsed: 'offline-extracted'
     };
   }
 
@@ -1102,7 +1115,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         `The selected AI model is currently experiencing temporary high traffic. Here is the reference text extracted directly from Page ${page} of "${docTitle}":\n\n` +
         `> ${focus.slice(0, 600)}\n\n` +
         `**Recommended Action:**\n` +
-        `- Select **Gemini 3.5 Flash** (Recommended & Stable) in the model selector above for instant response.\n` +
+        `- Select **Gemini 2.5 Flash** (Recommended & Stable) in the model selector above for instant response.\n` +
         `- Click **"Clear & Ask Again"**.\n` +
         (question ? `- Your question: *"${question}"*` : '');
     } else {

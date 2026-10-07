@@ -46,36 +46,36 @@ export interface AIModelOption {
 
 const DEFAULT_MODELS: AIModelOption[] = [
   {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     tag: 'Recommended & Stable',
     description: 'Rock solid, comprehensive textbook explanations with guaranteed instant availability',
     badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
   },
   {
-    id: 'gemini-3.8-flash',
-    name: 'Gemini 3.8 Flash',
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
     tag: 'Next-Gen Reasoning',
-    description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & math solver',
+    description: 'Next-Gen intelligence, ultra-fast step-by-step reasoning & complex math solver',
     badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
   },
   {
-    id: 'gemini-3.7-flash',
-    name: 'Gemini 3.7 Flash',
+    id: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
     tag: 'Math & Logic',
     description: 'Deep analytical thinking for complex mathematical derivations & proofs',
     badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
   },
   {
-    id: 'gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
+    id: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
     tag: 'High Precision',
     description: 'Rigorous calculation accuracy and formula verification',
     badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
   },
   {
-    id: 'gemini-3.5-flash-lite',
-    name: 'Gemini 3.5 Flash Lite',
+    id: 'gemini-2.0-flash-lite',
+    name: 'Gemini 2.0 Flash Lite',
     tag: 'Lightning Fast',
     description: 'Instant answers for quick formula checks and rapid doubt lookup',
     badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
@@ -88,6 +88,7 @@ interface PDFAiPanelProps {
   userId: string;
   selectedText: string;
   autoRunSelection?: number;
+  onClearAutoRun?: () => void;
   onClearSelection: () => void;
   onClose: () => void;
   getPageText: (page: number) => Promise<string>;
@@ -112,6 +113,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   userId,
   selectedText,
   autoRunSelection,
+  onClearAutoRun,
   onClearSelection,
   onClose,
   getPageText,
@@ -126,7 +128,12 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [models, setModels] = useState<AIModelOption[]>(DEFAULT_MODELS);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem('studyos_pdf_ai_model') || 'gemini-3.5-flash';
+    if (typeof window === 'undefined') return 'gemini-2.5-flash';
+    try {
+      const saved = localStorage.getItem('studyos_pdf_ai_model');
+      if (saved && !saved.startsWith('gemini-3.')) return saved;
+    } catch {}
+    return 'gemini-2.5-flash';
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -180,7 +187,11 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   // Save model choice
   const handleSelectModel = (modelId: string) => {
     setSelectedModel(modelId);
-    localStorage.setItem('studyos_pdf_ai_model', modelId);
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('studyos_pdf_ai_model', modelId);
+      }
+    } catch {}
     setShowModelPicker(false);
     const m = models.find(x => x.id === modelId);
     addToast('Model Changed', `Now using ${m?.name || modelId} for step-by-step reasoning.`, 'info');
@@ -196,16 +207,22 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const activeModelObj = models.find(m => m.id === selectedModel) || models[0];
 
   const handleCopySolution = (ex: Exchange) => {
-    const fullText = `# ${ex.result.heading}\n\n${ex.result.explanation}${
-      ex.result.formula ? `\n\n### Primary Formula:\n$$${ex.result.formula}$$` : ''
+    const isFallback = ex.result.source === 'fallback';
+    const fallbackNotice = isFallback ? `> *[Note: Extracted Page Text (AI Offline Fallback)]*\n\n` : '';
+    const fullText = `${fallbackNotice}# ${ex.result.heading}\n\n${ex.result.explanation}${
+      ex.result.formula ? `\n\n### ${isFallback ? 'Formula Snippet' : 'Primary Formula'}:\n$$${ex.result.formula}$$` : ''
     }${
       ex.result.keyPoints?.length
-        ? `\n\n### Key Exam Takeaways:\n${ex.result.keyPoints.map(p => `- ${p}`).join('\n')}`
+        ? `\n\n### ${isFallback ? 'Extracted Key Sentences' : 'Key Exam Takeaways'}:\n${ex.result.keyPoints.map(p => `- ${p}`).join('\n')}`
         : ''
     }`;
     navigator.clipboard.writeText(fullText);
     setCopiedId(ex.id);
-    addToast('Copied to Clipboard', 'Full step-by-step solution copied with formulas.', 'success');
+    addToast(
+      isFallback ? 'Copied Extracted Text' : 'Copied to Clipboard',
+      isFallback ? 'Extracted text note copied.' : 'Full step-by-step solution copied with formulas.',
+      'success'
+    );
     setTimeout(() => setCopiedId(null), 2500);
   };
 
@@ -222,6 +239,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
     page?: number;
   }) => {
     const page = opts.page ?? currentPage;
+    const effectiveSelectedText = opts.mode === 'page' ? undefined : opts.selected;
     setIsLoading(true);
     try {
       const rawText = await getPageText(page);
@@ -249,7 +267,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
           docTitle,
           page,
           pageText,
-          selectedText: opts.selected,
+          selectedText: effectiveSelectedText,
           question: opts.ask,
           userId,
           model: selectedModel,
@@ -265,7 +283,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
         {
           id: `ex-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           question: opts.ask,
-          selectedText: opts.selected,
+          selectedText: effectiveSelectedText,
           page,
           result,
           timestamp: new Date()
@@ -298,11 +316,11 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const lastAutoRunRef = useRef<number>(0);
   useEffect(() => {
     if (!autoRunSelection || autoRunSelection === lastAutoRunRef.current) return;
-    if (!selectedText) return;
+    if (!selectedText || !selectedText.trim()) return;
     lastAutoRunRef.current = autoRunSelection;
     runAssist({ mode: 'selection', selected: selectedText });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRunSelection]);
+    onClearAutoRun?.();
+  }, [autoRunSelection, selectedText, onClearAutoRun]);
 
   return (
     <div className="h-full flex flex-col bg-slate-950/95 backdrop-blur-md overflow-hidden text-slate-100 select-text">

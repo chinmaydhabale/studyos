@@ -8,15 +8,15 @@
  */
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 export type GeminiModelTier = 'heavy' | 'lite' | 'balanced' | 'flashcards';
 
 export const GEMINI_MODELS = {
-  heavy: 'gemini-3.5-flash',
-  flashcards: 'gemini-3.5-flash',
-  balanced: 'gemini-3.5-flash',
-  lite: 'gemini-3.5-flash-lite'
+  heavy: 'gemini-2.5-pro',
+  flashcards: 'gemini-2.5-flash',
+  balanced: 'gemini-2.5-flash',
+  lite: 'gemini-2.0-flash-lite'
 };
 
 const REQUEST_TIMEOUT_MS = 60000;
@@ -83,25 +83,41 @@ export class GeminiService {
     payload: Record<string, unknown>,
     tier?: GeminiModelTier,
     customModel?: string
-  ): Promise<string | null> {
+  ): Promise<{ text: string; modelUsed: string } | null> {
     const keys = this.getApiKeys();
     if (!keys.length) return null;
 
     let modelsToTry: string[] = [];
     if (customModel) {
-      modelsToTry = [customModel, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
+      modelsToTry = [
+        customModel,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-flash-latest',
+        'gemini-1.5-flash',
+        'gemini-2.5-pro',
+        'gemini-1.5-pro'
+      ];
     } else if (tier === 'lite') {
-      modelsToTry = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+      modelsToTry = ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-1.5-flash'];
     } else {
       // Default, heavy or balanced
       const primary = this.getModel();
-      modelsToTry = [primary, 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
+      modelsToTry = [
+        primary,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-flash-latest',
+        'gemini-1.5-flash',
+        'gemini-2.5-pro'
+      ];
     }
     modelsToTry = Array.from(new Set(modelsToTry.filter(Boolean)));
 
     const keyAttempts = Math.min(keys.length, 3);
     for (let k = 0; k < keyAttempts; k++) {
-      const activeKey = keys[(this.currentKeyIndex + k) % keys.length];
+      const activeKeyIndex = (this.currentKeyIndex + k) % keys.length;
+      const activeKey = keys[activeKeyIndex];
 
       for (const model of modelsToTry) {
         const controller = new AbortController();
@@ -122,11 +138,15 @@ export class GeminiService {
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`[gemini] ${model} (key ...${activeKey.slice(-6)}) returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
-            // On rate limits, high demand, or server issues, try the next model or next key
-            if (res.status === 503 || res.status === 429 || res.status === 403 || res.status === 404 || res.status >= 500) {
+            // On rate limits or forbidden quota, advance currentKeyIndex and break to next key
+            if (res.status === 429 || res.status === 403) {
+              this.currentKeyIndex = (activeKeyIndex + 1) % keys.length;
+              break;
+            }
+            // On 503 or 404 or server error, continue to try the next model
+            if (res.status === 503 || res.status === 404 || res.status >= 500) {
               continue;
             }
-            // For 400 parameter errors on specific models, continue to alternative models
             continue;
           }
 
@@ -137,7 +157,10 @@ export class GeminiService {
             console.warn(`[gemini] ${model} no usable content (${reason})`);
             continue;
           }
-          return text;
+
+          // Advance round-robin index on success to load-balance across keys
+          this.currentKeyIndex = (activeKeyIndex + 1) % keys.length;
+          return { text, modelUsed: model };
         } catch (err: any) {
           const reason = err?.name === 'AbortError' ? `timed out after ${REQUEST_TIMEOUT_MS}ms` : err?.message || err;
           console.warn(`[gemini] ${model} request failed:`, reason);
@@ -193,9 +216,15 @@ export class GeminiService {
     return payload;
   }
 
+  /** Free-form text generation with metadata (model used). */
+  public async generateTextWithMeta(req: GeminiTextRequest): Promise<{ text: string; modelUsed: string } | null> {
+    return this.request(this.buildPayload(req, false), req.tier, req.model);
+  }
+
   /** Free-form text generation. Returns null when unavailable. */
   public async generateText(req: GeminiTextRequest): Promise<string | null> {
-    return this.request(this.buildPayload(req, false), req.tier, req.model);
+    const res = await this.generateTextWithMeta(req);
+    return res ? res.text : null;
   }
 
   /**
@@ -295,24 +324,35 @@ export class GeminiService {
   }
 
   /**
-   * Structured generation. Returns the parsed object, or null when the model is
-   * unavailable or produced unparseable output.
+   * Structured generation with metadata. Returns parsed object and modelUsed.
    */
-  public async generateJson<T>(req: GeminiJsonRequest): Promise<T | null> {
-    const raw = await this.request(this.buildPayload(req, true), req.tier, req.model);
-    if (!raw) return null;
+  public async generateJsonWithMeta<T>(req: GeminiJsonRequest): Promise<{ data: T; modelUsed: string } | null> {
+    const rawResult = await this.request(this.buildPayload(req, true), req.tier, req.model);
+    if (!rawResult || !rawResult.text) return null;
+    const raw = rawResult.text;
 
     // 1. Direct parse attempt
     try {
-      return JSON.parse(raw) as T;
+      return { data: JSON.parse(raw) as T, modelUsed: rawResult.modelUsed };
     } catch {}
 
     // 2. Clean and repair common LLM JSON defects
     const cleaned = this.cleanAndParseJson<T>(raw);
-    if (cleaned !== null) return cleaned;
+    if (cleaned !== null) {
+      return { data: cleaned, modelUsed: rawResult.modelUsed };
+    }
 
     console.warn('[gemini] response was not parseable JSON even after sanitization. Raw snippet:', raw.slice(0, 200));
     return null;
+  }
+
+  /**
+   * Structured generation. Returns the parsed object, or null when the model is
+   * unavailable or produced unparseable output.
+   */
+  public async generateJson<T>(req: GeminiJsonRequest): Promise<T | null> {
+    const res = await this.generateJsonWithMeta<T>(req);
+    return res ? res.data : null;
   }
 }
 

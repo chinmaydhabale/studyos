@@ -8,7 +8,14 @@ interface FormattedAiMessageProps {
 }
 
 function cleanTex(tex: string): string {
-  return tex.trim().replace(/\\\\([a-zA-Z])/g, '\\$1');
+  // Repair doubled backslashes on recognized multi-letter LaTeX commands (from JSON over-escaping),
+  // while preserving intentional LaTeX double-backslash row separators (\\) in cases, matrices, aligned, etc.
+  return tex
+    .trim()
+    .replace(
+      /\\\\(frac|sqrt|times|text|mathbf|mathrm|left|right|begin|end|cdot|pm|approx|alpha|beta|gamma|theta|sum|int|infty|ge|le|neq|div|quad|xrightarrow|binom|over|partial|lim|log|ln|sin|cos|tan|pi|lambda|sigma|omega|delta|nabla|phi|psi|rho|tau|mu|nu|zeta|eta|epsilon)\b/g,
+      '\\$1'
+    );
 }
 
 /**
@@ -165,8 +172,12 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
   const normalizedContent = useMemo(() => {
     if (!content) return '';
     let s = content;
-    // Replace literal escaped newlines and tabs
-    s = s.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '  ');
+    // Replace literal escaped newlines and tabs without corrupting LaTeX commands
+    s = s
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n(?![a-zA-Z])/g, '\n')
+      .replace(/\\r(?![a-zA-Z])/g, '\n')
+      .replace(/\\t(?![a-zA-Z])/g, '  ');
     return s;
   }, [content]);
 
