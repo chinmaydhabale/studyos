@@ -45,6 +45,47 @@ function escapeHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Some AI providers return a transport envelope as a JSON string inside a
+ * markdown code fence. That envelope is metadata, not the student's answer.
+ * Unwrap only the known assistant envelope shape so real JSON/code examples
+ * continue to render as code.
+ */
+function unwrapAiResponseEnvelope(content: string): string {
+  let current = content.trim();
+
+  for (let depth = 0; depth < 2; depth++) {
+    const fenced = current.match(/^```\s*(json)?\s*\r?\n([\s\S]*?)\r?\n```$/i);
+    const candidate = fenced ? fenced[2].trim() : current;
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return current;
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return current;
+
+    const envelope = parsed as Record<string, unknown>;
+    const payload = envelope.data;
+    const isAiEnvelope = envelope.response_type === 'json' && payload && typeof payload === 'object' && !Array.isArray(payload);
+    if (!isAiEnvelope) return current;
+
+    const data = payload as Record<string, unknown>;
+    const answer = [data.solution_breakdown, data.answer, data.explanation, data.content, data.markdown, data.text]
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    const coachMessage = typeof data.coach_message === 'string' ? data.coach_message.trim() : '';
+
+    if (!answer && !coachMessage) return current;
+    current = answer
+      ? [coachMessage, answer.trim()].filter(Boolean).join('\n\n')
+      : coachMessage;
+  }
+
+  return current;
+}
+
 function isMathLine(line: string): boolean {
   const t = line.trim();
   if (t.length < 3 || t.length > 600) return false;
@@ -188,7 +229,7 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
 
   const normalizedContent = useMemo(() => {
     if (!content) return '';
-    let s = content;
+    let s = unwrapAiResponseEnvelope(content);
     // Replace literal escaped newlines and tabs without corrupting LaTeX commands
     s = s
       .replace(/\\r\\n/g, '\n')
