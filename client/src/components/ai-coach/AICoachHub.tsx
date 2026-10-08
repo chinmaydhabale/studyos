@@ -175,18 +175,22 @@ type WorkspaceTab = 'audio' | 'chat' | 'flashcards' | 'quiz' | 'cheatsheet' | 'p
 
 interface AICoachHubProps {
   initialPrompt?: string;
+  initialSource?: { title: string; text: string } | null;
   onClearInitialPrompt?: () => void;
   onNavigateToCalendar?: () => void;
 }
 
-export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onClearInitialPrompt, onNavigateToCalendar }) => {
+export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', initialSource, onClearInitialPrompt, onNavigateToCalendar }) => {
   const { addToast, currentUser } = useSocket();
   const { addXp } = useStudy();
 
   // Active Study Context State
-  const [activeTopic, setActiveTopic] = useState(PRESET_TOPICS[0].title);
-  const [activeDomain, setActiveDomain] = useState(PRESET_TOPICS[0].domain);
-  const [sourceMaterial, setSourceMaterial] = useState(PRESET_TOPICS[0].content);
+  const initialTopic = initialSource?.title || PRESET_TOPICS[0].title;
+  const initialDomain = initialSource ? 'PDF Document' : PRESET_TOPICS[0].domain;
+  const initialMaterial = initialSource?.text || PRESET_TOPICS[0].content;
+  const [activeTopic, setActiveTopic] = useState(initialTopic);
+  const [activeDomain, setActiveDomain] = useState(initialDomain);
+  const [sourceMaterial, setSourceMaterial] = useState(initialMaterial);
 
   // Active Workspace Tab
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('audio');
@@ -194,7 +198,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onCl
   // Modals
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [tempEditorTitle, setTempEditorTitle] = useState(activeTopic);
-  const [tempEditorText, setTempEditorText] = useState(sourceMaterial);
+  const [tempEditorText, setTempEditorText] = useState(initialMaterial);
   const [isUploading, setIsUploading] = useState(false);
   const [isPresetsOpen, setIsPresetsOpen] = useState(false);
 
@@ -239,6 +243,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onCl
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const handledInitialPromptRef = useRef<string | null>(null);
 
   // ----------------------------------------------------
   // 3. Flashcards State
@@ -278,11 +283,12 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', onCl
 
   // Handle external initialPrompt (from Video or PDF Reader)
   useEffect(() => {
-    if (initialPrompt && initialPrompt.trim()) {
-      setActiveTab('chat');
-      handleSendChatMessage(initialPrompt);
-      onClearInitialPrompt?.();
-    }
+    const prompt = initialPrompt.trim();
+    if (!prompt || handledInitialPromptRef.current === prompt) return;
+    handledInitialPromptRef.current = prompt;
+    setActiveTab('chat');
+    handleSendChatMessage(prompt);
+    onClearInitialPrompt?.();
   }, [initialPrompt]);
 
   // Switch Preset Topic

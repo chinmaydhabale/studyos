@@ -905,9 +905,9 @@ export class AICoachService {
     const pageText = (input.pageText || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_CHARS);
     const selectedModel = (input.model || 'gemini-3.5-flash-lite').trim();
 
-    // Scanned / image-only pages have no text layer, so say so plainly rather
-    // than inventing an explanation.
-    if (!pageText) {
+    // Scanned / image-only pages cannot be summarized or selected, but a
+    // standalone question can still be answered from the model's knowledge.
+    if (!pageText && !question && !selectedText) {
       return {
         mode: input.mode || 'page',
         heading: `Page ${page} has no selectable text`,
@@ -943,7 +943,11 @@ export class AICoachService {
         ? `Answer the student's question with utmost pedagogical clarity and step-by-step depth.
 - If it's a quantitative/maths/physics question: Provide full algebraic steps, state initial values, formulas, every intermediate calculation, and a quick verification or exam shortcut.
 - If it's conceptual or theoretical: Explain the core premise, real-world analogies, nuances, and exam relevance.
-- Use the page text as primary truth; if the question asks beyond the page, answer completely using your deep expertise and explicitly state the broader context.`
+- ${pageText
+  ? 'Use the page text as primary truth; if the question asks beyond the page, answer completely using your deep expertise and explicitly state the broader context.'
+  : selectedText
+  ? 'No other page text is available; ground the answer in the selected passage and do not infer unseen page content.'
+  : 'No selectable PDF text is available. Answer general questions from your expertise, but do not guess what the scanned page contains; explain this limitation if the question depends on that page.'}`
         : mode === 'selection'
         ? `Explain the selected passage in deep, structured detail:
 - Plain-English / Hinglish explanation of what it actually means.
@@ -991,6 +995,10 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
 5. RESPOND WITH VALID JSON ONLY adhering strictly to the schema provided.`;
 
+    const pageContext = pageText
+      ? `--- CURRENT PAGE TEXT START ---\n${pageText}\n--- CURRENT PAGE TEXT END ---`
+      : 'No selectable text could be extracted from this PDF page. The page may be scanned or image-only.';
+
     const jsonRes = await gemini.generateJsonWithMeta<{
       heading?: string;
       explanation?: string;
@@ -1003,7 +1011,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         `Learner profile:\n${this.buildLearnerContext(input.userId)}\n\n` +
         `Document Title: "${docTitle}" — Page ${page}\n\n` +
         `${focus}\n\n` +
-        `--- CURRENT PAGE TEXT START ---\n${pageText}\n--- CURRENT PAGE TEXT END ---\n\n` +
+        `${pageContext}\n\n` +
         `${task}\n\n` +
         `FORMATTING REQUIREMENT:
 - "heading": A clear, engaging title for this solution/topic.
@@ -1055,7 +1063,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
             `Learner profile:\n${this.buildLearnerContext(input.userId)}\n\n` +
             `Document Title: "${docTitle}" — Page ${page}\n\n` +
             `${focus}\n\n` +
-            `--- CURRENT PAGE TEXT START ---\n${pageText}\n--- CURRENT PAGE TEXT END ---\n\n` +
+            `${pageContext}\n\n` +
             `${task}\n\n` +
             `FORMATTING INSTRUCTION: Provide an exhaustive, complete step-by-step pedagogical solution in rich Markdown with KaTeX math ($...$ and $$...$$), Step headings, 💡 Shortcuts, and ⚠️ Common Traps. Do not truncate.`,
           temperature: 0.5,
@@ -1110,10 +1118,12 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     let explanation: string;
     if (gemini.isConfigured()) {
+      const referenceText = focus
+        ? `Here is the reference text extracted directly from Page ${page} of "${docTitle}":\n\n> ${focus.slice(0, 600)}\n\n`
+        : `No selectable text could be extracted from Page ${page} of "${docTitle}", so page-specific content is unavailable.\n\n`;
       explanation =
         `### ⚠️ Model Temporarily Busy\n\n` +
-        `The selected AI model is currently experiencing temporary high traffic. Here is the reference text extracted directly from Page ${page} of "${docTitle}":\n\n` +
-        `> ${focus.slice(0, 600)}\n\n` +
+        `The selected AI model is currently experiencing temporary high traffic. ${referenceText}` +
         `**Recommended Action:**\n` +
         `- Select **Gemini 3.5 Flash Lite** or **Gemini 2.5 Flash** in the model selector above for instant response.\n` +
         `- Click **"Clear & Ask Again"**.\n` +
@@ -1121,7 +1131,9 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     } else {
       explanation =
         'The AI service is not configured on this server, so this is the text extracted from the page ' +
-        'rather than a generated explanation. Set GEMINI_API_KEY to get full AI explanations.' +
+        (focus
+          ? 'rather than a generated explanation. Set GEMINI_API_KEY to get full AI explanations.'
+          : 'rather than a generated explanation. This page has no selectable text, so PDF-specific questions cannot be answered offline. Set GEMINI_API_KEY to answer general questions.') +
         (question ? `\n\nYour question: "${question}"` : '');
     }
 
@@ -1129,7 +1141,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       mode,
       heading: question ? `Page ${page} — your question` : `Page ${page} of ${docTitle}`,
       explanation,
-      keyPoints: sentences.length ? sentences : [focus.slice(0, 300)],
+      keyPoints: sentences.length ? sentences : focus ? [focus.slice(0, 300)] : [],
       followUp: 'Select Gemini 3.5 Flash or try asking again in a few moments.'
     };
   }

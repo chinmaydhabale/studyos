@@ -28,6 +28,7 @@ const MainLayout: React.FC = () => {
   const [isNotifOpen, setIsNotifOpen] = useState<boolean>(false);
   const [isCommandOpen, setIsCommandOpen] = useState<boolean>(false);
   const [aiCoachPresetPrompt, setAiCoachPresetPrompt] = useState<string>('');
+  const [aiCoachPresetSource, setAiCoachPresetSource] = useState<{ title: string; text: string } | null>(null);
 
   const {
     currentUser,
@@ -44,6 +45,7 @@ const MainLayout: React.FC = () => {
   } = useSocket();
 
   const handleRunAiPrompt = (prompt: string) => {
+    setAiCoachPresetSource(null);
     setAiCoachPresetPrompt(prompt);
     setActiveTab('ai-coach');
   };
@@ -69,6 +71,7 @@ const MainLayout: React.FC = () => {
           <div className="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scrollbar">
             <SyncTheater
               onAskAiDoubtAtTimestamp={(timestamp) => {
+                setAiCoachPresetSource(null);
                 setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
                 setActiveTab('ai-coach');
               }}
@@ -90,6 +93,7 @@ const MainLayout: React.FC = () => {
         {activeTab === 'web-notes' && (
           <WebNotesView
             onAskAiDoubt={(prompt) => {
+              setAiCoachPresetSource(null);
               setAiCoachPresetPrompt(prompt);
               setActiveTab('ai-coach');
             }}
@@ -99,7 +103,8 @@ const MainLayout: React.FC = () => {
         {/* In-App PDF Reader (Solo reading + Group Co-Study sync) */}
         {activeTab === 'pdf' && (
           <PDFReaderView
-            onAskAiDoubt={(prompt) => {
+            onAskAiDoubt={(prompt, source) => {
+              setAiCoachPresetSource(source ?? null);
               setAiCoachPresetPrompt(prompt);
               setActiveTab('ai-coach');
             }}
@@ -114,6 +119,7 @@ const MainLayout: React.FC = () => {
             <div className="flex-1 flex flex-col h-auto lg:h-full min-h-[320px] lg:overflow-hidden">
               <SyncTheater
                 onAskAiDoubtAtTimestamp={(timestamp) => {
+                  setAiCoachPresetSource(null);
                   setAiCoachPresetPrompt(`Explain the concept shown at timestamp ${Math.floor(timestamp / 60)}:${Math.floor(timestamp % 60).toString().padStart(2, '0')} in our lecture video.`);
                   setActiveTab('ai-coach');
                 }}
@@ -194,7 +200,11 @@ const MainLayout: React.FC = () => {
           <div className="flex-1 min-h-0 overflow-y-auto">
             <AICoachHub
               initialPrompt={aiCoachPresetPrompt}
-              onClearInitialPrompt={() => setAiCoachPresetPrompt('')}
+              initialSource={aiCoachPresetSource}
+              onClearInitialPrompt={() => {
+                setAiCoachPresetPrompt('');
+                setAiCoachPresetSource(null);
+              }}
               onNavigateToCalendar={() => setActiveTab('calendar')}
             />
           </div>

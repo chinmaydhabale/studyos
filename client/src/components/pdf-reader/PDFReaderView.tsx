@@ -31,7 +31,7 @@ import { PDFAiPanel } from './PDFAiPanel.js';
 import { extractPageText, pdfjsLib, PDFDocumentProxy } from '../../lib/pdfjs.js';
 
 interface PDFReaderViewProps {
-  onAskAiDoubt?: (prompt: string) => void;
+  onAskAiDoubt?: (prompt: string, source?: { title: string; text: string }) => void;
 }
 
 // Pages rendered around the current one. Keeps huge PDFs fast while the
@@ -39,6 +39,8 @@ interface PDFReaderViewProps {
 const PAGE_RENDER_RADIUS = 2;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 3;
+const MAX_AI_COACH_SOURCE_CHARS = 120000;
+const MAX_AI_COACH_SOURCE_PAGES = 200;
 
 export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) => {
   const {
@@ -100,6 +102,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const [selectedText, setSelectedText] = useState<string>('');
   const [selectionAnchor, setSelectionAnchor] = useState<{ x: number; y: number } | null>(null);
   const [autoRunSelection, setAutoRunSelection] = useState<number>(0);
+  const [isPreparingAiSource, setIsPreparingAiSource] = useState<boolean>(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -422,10 +425,69 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     }
   };
 
-  const handleAskAiAboutDocument = () => {
-    if (!activePdfDoc) return;
-    const prompt = `Please explain the key formulas, definitions, and exam tricks from "${activePdfDoc.title}". Provide 3 high-yield memory techniques and practice questions.`;
-    onAskAiDoubt?.(prompt);
+  const handleAskAiAboutDocument = async () => {
+    const document = activePdfDoc;
+    const sourcePdf = pdfDoc;
+    if (!document) return;
+    if (!sourcePdf) {
+      addToast('PDF Still Loading', 'Wait for the PDF pages to finish loading, then open AI Coach Hub.', 'info');
+      return;
+    }
+
+    setIsPreparingAiSource(true);
+    let preparedSource: { title: string; text: string } | null = null;
+    try {
+      const pageLimit = Math.min(sourcePdf.numPages, MAX_AI_COACH_SOURCE_PAGES);
+      const pageSections: string[] = [];
+      let totalChars = 0;
+      let processedPageCount = 0;
+      let truncated = pageLimit < sourcePdf.numPages;
+
+      for (let page = 1; page <= pageLimit && totalChars < MAX_AI_COACH_SOURCE_CHARS; page++) {
+        processedPageCount = page;
+        const pageText = await extractPageText(sourcePdf, page);
+        if (!pageText) continue;
+
+        const separator = pageSections.length ? '\n\n' : '';
+        const section = `Page ${page}: ${pageText}`;
+        const remainingChars = MAX_AI_COACH_SOURCE_CHARS - totalChars - separator.length;
+        if (section.length > remainingChars) {
+          pageSections.push(`${separator}${section.slice(0, Math.max(0, remainingChars))}`);
+          totalChars = MAX_AI_COACH_SOURCE_CHARS;
+          truncated = true;
+          break;
+        }
+
+        pageSections.push(`${separator}${section}`);
+        totalChars += separator.length + section.length;
+      }
+
+      if (processedPageCount < sourcePdf.numPages) truncated = true;
+      if (activePdfDocRef.current?.id !== document.id) return;
+
+      let sourceText = pageSections.join('');
+      if (!sourceText.trim()) {
+        addToast('No Selectable Text', 'This PDF has no extractable text, so AI Coach Hub cannot create document-based materials from it.', 'alert');
+        return;
+      }
+
+      if (truncated) {
+        const note = '[Document text truncated for AI context.]';
+        sourceText = `${sourceText.slice(0, MAX_AI_COACH_SOURCE_CHARS - note.length - 2)}\n\n${note}`;
+      }
+
+      preparedSource = { title: document.title, text: sourceText };
+    } catch (err) {
+      console.error('Failed to extract PDF text for AI Coach Hub:', err);
+      addToast('PDF Text Extraction Failed', 'Could not prepare this PDF for AI Coach Hub. Please try again.', 'alert');
+    } finally {
+      setIsPreparingAiSource(false);
+    }
+
+    if (preparedSource) {
+      const prompt = `Use the uploaded PDF "${preparedSource.title}" as the source. Summarize its key formulas, definitions, and exam tricks, then provide 3 high-yield memory techniques and practice questions.`;
+      onAskAiDoubt?.(prompt, preparedSource);
+    }
   };
 
   // Filter peers reading
@@ -1215,6 +1277,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
             } shrink-0 h-full border-l border-white/10 bg-slate-950/95 backdrop-blur-md flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 select-text transition-all`}
           >
             <PDFAiPanel
+              key={activePdfDoc?.id || 'no-pdf'}
               docTitle={activePdfDoc?.title || 'Study PDF'}
               currentPage={displayPage}
               userId={currentUser.id}
@@ -1228,6 +1291,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               isExpanded={isAiExpanded}
               onToggleExpand={() => setIsAiExpanded(prev => !prev)}
               onOpenCoachHub={handleAskAiAboutDocument}
+              isPreparingCoachHub={isPreparingAiSource}
             />
           </div>
         )}

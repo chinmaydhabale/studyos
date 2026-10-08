@@ -7,15 +7,17 @@ interface FormattedAiMessageProps {
   className?: string;
 }
 
-function cleanTex(tex: string): string {
+function normalizeTexCommands(tex: string): string {
   // Repair doubled backslashes on recognized multi-letter LaTeX commands (from JSON over-escaping),
   // while preserving intentional LaTeX double-backslash row separators (\\) in cases, matrices, aligned, etc.
-  return tex
-    .trim()
-    .replace(
-      /\\\\(frac|sqrt|times|text|mathbf|mathrm|left|right|begin|end|cdot|pm|approx|alpha|beta|gamma|theta|sum|int|infty|ge|le|neq|div|quad|xrightarrow|binom|over|partial|lim|log|ln|sin|cos|tan|pi|lambda|sigma|omega|delta|nabla|phi|psi|rho|tau|mu|nu|zeta|eta|epsilon)\b/g,
-      '\\$1'
-    );
+  return tex.replace(
+    /\\\\(frac|dfrac|tfrac|sqrt|times|text|mathbf|mathrm|mathit|operatorname|overline|underline|vec|left|right|begin|end|cdot|pm|approx|alpha|beta|gamma|theta|sum|int|infty|ge|le|neq|div|quad|xrightarrow|binom|over|partial|lim|log|ln|sin|cos|tan|pi|lambda|sigma|omega|delta|nabla|phi|psi|rho|tau|mu|nu|zeta|eta|epsilon)\b/g,
+    '\\$1'
+  );
+}
+
+function cleanTex(tex: string): string {
+  return normalizeTexCommands(tex).trim();
 }
 
 /**
@@ -48,7 +50,11 @@ function isMathLine(line: string): boolean {
   if (t.length < 3 || t.length > 600) return false;
   // Does it contain clear LaTeX math commands?
   const hasLatex = /\\(frac|times|sqrt|xrightarrow|left|right|text\{|pm|cdot|approx|alpha|beta|theta|sum|int|partial|infty|ge|le|neq|div|over|binom|quad|pi)/.test(t);
-  if (hasLatex) return true;
+  if (hasLatex) {
+    const startsWithLatexCommand = /^\\[a-zA-Z]+/.test(t);
+    const hasProse = /\b(?:the|is|are|was|were|be|been|being|this|that|these|those|we|you|it|they|using|use|take|where|when|then|because|so|and|but|if|for|from|with|by|of|to|in|on|as|let|consider|substitute|calculate|find|solve|result|therefore|thus|hence|which|value|formula|equation|answer|gives|means|equals)\b/i.test(t);
+    return startsWithLatexCommand && !hasProse;
+  }
   // Does it look like a standalone mathematical equation line (e.g. "MP = CP + 40")
   if (/^[A-Za-z0-9_\(\)]+\s*=\s*[A-Za-z0-9_\(\)\+\-\*\/\^\s\\]+$/.test(t) && !t.includes('http') && !t.includes('**')) {
     return true;
@@ -57,25 +63,27 @@ function isMathLine(line: string): boolean {
 }
 
 /**
- * Parses inline text for bold, italics, code, and inline LaTeX ($...$ and \(...\))
+ * Parses inline text for Markdown emphasis/code, delimited math, and common bare LaTeX commands.
  */
 const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
   const parts = useMemo(() => {
+    const sourceText = normalizeTexCommands(text);
     // Regex matches:
     // 1. Display math: $$...$$ or \[...\]
     // 2. Inline math: $...$ or \(...\)
     // 3. Bold: **...**
     // 4. Inline code: `...`
     // 5. Italic: *...*
+    // 6. Common unwrapped LaTeX commands used inline by generated answers
     const tokens: React.ReactNode[] = [];
-    const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$([^\$\n]+?)\$|\\\([\s\S]+?\\\)|\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*)/g;
+    const regex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$([^\$\n]+?)\$|\\\([\s\S]+?\\\)|\*\*([^*]+)\*\*|`([^`]+)`|\\(?:frac|dfrac|tfrac|binom)\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*\{(?:[^{}]|\{[^{}]*\})*\}|\\sqrt(?:\[[^\]]*\])?\s*\{(?:[^{}]|\{[^{}]*\})*\}|\\(?:text|mathrm|mathbf|mathit|operatorname|overline|underline|vec)\s*\{(?:[^{}]|\{[^{}]*\})*\}|\\(?:times|cdot|pm|approx|alpha|beta|gamma|theta|sum|int|partial|infty|ge|le|neq|div|quad|pi|lambda|sigma|omega|delta|nabla|phi|psi|rho|tau|mu|nu|zeta|eta|epsilon)\b|\*([^*]+)\*)/g;
     
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(sourceText)) !== null) {
       if (match.index > lastIndex) {
-        tokens.push(text.substring(lastIndex, match.index));
+        tokens.push(sourceText.substring(lastIndex, match.index));
       }
 
       const fullMatch = match[0];
@@ -125,7 +133,7 @@ const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
         // Bold: **text**
         tokens.push(
           <strong key={match.index} className="font-bold text-white tracking-wide">
-            {match[3]}
+            <InlineFormattedText text={match[3]} />
           </strong>
         );
       } else if (match[4]) {
@@ -142,16 +150,25 @@ const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
         // Italic: *text*
         tokens.push(
           <em key={match.index} className="italic text-slate-200">
-            {match[5]}
+            <InlineFormattedText text={match[5]} />
           </em>
+        );
+      } else if (fullMatch.startsWith('\\')) {
+        const html = renderKaTeX(fullMatch, false);
+        tokens.push(
+          <span
+            key={match.index}
+            className="inline-block px-1 align-baseline"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
         );
       }
 
       lastIndex = regex.lastIndex;
     }
 
-    if (lastIndex < text.length) {
-      tokens.push(text.substring(lastIndex));
+    if (lastIndex < sourceText.length) {
+      tokens.push(sourceText.substring(lastIndex));
     }
 
     return tokens;
@@ -191,7 +208,7 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
     let inCodeBlock = false;
     let codeLanguage = '';
     let codeContent: string[] = [];
-    let inMathBlock = false;
+    let mathBlockClose: '$$' | '\\]' | null = null;
     let mathContent: string[] = [];
 
     const flushTable = (key: string | number) => {
@@ -237,9 +254,91 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
       );
     };
 
+    const flushCodeBlock = (key: string | number) => {
+      if (!inCodeBlock) return;
+      const code = codeContent.join('\n');
+      codeContent = [];
+      inCodeBlock = false;
+      const language = codeLanguage;
+      codeLanguage = '';
+
+      blocks.push(
+        <div key={`code-${key}`} className="my-3 rounded-2xl bg-slate-950 border border-white/10 overflow-hidden shadow-xl">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-white/5 text-[11px] text-slate-400">
+            <span className="font-mono text-cyan-400">{language || 'code'}</span>
+            <button
+              type="button"
+              onClick={() => handleCopy(code, typeof key === 'number' ? key : lines.length)}
+              className="flex items-center gap-1 hover:text-white transition-colors"
+            >
+              {copiedCodeIdx === (typeof key === 'number' ? key : lines.length) ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-400" />
+                  <span className="text-emerald-400">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+          <pre className="p-3 text-xs font-mono text-cyan-200 overflow-x-auto custom-scrollbar leading-relaxed">
+            {code}
+          </pre>
+        </div>
+      );
+    };
+
+    const flushMathBlock = (key: string | number) => {
+      if (!mathBlockClose) return;
+      const math = mathContent.join('\n').trim();
+      mathContent = [];
+      mathBlockClose = null;
+      if (!math) return;
+
+      const html = renderKaTeX(math, true);
+      blocks.push(
+        <div
+          key={`math-block-${key}`}
+          className="my-3 p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-center overflow-x-auto custom-scrollbar shadow-inner"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    };
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
+
+      // Code fences take priority so math-like code stays literal text.
+      if (inCodeBlock) {
+        if (trimmed.startsWith('```')) {
+          flushCodeBlock(i);
+        } else {
+          codeContent.push(line);
+        }
+        continue;
+      }
+
+      // Once a display-math block starts, collect every line until its matching fence.
+      if (mathBlockClose) {
+        if (trimmed === mathBlockClose) {
+          flushMathBlock(i);
+        } else {
+          mathContent.push(line);
+        }
+        continue;
+      }
+
+      if (trimmed.startsWith('```')) {
+        flushTable(i);
+        inCodeBlock = true;
+        codeLanguage = trimmed.slice(3).trim();
+        codeContent = [];
+        continue;
+      }
 
       // Math block fence: $$ or \[
       if (trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 3) {
@@ -292,91 +391,8 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
 
       if (trimmed === '$$' || trimmed === '\\[') {
         flushTable(i);
-        if (inMathBlock) {
-          // Close
-          const math = mathContent.join('\n');
-          mathContent = [];
-          inMathBlock = false;
-          const html = renderKaTeX(math, true);
-          blocks.push(
-            <div
-              key={`math-block-${i}`}
-              className="my-3 p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-center overflow-x-auto custom-scrollbar shadow-inner"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          );
-        } else {
-          // Open
-          inMathBlock = true;
-          mathContent = [];
-        }
-        continue;
-      }
-
-      if (inMathBlock) {
-        if (trimmed === '$$' || trimmed === '\\]') {
-          const math = mathContent.join('\n');
-          mathContent = [];
-          inMathBlock = false;
-          const html = renderKaTeX(math, true);
-          blocks.push(
-            <div
-              key={`math-block-${i}`}
-              className="my-3 p-3 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-center overflow-x-auto custom-scrollbar shadow-inner"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          );
-        } else {
-          mathContent.push(line);
-        }
-        continue;
-      }
-
-      // Code block fence ```
-      if (trimmed.startsWith('```')) {
-        flushTable(i);
-        if (inCodeBlock) {
-          const code = codeContent.join('\n');
-          codeContent = [];
-          inCodeBlock = false;
-          const blockIdx = i;
-          blocks.push(
-            <div key={`code-${i}`} className="my-3 rounded-2xl bg-slate-950 border border-white/10 overflow-hidden shadow-xl">
-              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-white/5 text-[11px] text-slate-400">
-                <span className="font-mono text-cyan-400">{codeLanguage || 'code'}</span>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(code, blockIdx)}
-                  className="flex items-center gap-1 hover:text-white transition-colors"
-                >
-                  {copiedCodeIdx === blockIdx ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-400" />
-                      <span className="text-emerald-400">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
-              </div>
-              <pre className="p-3 text-xs font-mono text-cyan-200 overflow-x-auto custom-scrollbar leading-relaxed">
-                {code}
-              </pre>
-            </div>
-          );
-        } else {
-          inCodeBlock = true;
-          codeLanguage = trimmed.slice(3).trim();
-          codeContent = [];
-        }
-        continue;
-      }
-
-      if (inCodeBlock) {
-        codeContent.push(line);
+        mathBlockClose = trimmed === '$$' ? '$$' : '\\]';
+        mathContent = [];
         continue;
       }
 
@@ -528,6 +544,9 @@ export const FormattedAiMessage: React.FC<FormattedAiMessageProps> = ({ content,
       );
     }
 
+    // Preserve model output when a generated code/math fence is missing its closer.
+    if (inCodeBlock) flushCodeBlock('end');
+    if (mathBlockClose) flushMathBlock('end');
     flushTable('end');
     return blocks;
   }, [content, copiedCodeIdx]);

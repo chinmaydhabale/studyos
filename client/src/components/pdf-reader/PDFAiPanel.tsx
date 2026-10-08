@@ -135,6 +135,7 @@ interface PDFAiPanelProps {
   onClose: () => void;
   getPageText: (page: number) => Promise<string>;
   onOpenCoachHub?: () => void;
+  isPreparingCoachHub?: boolean;
   addToast: (title: string, message: string, type?: 'success' | 'info' | 'alert') => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
@@ -160,6 +161,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   onClose,
   getPageText,
   onOpenCoachHub,
+  isPreparingCoachHub = false,
   addToast,
   isExpanded,
   onToggleExpand
@@ -182,6 +184,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const isLoadingRef = useRef(false);
 
   // Fetch AI server status and available models
   useEffect(() => {
@@ -280,6 +283,8 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
     ask?: string;
     page?: number;
   }) => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     const page = opts.page ?? currentPage;
     const effectiveSelectedText = opts.mode === 'page' ? undefined : opts.selected;
     setIsLoading(true);
@@ -335,7 +340,9 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
       if (result.source === 'fallback') {
         addToast(
           'AI Offline',
-          'Showing extracted text instead — check GEMINI_API_KEY for real AI explanations.',
+          pageText || effectiveSelectedText
+            ? 'Showing extracted text instead — check GEMINI_API_KEY for real AI explanations.'
+            : 'No PDF text was available for a grounded answer, and the AI service is offline. Check GEMINI_API_KEY to answer general questions.',
           'info'
         );
       }
@@ -343,13 +350,14 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
       console.error('PDF AI assist failed:', err);
       addToast('AI Unavailable', 'Could not reach the AI professor for this page. Please try again.', 'alert');
     } finally {
+      isLoadingRef.current = false;
       setIsLoading(false);
     }
   };
 
   const handleAsk = () => {
     const ask = question.trim();
-    if (!ask) return;
+    if (!ask || isLoadingRef.current) return;
     setQuestion('');
     runAssist({ mode: 'question', ask, selected: selectedText || undefined });
   };
@@ -357,12 +365,12 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   // Triggered when student taps "Explain with AI" from the PDF text selection popover
   const lastAutoRunRef = useRef<number>(0);
   useEffect(() => {
-    if (!autoRunSelection || autoRunSelection === lastAutoRunRef.current) return;
+    if (isLoading || !autoRunSelection || autoRunSelection === lastAutoRunRef.current) return;
     if (!selectedText || !selectedText.trim()) return;
     lastAutoRunRef.current = autoRunSelection;
     runAssist({ mode: 'selection', selected: selectedText });
     onClearAutoRun?.();
-  }, [autoRunSelection, selectedText, onClearAutoRun]);
+  }, [autoRunSelection, selectedText, onClearAutoRun, isLoading]);
 
   return (
     <div className="h-full flex flex-col bg-slate-950/95 backdrop-blur-md overflow-hidden text-slate-100 select-text">
@@ -691,6 +699,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
             {ex.result.followUp && (
               <button
                 type="button"
+                disabled={isLoading}
                 onClick={() => {
                   setQuestion(ex.result.followUp || '');
                   runAssist({ mode: 'question', ask: ex.result.followUp });
@@ -768,9 +777,10 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
         <div className="flex items-end gap-2 bg-slate-950 border border-white/15 focus-within:border-indigo-400 rounded-2xl p-1.5 transition-colors">
           <textarea
             value={question}
+            disabled={isLoading}
             onChange={e => setQuestion(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
                 e.preventDefault();
                 handleAsk();
               }
@@ -794,10 +804,11 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
           <button
             type="button"
             onClick={onOpenCoachHub}
-            className="w-full text-[10px] text-slate-400 hover:text-indigo-300 transition-colors text-center"
+            disabled={isPreparingCoachHub}
+            className="w-full text-[10px] text-slate-400 hover:text-indigo-300 transition-colors text-center disabled:opacity-50"
             title="Open the full AI Coach hub for custom tests, notes & audio summaries"
           >
-            Need flashcards or audio overview? Open AI Coach Hub →
+            {isPreparingCoachHub ? 'Extracting PDF text for AI Coach Hub…' : 'Need flashcards or audio overview? Open AI Coach Hub →'}
           </button>
         )}
       </div>
