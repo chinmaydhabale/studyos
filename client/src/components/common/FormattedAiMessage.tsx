@@ -48,12 +48,48 @@ function unwrapAiResponseEnvelope(content: string): string {
 
   for (let depth = 0; depth < 2; depth++) {
     const fenced = current.match(/^```\s*(json)?\s*\r?\n([\s\S]*?)\r?\n```$/i);
-    const candidate = fenced ? fenced[2].trim() : current;
-    let parsed: unknown;
+    const candidate = (fenced ? fenced[2] : current).trim();
+    let parsed: unknown = null;
 
+    // 1. Direct attempt
     try {
       parsed = JSON.parse(candidate);
     } catch {
+      // 2. Sanitize unescaped LaTeX backslashes (\sqrt, \frac, \times, etc.)
+      try {
+        const sanitized = candidate
+          .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\')
+          .replace(/,\s*([}\]])/g, '$1');
+        parsed = JSON.parse(sanitized);
+      } catch {
+        // 3. Slice from first { to last }
+        const first = candidate.indexOf('{');
+        const last = candidate.lastIndexOf('}');
+        if (first !== -1 && last > first) {
+          try {
+            const sliced = candidate
+              .slice(first, last + 1)
+              .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\')
+              .replace(/,\s*([}\]])/g, '$1');
+            parsed = JSON.parse(sliced);
+          } catch {}
+        }
+      }
+    }
+
+    // 4. Regex fallback for unparseable raw JSON strings containing "response": "..."
+    if (!parsed) {
+      const match = candidate.match(
+        /"(?:response|explanation|content|answer|solution|text|markdown)"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"[a-zA-Z0-9_]+"|"\s*})/
+      );
+      if (match && match[1]) {
+        current = match[1]
+          .replace(/\\"/g, '"')
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '')
+          .replace(/\\t/g, '  ');
+        continue;
+      }
       return current;
     }
 
@@ -66,12 +102,17 @@ function unwrapAiResponseEnvelope(content: string): string {
 
     const answer = [
       data.explanation,
+      data.response,
       data.content,
       data.solution_breakdown,
       data.answer,
+      data.solution,
       data.markdown,
       data.text,
-      data.solution
+      data.message,
+      data.output,
+      data.result,
+      data.body
     ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
     const coachMessage = typeof data.coach_message === 'string' ? data.coach_message.trim() : '';

@@ -1298,11 +1298,16 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       const result = jsonRes.data;
       const rawExp =
         result.explanation ||
+        (result as any).response ||
         (result as any).content ||
         (result as any).solution_breakdown ||
         (result as any).answer ||
+        (result as any).solution ||
         (result as any).markdown ||
-        (result as any).text;
+        (result as any).text ||
+        (result as any).message ||
+        (result as any).output ||
+        (result as any).result;
       const explanation = this.cleanString(rawExp, 16000) || '';
       const keyPoints = this.cleanStringArray(
         result.keyPoints || (result as any).key_points || (result as any).points,
@@ -1359,23 +1364,28 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         if (textRes?.text && textRes.text.trim()) {
           const textResult = textRes.text.trim();
 
-          // Check if fallback model output is a JSON envelope/object
-          let parsedJson: any = null;
-          const candidate = textResult.replace(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i, '$1').trim();
-          if (candidate.startsWith('{') && candidate.endsWith('}')) {
-            try {
-              parsedJson = JSON.parse(candidate);
-            } catch {}
+          // Check if fallback model output is a JSON envelope/object using cleanAndParseJson
+          let parsedJson: any = gemini.cleanAndParseJson(textResult);
+          if (!parsedJson) {
+            const candidate = textResult.replace(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i, '$1').trim();
+            if (candidate.startsWith('{') && candidate.endsWith('}')) {
+              parsedJson = gemini.cleanAndParseJson(candidate);
+            }
           }
 
           if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
             const rawExp =
               parsedJson.explanation ||
+              parsedJson.response ||
               parsedJson.content ||
               parsedJson.solution_breakdown ||
               parsedJson.answer ||
+              parsedJson.solution ||
               parsedJson.markdown ||
-              parsedJson.text;
+              parsedJson.text ||
+              parsedJson.message ||
+              parsedJson.output ||
+              parsedJson.result;
             if (rawExp || Array.isArray(parsedJson.blocks)) {
               const heading =
                 this.cleanString(parsedJson.heading, 250) ||
@@ -1409,9 +1419,20 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
             }
           }
 
-          const headingMatch = textResult.match(/^#+\s*(.+)$/m);
+          // If textResult is still a raw JSON string like {"response": "..."} that failed full JSON.parse:
+          let fallbackExp = textResult;
+          const jsonStringMatch = textResult.match(/"(?:response|explanation|content|answer|solution|text)"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"[a-zA-Z0-9_]+"|"\s*})/);
+          if (jsonStringMatch && jsonStringMatch[1]) {
+            fallbackExp = jsonStringMatch[1]
+              .replace(/\\"/g, '"')
+              .replace(/\\n/g, '\n')
+              .replace(/\\r/g, '')
+              .replace(/\\t/g, '  ');
+          }
+
+          const headingMatch = fallbackExp.match(/^#+\s*(.+)$/m);
           const heading = headingMatch ? headingMatch[1].trim() : (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
-          const exp = this.cleanString(textResult, 16000) || textResult;
+          const exp = this.cleanString(fallbackExp, 16000) || fallbackExp;
           const keyPoints = [
             'Follow systematic step-by-step problem breakdown',
             'Verify intermediate equations before substitution',

@@ -255,9 +255,10 @@ export class GeminiService {
    * - Strips markdown code fences (```json ... ```)
    * - Extracts JSON object or array bounds
    * - Escapes unescaped LaTeX backslashes (\sqrt, \frac, \alpha, \times, \pm, \cdot, etc.)
-   * - Escapes literal raw newlines and tabs inside JSON string literals
+   * - Preserves genuine JSON newline escapes (\n) while allowing KaTeX \n commands (\neq, \nu, \nabla)
+   * - Strips trailing commas and normalizes unescaped control chars
    */
-  private cleanAndParseJson<T>(raw: string): T | null {
+  public cleanAndParseJson<T>(raw: string): T | null {
     let str = (raw || '').trim();
     if (str.startsWith('```')) {
       str = str.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
@@ -304,9 +305,10 @@ export class GeminiService {
           out += str.slice(i, i + 6);
           i += 5;
         } else if (next === 'n') {
-          // Check if followed by letters (e.g. \neq, \nu, \nabla) -> LaTeX command!
-          const following = str.slice(i + 2, i + 5);
-          if (/^[a-zA-Z]/.test(following)) {
+          // Only true KaTeX commands starting with \n should be treated as LaTeX (\neq, \nu, \nabla, etc.).
+          // Everything else is a real JSON newline escape (\n)!
+          const following = str.slice(i + 2, i + 12);
+          if (/^(?:eq|e|u|abla|otin|i|atural|eg|approx|exists|sim|subset|supset|ormalsize)(?![a-zA-Z])/i.test(following)) {
             out += '\\\\';
           } else {
             // Real JSON newline escape (\n)
@@ -314,7 +316,7 @@ export class GeminiService {
             i++;
           }
         } else {
-          // All LaTeX backslashes (\frac, \times, \text, \right, \left, \sqrt, \alpha, \beta, \cdot, \pm, etc.)
+          // All other LaTeX backslashes (\frac, \times, \text, \right, \left, \sqrt, \alpha, \beta, \cdot, \pm, etc.)
           // MUST be escaped as \\ so JSON.parse keeps them as valid LaTeX instead of converting to control characters!
           out += '\\\\';
         }
@@ -334,12 +336,15 @@ export class GeminiService {
     }
 
     try {
-      return JSON.parse(out) as T;
+      const cleaned = out.replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(cleaned) as T;
     } catch {}
 
     // Regex fallback
     try {
-      const sanitized = str.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+      const sanitized = str
+        .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\')
+        .replace(/,\s*([}\]])/g, '$1');
       return JSON.parse(sanitized) as T;
     } catch {}
 
