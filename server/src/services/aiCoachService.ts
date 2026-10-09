@@ -976,6 +976,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
        \text{Compound Interest} = P \left(1 + \frac{R}{100}\right)^T - P
        $$
    - CRITICAL: Never write standalone formulas, equations, or LaTeX commands naked on a line without wrapping them in $$...$$ or $...$. ALWAYS wrap them in $$...$$ so they render cleanly.
+   - Reserve the $ sign for math delimiters only. For money/currency, write the word (e.g. "5 dollars", "Rs 500", "₹500") or escape it as \$ so it is not mistaken for a math expression.
    - Separate every section, heading, and step card with normal markdown line breaks.
 
 3. STRUCTURED PEDAGOGICAL BREAKDOWN:

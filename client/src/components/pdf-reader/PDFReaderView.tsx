@@ -1283,7 +1283,6 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
               userId={currentUser.id}
               selectedText={selectedText}
               autoRunSelection={autoRunSelection}
-              onClearAutoRun={() => setAutoRunSelection(0)}
               onClearSelection={clearPdfSelection}
               onClose={() => setIsAiOpen(false)}
               getPageText={getPageText}

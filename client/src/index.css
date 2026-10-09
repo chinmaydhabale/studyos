@@ -14,6 +14,17 @@
   }
 }
 
+/* Let long KaTeX display equations scroll horizontally instead of overflowing the chat width */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+  margin: 0;
+}
+.katex-display > .katex {
+  white-space: nowrap;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

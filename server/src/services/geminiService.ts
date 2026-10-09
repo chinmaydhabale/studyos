@@ -215,6 +215,13 @@ export class GeminiService {
       });
     }
 
+    // Gemini rejects multi-turn requests that don't begin with a user turn, so drop any
+    // leading model turns (e.g. when the first saved exchange was a page-summary with no
+    // preceding user question). The prompt above guarantees a trailing user turn remains.
+    while (contents.length > 1 && contents[0].role === 'model') {
+      contents.shift();
+    }
+
     const payload: Record<string, unknown> = { contents };
     if (req.systemInstruction) {
       payload.systemInstruction = { parts: [{ text: req.systemInstruction }] };

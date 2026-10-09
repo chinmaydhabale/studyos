@@ -130,7 +130,6 @@ interface PDFAiPanelProps {
   userId: string;
   selectedText: string;
   autoRunSelection?: number;
-  onClearAutoRun?: () => void;
   onClearSelection: () => void;
   onClose: () => void;
   getPageText: (page: number) => Promise<string>;
@@ -156,7 +155,6 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   userId,
   selectedText,
   autoRunSelection,
-  onClearAutoRun,
   onClearSelection,
   onClose,
   getPageText,
@@ -251,7 +249,33 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
 
   const activeModelObj = models.find(m => m.id === selectedModel) || models[0];
 
-  const handleCopySolution = (ex: Exchange) => {
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Clipboard API can throw in insecure (plain http) contexts — fall through to the legacy path.
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleCopySolution = async (ex: Exchange) => {
     const isFallback = ex.result.source === 'fallback';
     const fallbackNotice = isFallback ? `> *[Note: Extracted Page Text (AI Offline Fallback)]*\n\n` : '';
     const fullText = `${fallbackNotice}# ${ex.result.heading}\n\n${ex.result.explanation}${
@@ -261,7 +285,11 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
         ? `\n\n### ${isFallback ? 'Extracted Key Sentences' : 'Key Exam Takeaways'}:\n${ex.result.keyPoints.map(p => `- ${p}`).join('\n')}`
         : ''
     }`;
-    navigator.clipboard.writeText(fullText);
+    const ok = await copyToClipboard(fullText);
+    if (!ok) {
+      addToast('Copy Failed', 'Clipboard is unavailable in this browser context. Select and copy the text manually.', 'alert');
+      return;
+    }
     setCopiedId(ex.id);
     addToast(
       isFallback ? 'Copied Extracted Text' : 'Copied to Clipboard',
@@ -338,13 +366,23 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
       ]);
 
       if (result.source === 'fallback') {
-        addToast(
-          'AI Offline',
-          pageText || effectiveSelectedText
-            ? 'Showing extracted text instead — check GEMINI_API_KEY for real AI explanations.'
-            : 'No PDF text was available for a grounded answer, and the AI service is offline. Check GEMINI_API_KEY to answer general questions.',
-          'info'
-        );
+        if (aiEnabled === false) {
+          // Server has no key configured — the extracted PDF text is the best we can show.
+          addToast(
+            'AI Offline',
+            pageText || effectiveSelectedText
+              ? 'Showing extracted page text instead — set GEMINI_API_KEY on the server for real AI explanations.'
+              : 'No PDF text was available for a grounded answer, and the AI service is offline. Set GEMINI_API_KEY to answer general questions.',
+            'info'
+          );
+        } else {
+          // Key is configured but the model was rate-limited / busy / returned nothing usable.
+          addToast(
+            'AI Model Busy',
+            'The AI model is rate-limited or busy right now — showing extracted page text. Please try again in a moment.',
+            'info'
+          );
+        }
       }
     } catch (err) {
       console.error('PDF AI assist failed:', err);
@@ -358,19 +396,23 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
   const handleAsk = () => {
     const ask = question.trim();
     if (!ask || isLoadingRef.current) return;
+    const selected = selectedText || undefined;
     setQuestion('');
-    runAssist({ mode: 'question', ask, selected: selectedText || undefined });
+    runAssist({ mode: 'question', ask, selected });
+    // Consume the passage so it isn't silently re-attached (with a mismatched page) to later questions.
+    if (selected) onClearSelection();
   };
 
-  // Triggered when student taps "Explain with AI" from the PDF text selection popover
+  // Triggered when student taps "Explain with AI" from the PDF text selection popover.
+  // The parent increments `autoRunSelection` monotonically; this ref de-dupes so each
+  // distinct trigger runs exactly once and never re-fires on unrelated re-renders.
   const lastAutoRunRef = useRef<number>(0);
   useEffect(() => {
     if (isLoading || !autoRunSelection || autoRunSelection === lastAutoRunRef.current) return;
     if (!selectedText || !selectedText.trim()) return;
     lastAutoRunRef.current = autoRunSelection;
     runAssist({ mode: 'selection', selected: selectedText });
-    onClearAutoRun?.();
-  }, [autoRunSelection, selectedText, onClearAutoRun, isLoading]);
+  }, [autoRunSelection, selectedText, isLoading]);
 
   return (
     <div className="h-full flex flex-col bg-slate-950/95 backdrop-blur-md overflow-hidden text-slate-100 select-text">
@@ -387,7 +429,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
                 <h3 className="text-xs font-black text-white tracking-tight truncate">
                   AI Study Professor
                 </h3>
-                <span className="px-1.5 py-0.2 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[9px] font-bold">
+                <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[9px] font-bold">
                   PRO
                 </span>
               </div>
@@ -448,7 +490,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
                     {activeModelObj.name}
                   </span>
                   <span
-                    className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full border ${activeModelObj.badgeColor}`}
+                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${activeModelObj.badgeColor}`}
                   >
                     {activeModelObj.tag}
                   </span>
@@ -488,7 +530,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
                         <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-200'}`}>
                           {m.name}
                         </span>
-                        <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border ${m.badgeColor}`}>
+                        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${m.badgeColor}`}>
                           {m.tag}
                         </span>
                       </div>
@@ -558,22 +600,24 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const q = 'Is page par jo main formulas aur concepts hain, unhe step-by-step detail me samjhao with shortcuts.';
-                    setQuestion(q);
-                    runAssist({ mode: 'question', ask: q });
-                  }}
+                  onClick={() =>
+                    runAssist({
+                      mode: 'question',
+                      ask: 'Is page par jo main formulas aur concepts hain, unhe step-by-step detail me samjhao with shortcuts.'
+                    })
+                  }
                   className="px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[11px] font-medium transition-all"
                 >
                   ⚡ Formulas & Shortcut Tricks
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const q = 'Is page ke topic par competitive exam me aane wale 3 typical questions banawo aur unka step by step solution do.';
-                    setQuestion(q);
-                    runAssist({ mode: 'question', ask: q });
-                  }}
+                  onClick={() =>
+                    runAssist({
+                      mode: 'question',
+                      ask: 'Is page ke topic par competitive exam me aane wale 3 typical questions banawo aur unka step by step solution do.'
+                    })
+                  }
                   className="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-medium transition-all"
                 >
                   🎯 Exam Questions & Solutions
@@ -700,10 +744,7 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
               <button
                 type="button"
                 disabled={isLoading}
-                onClick={() => {
-                  setQuestion(ex.result.followUp || '');
-                  runAssist({ mode: 'question', ask: ex.result.followUp });
-                }}
+                onClick={() => runAssist({ mode: 'question', ask: ex.result.followUp })}
                 className="w-full text-left p-2.5 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs text-cyan-200 transition-all flex items-center justify-between group"
                 title="Tap to ask this follow-up question"
               >
@@ -760,11 +801,12 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              const q = 'Is question ka complete mathematical derivation aur shortcut method dono detail me batao.';
-              setQuestion(q);
-              runAssist({ mode: 'question', ask: q });
-            }}
+            onClick={() =>
+              runAssist({
+                mode: 'question',
+                ask: 'Is question ka complete mathematical derivation aur shortcut method dono detail me batao.'
+              })
+            }
             disabled={isLoading}
             className="flex-1 py-1.5 px-2.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
           >
@@ -780,7 +822,15 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
             disabled={isLoading}
             onChange={e => setQuestion(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+              // The isComposing / keyCode 229 guard stops an IME commit (common for Hindi/
+              // Devanagari input) from being swallowed as a submit instead of confirming the word.
+              if (
+                e.key === 'Enter' &&
+                !e.shiftKey &&
+                !isLoading &&
+                !e.nativeEvent.isComposing &&
+                e.keyCode !== 229
+              ) {
                 e.preventDefault();
                 handleAsk();
               }
