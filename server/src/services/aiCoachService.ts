@@ -188,9 +188,9 @@ export class AICoachService {
     // Normalize literal escaped newlines and tabs from LLM outputs without corrupting LaTeX commands
     trimmed = trimmed
       .replace(/\\r\\n/g, '\n')
-      .replace(/\\n(?![a-zA-Z])/g, '\n')
-      .replace(/\\r(?![a-zA-Z])/g, '\n')
-      .replace(/\\t(?![a-zA-Z])/g, '  ');
+      .replace(/\\n(?!(?:eq|abla|atural|earrow|eg|cong|equiv|e\b|ew|exists|geq|geqq|gtr|i\b|Leftarrow|leftarrow|Leftrightarrow|leftrightarrow|leq|leqq|less|mid|obreak|ormalsize|otin|ot\b|parallel|prec|preceq|Rightarrow|rightarrow|shortmid|shortparallel|sim|subseteq|succ|succeq|supseteq|triangleleft|trianglelefteq|triangleright|trianglerighteq|u\b|VDash|Vdash|vDash|vdash)\b)/g, '\n')
+      .replace(/\\r(?!(?:angle|brace|ceil|floor|group|ight|ho|m\b|oot|ule)\b)/g, '\n')
+      .replace(/\\t(?!(?:au|ext|an|heta|imes|o\b|op|riangle|ilde|ag)\b)/g, '  ');
     return trimmed ? trimmed.slice(0, maxLength) : undefined;
   }
 
@@ -1038,8 +1038,19 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     if (jsonRes?.data) {
       const result = jsonRes.data;
-      const explanation = this.cleanString(result.explanation, 16000);
-      const keyPoints = this.cleanStringArray(result.keyPoints, 8, 800);
+      const rawExp =
+        result.explanation ||
+        (result as any).content ||
+        (result as any).solution_breakdown ||
+        (result as any).answer ||
+        (result as any).markdown ||
+        (result as any).text;
+      const explanation = this.cleanString(rawExp, 16000);
+      const keyPoints = this.cleanStringArray(
+        result.keyPoints || (result as any).key_points || (result as any).points,
+        8,
+        800
+      );
       if (explanation) {
         return {
           mode,
@@ -1047,7 +1058,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
           explanation,
           keyPoints,
           formula: this.cleanString(result.formula, 500),
-          followUp: this.cleanString(result.followUp, 500),
+          followUp: this.cleanString(result.followUp || (result as any).follow_up, 500),
           source: 'gemini',
           modelUsed: jsonRes.modelUsed || selectedModel
         };
@@ -1073,13 +1084,48 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         });
 
         if (textRes?.text && textRes.text.trim()) {
-          const textResult = textRes.text;
+          const textResult = textRes.text.trim();
+
+          // Check if fallback model output is a JSON envelope/object
+          let parsedJson: any = null;
+          const candidate = textResult.replace(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i, '$1').trim();
+          if (candidate.startsWith('{') && candidate.endsWith('}')) {
+            try {
+              parsedJson = JSON.parse(candidate);
+            } catch {}
+          }
+
+          if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+            const rawExp =
+              parsedJson.explanation ||
+              parsedJson.content ||
+              parsedJson.solution_breakdown ||
+              parsedJson.answer ||
+              parsedJson.markdown ||
+              parsedJson.text;
+            if (rawExp) {
+              const heading =
+                this.cleanString(parsedJson.heading, 250) ||
+                (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
+              return {
+                mode,
+                heading,
+                explanation: this.cleanString(rawExp, 16000) || textResult,
+                keyPoints: this.cleanStringArray(parsedJson.keyPoints || parsedJson.key_points, 8, 800),
+                formula: this.cleanString(parsedJson.formula, 500),
+                followUp: this.cleanString(parsedJson.followUp || parsedJson.follow_up, 500),
+                source: 'gemini',
+                modelUsed: textRes.modelUsed || selectedModel
+              };
+            }
+          }
+
           const headingMatch = textResult.match(/^#+\s*(.+)$/m);
           const heading = headingMatch ? headingMatch[1].trim() : (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
           return {
             mode,
             heading,
-            explanation: textResult.trim(),
+            explanation: this.cleanString(textResult, 16000) || textResult,
             keyPoints: [
               'Follow systematic step-by-step problem breakdown',
               'Verify intermediate equations before substitution',

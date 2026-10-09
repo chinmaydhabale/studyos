@@ -352,6 +352,19 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const result: PdfAssistResult = await res.json();
+      let effectiveHeading = result.heading;
+      if (result.explanation) {
+        try {
+          const cleanExp = result.explanation.replace(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i, '$1').trim();
+          if (cleanExp.startsWith('{') && cleanExp.endsWith('}')) {
+            const parsed = JSON.parse(cleanExp);
+            const data = (parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed) as Record<string, unknown>;
+            if (typeof data.heading === 'string' && data.heading.trim()) {
+              effectiveHeading = data.heading.trim();
+            }
+          }
+        } catch {}
+      }
 
       setExchanges(prev => [
         ...prev,
@@ -360,7 +373,10 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
           question: opts.ask,
           selectedText: effectiveSelectedText,
           page,
-          result,
+          result: {
+            ...result,
+            heading: effectiveHeading
+          },
           timestamp: new Date()
         }
       ]);

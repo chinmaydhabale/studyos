@@ -60,18 +60,62 @@ function unwrapAiResponseEnvelope(content: string): string {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return current;
 
     const envelope = parsed as Record<string, unknown>;
-    const payload = envelope.data;
-    const isAiEnvelope =
-      envelope.response_type === 'json' && payload && typeof payload === 'object' && !Array.isArray(payload);
-    if (!isAiEnvelope) return current;
+    const data = (envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? envelope.data
+      : envelope) as Record<string, unknown>;
 
-    const data = payload as Record<string, unknown>;
-    const answer = [data.solution_breakdown, data.answer, data.explanation, data.content, data.markdown, data.text]
-      .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    const answer = [
+      data.explanation,
+      data.content,
+      data.solution_breakdown,
+      data.answer,
+      data.markdown,
+      data.text,
+      data.solution
+    ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
     const coachMessage = typeof data.coach_message === 'string' ? data.coach_message.trim() : '';
 
     if (!answer && !coachMessage) return current;
-    current = answer ? [coachMessage, answer.trim()].filter(Boolean).join('\n\n') : coachMessage;
+
+    const parts: string[] = [];
+    if (coachMessage) parts.push(coachMessage);
+
+    const heading = typeof data.heading === 'string' ? data.heading.trim() : '';
+    if (heading && answer && !answer.includes(heading)) {
+      parts.push(`# ${heading}`);
+    }
+
+    if (answer) parts.push(answer.trim());
+
+    const formula = typeof data.formula === 'string' ? data.formula.trim() : '';
+    if (formula && answer && !answer.includes(formula)) {
+      parts.push(`$$\n${formula}\n$$`);
+    }
+
+    const keyPoints = Array.isArray(data.keyPoints)
+      ? data.keyPoints
+      : Array.isArray(data.key_points)
+      ? data.key_points
+      : null;
+    if (keyPoints && keyPoints.length > 0) {
+      const validPoints = keyPoints.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+      if (validPoints.length > 0) {
+        parts.push(`### Key Points to Remember\n${validPoints.map(p => `- ${p.trim()}`).join('\n')}`);
+      }
+    }
+
+    const followUp =
+      typeof data.followUp === 'string'
+        ? data.followUp.trim()
+        : typeof data.follow_up === 'string'
+        ? data.follow_up.trim()
+        : '';
+    if (followUp && answer && !answer.includes(followUp)) {
+      parts.push(`> 💡 **Follow-up Challenge:** ${followUp}`);
+    }
+
+    current = parts.filter(Boolean).join('\n\n');
   }
 
   return current;
@@ -79,19 +123,17 @@ function unwrapAiResponseEnvelope(content: string): string {
 
 /**
  * Normalizes AI output into clean Markdown for the AST pipeline:
- * - unwraps the transport envelope
- * - converts literal escaped newlines/tabs (from JSON string values) into real
- *   ones, without corrupting LaTeX commands such as \neq, \nu, \theta
- * - rewrites LaTeX-style \[...\] and \(...\) delimiters to $$...$$ / $...$ so
- *   remark-math picks them up (remark-math only understands dollar delimiters)
+ * - unwraps transport envelopes and raw JSON responses
+ * - converts literal escaped newlines/tabs into real ones, while preserving KaTeX commands (\neq, \nu, \theta, \times, etc.)
+ * - rewrites LaTeX-style \[...\] and \(...\) delimiters to $$...$$ / $...$ for remark-math
  */
 function normalizeForMarkdown(content: string): string {
   let s = unwrapAiResponseEnvelope(content);
   s = s
     .replace(/\\r\\n/g, '\n')
-    .replace(/\\n(?![a-zA-Z])/g, '\n')
-    .replace(/\\r(?![a-zA-Z])/g, '\n')
-    .replace(/\\t(?![a-zA-Z])/g, '  ');
+    .replace(/\\n(?!(?:eq|abla|atural|earrow|eg|cong|equiv|e\b|ew|exists|geq|geqq|gtr|i\b|Leftarrow|leftarrow|Leftrightarrow|leftrightarrow|leq|leqq|less|mid|obreak|ormalsize|otin|ot\b|parallel|prec|preceq|Rightarrow|rightarrow|shortmid|shortparallel|sim|subseteq|succ|succeq|supseteq|triangleleft|trianglelefteq|triangleright|trianglerighteq|u\b|VDash|Vdash|vDash|vdash)\b)/g, '\n')
+    .replace(/\\r(?!(?:angle|brace|ceil|floor|group|ight|ho|m\b|oot|ule)\b)/g, '\n')
+    .replace(/\\t(?!(?:au|ext|an|heta|imes|o\b|op|riangle|ilde|ag)\b)/g, '  ');
   s = s
     .replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner) => `\n\n$$${String(inner).trim()}$$\n\n`)
     .replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner) => `$${String(inner).trim()}$`);
