@@ -47,6 +47,24 @@ export interface LectureSummary {
 /** What the PDF reader asked the AI to do. */
 export type PdfAssistMode = 'page' | 'selection' | 'question';
 
+export interface AiBlockData {
+  type: 'concept' | 'formula' | 'steps' | 'shortcut' | 'trap' | 'quiz' | 'key_points';
+  title?: string;
+  content?: string;
+  latex?: string;
+  variables?: Array<{ symbol: string; label: string }>;
+  shortcutNote?: string;
+  steps?: Array<{ stepNumber: number; title: string; explanation: string; latex?: string }>;
+  trick?: string;
+  speedGain?: string;
+  warning?: string;
+  question?: string;
+  options?: string[];
+  correctIndex?: number;
+  explanation?: string;
+  points?: string[];
+}
+
 export interface PdfAssistResult {
   mode: PdfAssistMode;
   heading: string;
@@ -56,6 +74,9 @@ export interface PdfAssistResult {
   followUp?: string;
   source: AISource;
   modelUsed?: string;
+  blocks?: AiBlockData[];
+  topic?: string;
+  difficulty?: 'Basic' | 'Moderate' | 'Exam Standard';
 }
 
 // NotebookLM Types
@@ -200,6 +221,185 @@ export class AICoachService {
       .map(v => this.cleanString(v, maxLength))
       .filter((v): v is string => Boolean(v))
       .slice(0, maxItems);
+  }
+
+  private synthesizeBlocksFromData(opts: {
+    heading?: string;
+    explanation: string;
+    formula?: string;
+    keyPoints?: string[];
+    followUp?: string;
+    existingBlocks?: any[];
+  }): AiBlockData[] {
+    // If valid blocks already exist from Gemini, clean, validate and return them
+    if (Array.isArray(opts.existingBlocks) && opts.existingBlocks.length > 0) {
+      const validBlocks: AiBlockData[] = [];
+      for (const b of opts.existingBlocks) {
+        if (!b || typeof b !== 'object') continue;
+        const type = b.type;
+        if (type === 'formula' && typeof b.latex === 'string' && b.latex.trim()) {
+          validBlocks.push({
+            type: 'formula',
+            title: this.cleanString(b.title, 150) || 'Primary Formula',
+            latex: b.latex.trim(),
+            variables: Array.isArray(b.variables)
+              ? b.variables
+                  .filter((v: any) => v && typeof v.symbol === 'string' && typeof v.label === 'string')
+                  .map((v: any) => ({ symbol: v.symbol.trim(), label: v.label.trim() }))
+              : undefined,
+            shortcutNote: this.cleanString(b.shortcutNote, 200)
+          });
+        } else if (type === 'steps' && Array.isArray(b.steps) && b.steps.length > 0) {
+          validBlocks.push({
+            type: 'steps',
+            title: this.cleanString(b.title, 150) || 'Step-by-Step Derivation',
+            steps: b.steps.map((st: any, idx: number) => ({
+              stepNumber: typeof st.stepNumber === 'number' ? st.stepNumber : idx + 1,
+              title: this.cleanString(st.title, 150) || `Step ${idx + 1}`,
+              explanation: this.cleanString(st.explanation, 2000) || '',
+              latex: typeof st.latex === 'string' ? st.latex.trim() : undefined
+            }))
+          });
+        } else if (
+          type === 'quiz' &&
+          typeof b.question === 'string' &&
+          Array.isArray(b.options) &&
+          b.options.length >= 2
+        ) {
+          validBlocks.push({
+            type: 'quiz',
+            question: this.cleanString(b.question, 500) || '',
+            options: b.options.map((o: any) => this.cleanString(o, 200) || '').filter(Boolean),
+            correctIndex:
+              typeof b.correctIndex === 'number'
+                ? Math.max(0, Math.min(b.options.length - 1, b.correctIndex))
+                : 0,
+            explanation: this.cleanString(b.explanation, 1000) || ''
+          });
+        } else if (type === 'shortcut' && (typeof b.trick === 'string' || typeof b.content === 'string')) {
+          validBlocks.push({
+            type: 'shortcut',
+            title: this.cleanString(b.title, 150) || '⚡ 30-Second Exam Shortcut',
+            trick: this.cleanString(b.trick || b.content, 1000) || '',
+            speedGain: this.cleanString(b.speedGain, 60)
+          });
+        } else if (type === 'trap' && (typeof b.warning === 'string' || typeof b.content === 'string')) {
+          validBlocks.push({
+            type: 'trap',
+            warning: this.cleanString(b.warning || b.content, 1000) || ''
+          });
+        } else if (type === 'concept' && typeof b.content === 'string' && b.content.trim()) {
+          validBlocks.push({
+            type: 'concept',
+            title: this.cleanString(b.title, 150),
+            content: this.cleanString(b.content, 8000) || ''
+          });
+        } else if (type === 'key_points' && Array.isArray(b.points) && b.points.length > 0) {
+          validBlocks.push({
+            type: 'key_points',
+            points: b.points.map((p: any) => this.cleanString(p, 300) || '').filter(Boolean)
+          });
+        }
+      }
+      if (validBlocks.length > 0) return validBlocks;
+    }
+
+    // Synthesize structured blocks from explanation, formula, and keyPoints
+    const blocks: AiBlockData[] = [];
+
+    // 1. Primary Formula Card if available
+    if (opts.formula && opts.formula.trim()) {
+      blocks.push({
+        type: 'formula',
+        title: 'Key Formula',
+        latex: opts.formula.trim()
+      });
+    }
+
+    // 2. Parse explanation paragraphs, shortcuts, traps, and steps
+    const rawLines = (opts.explanation || '').split('\n');
+    let conceptBuffer: string[] = [];
+    const stepsBuffer: Array<{ stepNumber: number; title: string; explanation: string }> = [];
+
+    const flushConcept = () => {
+      const text = conceptBuffer.join('\n').trim();
+      conceptBuffer = [];
+      if (text) {
+        blocks.push({ type: 'concept', content: text });
+      }
+    };
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i];
+      const trimmed = line.trim();
+
+      // Detect shortcut
+      if (
+        trimmed.startsWith('💡') ||
+        trimmed.toLowerCase().startsWith('shortcut:') ||
+        trimmed.toLowerCase().startsWith('**shortcut') ||
+        trimmed.toLowerCase().startsWith('pro tip:')
+      ) {
+        flushConcept();
+        blocks.push({
+          type: 'shortcut',
+          title: '⚡ 30-Second Exam Shortcut',
+          trick: trimmed.replace(/^[💡\s]+/, '').replace(/^\*\*Shortcut:?\*\*\s*/i, '')
+        });
+        continue;
+      }
+
+      // Detect trap
+      if (
+        trimmed.startsWith('⚠️') ||
+        trimmed.toLowerCase().startsWith('trap:') ||
+        trimmed.toLowerCase().startsWith('**trap:') ||
+        trimmed.toLowerCase().startsWith('caution:') ||
+        trimmed.toLowerCase().startsWith('common mistake:')
+      ) {
+        flushConcept();
+        blocks.push({
+          type: 'trap',
+          warning: trimmed.replace(/^[⚠️\s]+/, '').replace(/^\*\*Trap:?\*\*\s*/i, '')
+        });
+        continue;
+      }
+
+      // Detect step
+      const stepMatch = trimmed.match(/^(\*\*Step\s+(\d+)[:\.]?\*\*|Step\s+(\d+)[:\.]?)\s*(.*)/i);
+      if (stepMatch) {
+        const stepNum = parseInt(stepMatch[2] || stepMatch[3] || String(stepsBuffer.length + 1), 10);
+        const stepText = stepMatch[4] || trimmed;
+        stepsBuffer.push({
+          stepNumber: stepNum,
+          title: `Step ${stepNum}`,
+          explanation: stepText
+        });
+        continue;
+      }
+
+      conceptBuffer.push(line);
+    }
+
+    flushConcept();
+
+    if (stepsBuffer.length > 0) {
+      blocks.push({
+        type: 'steps',
+        title: 'Step-by-Step Derivation',
+        steps: stepsBuffer
+      });
+    }
+
+    // 3. Key Points Block
+    if (opts.keyPoints && opts.keyPoints.length > 0) {
+      blocks.push({
+        type: 'key_points',
+        points: opts.keyPoints
+      });
+    }
+
+    return blocks;
   }
 
   private clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -1002,10 +1202,13 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     const jsonRes = await gemini.generateJsonWithMeta<{
       heading?: string;
+      topic?: string;
+      difficulty?: 'Basic' | 'Moderate' | 'Exam Standard';
       explanation?: string;
       keyPoints?: string[];
       formula?: string;
       followUp?: string;
+      blocks?: any[];
     }>({
       systemInstruction: pdfSystemInstruction,
       prompt:
@@ -1016,20 +1219,75 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         `${task}\n\n` +
         `FORMATTING REQUIREMENT:
 - "heading": A clear, engaging title for this solution/topic.
-- "explanation": Comprehensive, step-by-step explanation formatted in rich Markdown with Step cards ("Step 1: ..."), callouts ("💡 Shortcut: ...", "⚠️ Common Mistake: ..."), and KaTeX math ($...$ and $$...$$). Do not truncate.
-- "keyPoints": 3 to 6 high-yield exam takeaways or formulas to remember.
+- "topic": Core topic/subject (e.g. "Compound Interest", "Transitive Verb", "Calculus").
+- "difficulty": "Basic" | "Moderate" | "Exam Standard".
 - "formula": The primary formula or equation in pure LaTeX (or empty string if not applicable).
+- "blocks": An array of modular pedagogical component blocks:
+  * { "type": "concept", "title": "...", "content": "Core markdown explanation with inline $...$" }
+  * { "type": "formula", "title": "Primary Formula", "latex": "...", "variables": [{ "symbol": "P", "label": "Principal" }], "shortcutNote": "..." }
+  * { "type": "steps", "title": "Step-by-Step Derivation", "steps": [{ "stepNumber": 1, "title": "...", "explanation": "...", "latex": "..." }] }
+  * { "type": "shortcut", "title": "⚡ 30-Second Exam Shortcut", "trick": "Speed math shortcut", "speedGain": "Saves ~45s" }
+  * { "type": "trap", "warning": "Common trap or negative marking mistake to avoid" }
+  * { "type": "quiz", "question": "Quick 1-question concept check", "options": ["Option A", "Option B", "Option C", "Option D"], "correctIndex": 0, "explanation": "Why Option A is correct" }
+- "explanation": Comprehensive continuous markdown solution (used for clipboard copy).
+- "keyPoints": 3 to 6 high-yield exam takeaways or formulas to remember.
 - "followUp": One thought-provoking follow-up question or practice challenge for the student.`,
       schema: {
         type: 'OBJECT',
         properties: {
           heading: { type: 'STRING' },
-          explanation: { type: 'STRING', description: 'Exhaustive step-by-step markdown and LaTeX explanation' },
+          topic: { type: 'STRING' },
+          difficulty: { type: 'STRING' },
+          formula: { type: 'STRING' },
+          blocks: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                type: { type: 'STRING' },
+                title: { type: 'STRING' },
+                content: { type: 'STRING' },
+                latex: { type: 'STRING' },
+                variables: {
+                  type: 'ARRAY',
+                  items: {
+                    type: 'OBJECT',
+                    properties: {
+                      symbol: { type: 'STRING' },
+                      label: { type: 'STRING' }
+                    }
+                  }
+                },
+                shortcutNote: { type: 'STRING' },
+                steps: {
+                  type: 'ARRAY',
+                  items: {
+                    type: 'OBJECT',
+                    properties: {
+                      stepNumber: { type: 'INTEGER' },
+                      title: { type: 'STRING' },
+                      explanation: { type: 'STRING' },
+                      latex: { type: 'STRING' }
+                    }
+                  }
+                },
+                trick: { type: 'STRING' },
+                speedGain: { type: 'STRING' },
+                warning: { type: 'STRING' },
+                question: { type: 'STRING' },
+                options: { type: 'ARRAY', items: { type: 'STRING' } },
+                correctIndex: { type: 'INTEGER' },
+                explanation: { type: 'STRING' },
+                points: { type: 'ARRAY', items: { type: 'STRING' } }
+              },
+              required: ['type']
+            }
+          },
+          explanation: { type: 'STRING' },
           keyPoints: { type: 'ARRAY', items: { type: 'STRING' } },
-          formula: { type: 'STRING', description: 'Primary LaTeX formula or equation' },
           followUp: { type: 'STRING' }
         },
-        required: ['heading', 'explanation', 'keyPoints']
+        required: ['heading']
       },
       temperature: 0.5,
       model: selectedModel,
@@ -1045,20 +1303,35 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         (result as any).answer ||
         (result as any).markdown ||
         (result as any).text;
-      const explanation = this.cleanString(rawExp, 16000);
+      const explanation = this.cleanString(rawExp, 16000) || '';
       const keyPoints = this.cleanStringArray(
         result.keyPoints || (result as any).key_points || (result as any).points,
         8,
         800
       );
-      if (explanation) {
+      const formula = this.cleanString(result.formula, 500);
+      const followUp = this.cleanString(result.followUp || (result as any).follow_up, 500);
+
+      const blocks = this.synthesizeBlocksFromData({
+        heading: result.heading,
+        explanation,
+        formula,
+        keyPoints,
+        followUp,
+        existingBlocks: result.blocks
+      });
+
+      if (explanation || blocks.length > 0) {
         return {
           mode,
           heading: this.cleanString(result.heading, 250) || `${docTitle} — Page ${page}`,
-          explanation,
+          explanation: explanation || (blocks[0] && 'content' in blocks[0] ? (blocks[0] as any).content : `${docTitle} — Page ${page}`),
           keyPoints,
-          formula: this.cleanString(result.formula, 500),
-          followUp: this.cleanString(result.followUp || (result as any).follow_up, 500),
+          formula,
+          followUp,
+          blocks,
+          topic: this.cleanString(result.topic, 100),
+          difficulty: result.difficulty || 'Exam Standard',
           source: 'gemini',
           modelUsed: jsonRes.modelUsed || selectedModel
         };
@@ -1103,17 +1376,33 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
               parsedJson.answer ||
               parsedJson.markdown ||
               parsedJson.text;
-            if (rawExp) {
+            if (rawExp || Array.isArray(parsedJson.blocks)) {
               const heading =
                 this.cleanString(parsedJson.heading, 250) ||
                 (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
+              const exp = this.cleanString(rawExp, 16000) || textResult;
+              const formula = this.cleanString(parsedJson.formula, 500);
+              const keyPoints = this.cleanStringArray(parsedJson.keyPoints || parsedJson.key_points, 8, 800);
+              const followUp = this.cleanString(parsedJson.followUp || parsedJson.follow_up, 500);
+              const blocks = this.synthesizeBlocksFromData({
+                heading,
+                explanation: exp,
+                formula,
+                keyPoints,
+                followUp,
+                existingBlocks: parsedJson.blocks
+              });
+
               return {
                 mode,
                 heading,
-                explanation: this.cleanString(rawExp, 16000) || textResult,
-                keyPoints: this.cleanStringArray(parsedJson.keyPoints || parsedJson.key_points, 8, 800),
-                formula: this.cleanString(parsedJson.formula, 500),
-                followUp: this.cleanString(parsedJson.followUp || parsedJson.follow_up, 500),
+                explanation: exp,
+                keyPoints,
+                formula,
+                followUp,
+                blocks,
+                topic: this.cleanString(parsedJson.topic, 100),
+                difficulty: parsedJson.difficulty || 'Exam Standard',
                 source: 'gemini',
                 modelUsed: textRes.modelUsed || selectedModel
               };
@@ -1122,15 +1411,24 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
           const headingMatch = textResult.match(/^#+\s*(.+)$/m);
           const heading = headingMatch ? headingMatch[1].trim() : (question ? `Solution: ${question.slice(0, 60)}` : `${docTitle} — Page ${page}`);
+          const exp = this.cleanString(textResult, 16000) || textResult;
+          const keyPoints = [
+            'Follow systematic step-by-step problem breakdown',
+            'Verify intermediate equations before substitution',
+            'Cross-check units and edge-case boundary conditions'
+          ];
+          const blocks = this.synthesizeBlocksFromData({
+            heading,
+            explanation: exp,
+            keyPoints
+          });
+
           return {
             mode,
             heading,
-            explanation: this.cleanString(textResult, 16000) || textResult,
-            keyPoints: [
-              'Follow systematic step-by-step problem breakdown',
-              'Verify intermediate equations before substitution',
-              'Cross-check units and edge-case boundary conditions'
-            ],
+            explanation: exp,
+            keyPoints,
+            blocks,
             source: 'gemini',
             modelUsed: textRes.modelUsed || selectedModel
           };
@@ -1184,12 +1482,21 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         (question ? `\n\nYour question: "${question}"` : '');
     }
 
+    const heading = question ? `Page ${page} — your question` : `Page ${page} of ${docTitle}`;
+    const keyPoints = sentences.length ? sentences : focus ? [focus.slice(0, 300)] : [];
+    const blocks = this.synthesizeBlocksFromData({
+      heading,
+      explanation,
+      keyPoints
+    });
+
     return {
       mode,
-      heading: question ? `Page ${page} — your question` : `Page ${page} of ${docTitle}`,
+      heading,
       explanation,
-      keyPoints: sentences.length ? sentences : focus ? [focus.slice(0, 300)] : [],
-      followUp: 'Select Gemini 3.5 Flash or try asking again in a few moments.'
+      keyPoints,
+      followUp: 'Select Gemini 3.5 Flash or try asking again in a few moments.',
+      blocks
     };
   }
 

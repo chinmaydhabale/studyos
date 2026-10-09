@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../../config.js';
 import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
+import { StructuredAiBlocks, AiBlock } from '../common/StructuredAiBlocks.js';
 
 const MAX_PAGE_TEXT_CHARS = 10000;
 
@@ -29,11 +30,14 @@ export interface PdfAssistResult {
   mode: 'page' | 'selection' | 'question';
   heading: string;
   explanation: string;
-  keyPoints: string[];
+  keyPoints?: string[];
   formula?: string;
   followUp?: string;
-  source: 'gemini' | 'fallback';
+  source?: 'gemini' | 'fallback';
   modelUsed?: string;
+  blocks?: AiBlock[];
+  topic?: string;
+  difficulty?: 'Basic' | 'Moderate' | 'Exam Standard';
 }
 
 export interface AIModelOption {
@@ -688,10 +692,30 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
                     <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
                   )}
                 </span>
-                <span className="font-extrabold text-xs text-white truncate">{ex.result.heading}</span>
+                <div className="min-w-0">
+                  <span className="font-extrabold text-xs text-white truncate block">{ex.result.heading}</span>
+                  {ex.result.topic && (
+                    <span className="text-[10px] text-indigo-300/80 font-medium truncate block">
+                      {ex.result.topic}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center gap-1.5 shrink-0">
+                {ex.result.difficulty && (
+                  <span
+                    className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                      ex.result.difficulty === 'Exam Standard'
+                        ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                        : ex.result.difficulty === 'Moderate'
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                    }`}
+                  >
+                    {ex.result.difficulty}
+                  </span>
+                )}
                 <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded-md">
                   P.{ex.page}
                 </span>
@@ -718,13 +742,16 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
               </div>
             )}
 
-            {/* Main Step-by-Step Solution Body (Rendered with KaTeX Math & Markdown) */}
+            {/* Structured Generative UI Blocks (Formula cards, Step timelines, Quizzes, Tips, etc.) */}
             <div className="text-xs leading-relaxed text-slate-200">
-              <FormattedAiMessage content={ex.result.explanation} />
+              <StructuredAiBlocks
+                blocks={ex.result.blocks}
+                rawFallback={ex.result.explanation}
+              />
             </div>
 
-            {/* Formula Callout Card */}
-            {ex.result.formula && (
+            {/* Formula Callout Card (only shown when standalone blocks not present or lacks formula) */}
+            {(!ex.result.blocks || !ex.result.blocks.some(b => b.type === 'formula')) && ex.result.formula && (
               <div className="p-3 rounded-2xl bg-slate-950 border border-indigo-500/30 space-y-1.5 shadow-inner">
                 <div className="flex items-center justify-between text-[10px] font-bold text-amber-400 uppercase tracking-wider">
                   <span className="flex items-center gap-1">
@@ -737,23 +764,25 @@ export const PDFAiPanel: React.FC<PDFAiPanelProps> = ({
               </div>
             )}
 
-            {/* Key Takeaways / Exam Rules */}
-            {ex.result.keyPoints && ex.result.keyPoints.length > 0 && (
-              <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-2">
-                <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider flex items-center gap-1">
-                  <Check className="w-3 h-3 text-cyan-400" />
-                  <span>Key Points to Remember</span>
-                </span>
-                <ul className="space-y-1.5">
-                  {ex.result.keyPoints.map((point, idx) => (
-                    <li key={idx} className="text-xs text-slate-300 leading-relaxed flex items-start gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1.5" />
-                      <FormattedAiMessage content={point} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* Key Takeaways / Exam Rules (only shown when blocks lack key_points) */}
+            {(!ex.result.blocks || !ex.result.blocks.some(b => b.type === 'key_points')) &&
+              ex.result.keyPoints &&
+              ex.result.keyPoints.length > 0 && (
+                <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-2">
+                  <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider flex items-center gap-1">
+                    <Check className="w-3 h-3 text-cyan-400" />
+                    <span>Key Points to Remember</span>
+                  </span>
+                  <ul className="space-y-1.5">
+                    {ex.result.keyPoints.map((point, idx) => (
+                      <li key={idx} className="text-xs text-slate-300 leading-relaxed flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1.5" />
+                        <FormattedAiMessage content={point} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
             {/* Interactive Follow-Up Suggestion Chip */}
             {ex.result.followUp && (
