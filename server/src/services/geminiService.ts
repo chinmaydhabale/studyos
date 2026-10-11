@@ -19,7 +19,7 @@ export const GEMINI_MODELS = {
   lite: 'gemini-3.5-flash-lite'
 };
 
-const REQUEST_TIMEOUT_MS = 75000;
+const REQUEST_TIMEOUT_MS = 120000;
 
 export interface GeminiHistoryItem {
   role: 'user' | 'assistant' | 'model';
