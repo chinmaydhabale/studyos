@@ -384,83 +384,85 @@ export class NeuralTtsService {
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
 
-        // Pick a single non-cooling-down key for this model (never double-hit the same model in one request)
-        let chosenKey: string | null = null;
-        let chosenIdx = this.keyIndex;
+        let triedAnyKey = false;
         for (let attempt = 0; attempt < keys.length; attempt++) {
-          const idx = (this.keyIndex + attempt) % keys.length;
-          const candidateKey = keys[idx];
-          if (!this.isModelKeyCoolingDown(model, candidateKey)) {
-            chosenKey = candidateKey;
-            chosenIdx = idx;
-            break;
-          }
-        }
-        if (!chosenKey) continue;
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(chosenKey)}`;
-
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 35000);
-
-        try {
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: controller.signal
-          });
-
-          if (!res.ok) {
-            if (res.status === 429 || res.status === 403) {
-              this.markModelKeyCooldown(model, chosenKey, 15 * 60 * 1000);
-              this.markModelCooldown(model, 5 * 60 * 1000);
-            } else if (res.status === 404) {
-              this.markModelKeyCooldown(model, chosenKey, 60 * 60 * 1000);
-              this.markModelCooldown(model, 60 * 60 * 1000);
-            }
+          const activeIdx = (this.keyIndex + attempt) % keys.length;
+          const apiKey = keys[activeIdx];
+          if (this.isModelKeyCoolingDown(model, apiKey)) {
             continue;
           }
+          triedAnyKey = true;
 
-          const data = (await res.json()) as any;
-          const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-          if (!inlineData?.data) {
-            return null;
-          }
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-          const rawBuf = Buffer.from(inlineData.data, 'base64');
-          if (rawBuf.length === 0) return null;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 35000);
 
-          this.keyIndex = (chosenIdx + 1) % keys.length;
-          const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
+          try {
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              signal: controller.signal
+            });
 
-          if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
+            if (!res.ok) {
+              if (res.status === 429) {
+                this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+              } else if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
+                this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
+                if (res.status === 404) {
+                  this.markModelCooldown(model, 60 * 60 * 1000);
+                  break;
+                }
+              }
+              continue;
+            }
+
+            const data = (await res.json()) as any;
+            const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            if (!inlineData?.data) {
+              return null;
+            }
+
+            const rawBuf = Buffer.from(inlineData.data, 'base64');
+            if (rawBuf.length === 0) return null;
+
+            this.keyIndex = (activeIdx + 1) % keys.length;
+            const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
+
+            if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
+              return {
+                buffer: rawBuf,
+                mimeType: 'audio/wav',
+                engine: `${model}:${voiceName}`
+              };
+            }
+
+            if (mime.includes('pcm') || mime.includes('l16')) {
+              return {
+                buffer: this.wrapPcmToWav(rawBuf, 24000, 1, 16),
+                mimeType: 'audio/wav',
+                engine: `${model}:${voiceName}`
+              };
+            }
+
             return {
               buffer: rawBuf,
-              mimeType: 'audio/wav',
+              mimeType: 'audio/mpeg',
               engine: `${model}:${voiceName}`
             };
+          } catch (err: any) {
+            console.warn(`[tts] ${model} aborted/failed (no cascade):`, err?.message || err);
+            // Do NOT cascade to other keys or Gemini models on timeout/abort because Google already billed tokens for this call
+            return null;
+          } finally {
+            clearTimeout(timer);
           }
+        }
 
-          if (mime.includes('pcm') || mime.includes('l16')) {
-            return {
-              buffer: this.wrapPcmToWav(rawBuf, 24000, 1, 16),
-              mimeType: 'audio/wav',
-              engine: `${model}:${voiceName}`
-            };
-          }
-
-          return {
-            buffer: rawBuf,
-            mimeType: 'audio/mpeg',
-            engine: `${model}:${voiceName}`
-          };
-        } catch (err: any) {
-          console.warn(`[tts] ${model} aborted/failed (no cascade):`, err?.message || err);
-          // Do NOT cascade to other Gemini models on timeout/abort because Google already billed tokens for this call
-          return null;
-        } finally {
-          clearTimeout(timer);
+        if (triedAnyKey) {
+          this.markModelCooldown(model, 5 * 60 * 1000);
         }
       }
 
@@ -558,84 +560,86 @@ export class NeuralTtsService {
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
 
-        // Pick a single non-cooling-down key for this model (never double-hit the same model in one batch)
-        let chosenKey: string | null = null;
-        let chosenIdx = this.keyIndex;
+        let triedAnyKey = false;
         for (let attempt = 0; attempt < keys.length; attempt++) {
-          const idx = (this.keyIndex + attempt) % keys.length;
-          const candidateKey = keys[idx];
-          if (!this.isModelKeyCoolingDown(model, candidateKey)) {
-            chosenKey = candidateKey;
-            chosenIdx = idx;
-            break;
-          }
-        }
-        if (!chosenKey) continue;
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(chosenKey)}`;
-
-        const controller = new AbortController();
-        // 75s timeout so a valid 10-turn batch generation is never aborted prematurely after tokens are billed
-        const timer = setTimeout(() => controller.abort(), 75000);
-
-        try {
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: controller.signal
-          });
-
-          if (!res.ok) {
-            if (res.status === 429 || res.status === 403) {
-              this.markModelKeyCooldown(model, chosenKey, 15 * 60 * 1000);
-              this.markModelCooldown(model, 5 * 60 * 1000);
-            } else if (res.status === 404) {
-              this.markModelKeyCooldown(model, chosenKey, 60 * 60 * 1000);
-              this.markModelCooldown(model, 60 * 60 * 1000);
-            }
+          const activeIdx = (this.keyIndex + attempt) % keys.length;
+          const apiKey = keys[activeIdx];
+          if (this.isModelKeyCoolingDown(model, apiKey)) {
             continue;
           }
+          triedAnyKey = true;
 
-          const data = (await res.json()) as any;
-          const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-          if (!inlineData?.data) {
-            return null;
-          }
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-          const rawBuf = Buffer.from(inlineData.data, 'base64');
-          if (rawBuf.length === 0) return null;
+          const controller = new AbortController();
+          // 75s timeout so a valid 10-turn batch generation is never aborted prematurely after tokens are billed
+          const timer = setTimeout(() => controller.abort(), 75000);
 
-          this.keyIndex = (chosenIdx + 1) % keys.length;
-          const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
+          try {
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              signal: controller.signal
+            });
 
-          if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
+            if (!res.ok) {
+              if (res.status === 429) {
+                this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+              } else if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
+                this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
+                if (res.status === 404) {
+                  this.markModelCooldown(model, 60 * 60 * 1000);
+                  break;
+                }
+              }
+              continue;
+            }
+
+            const data = (await res.json()) as any;
+            const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            if (!inlineData?.data) {
+              return null;
+            }
+
+            const rawBuf = Buffer.from(inlineData.data, 'base64');
+            if (rawBuf.length === 0) return null;
+
+            this.keyIndex = (activeIdx + 1) % keys.length;
+            const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
+
+            if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
+              return {
+                buffer: rawBuf,
+                mimeType: 'audio/wav',
+                engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
+              };
+            }
+
+            if (mime.includes('pcm') || mime.includes('l16')) {
+              return {
+                buffer: this.wrapPcmToWav(rawBuf, 24000, 1, 16),
+                mimeType: 'audio/wav',
+                engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
+              };
+            }
+
             return {
               buffer: rawBuf,
-              mimeType: 'audio/wav',
+              mimeType: 'audio/mpeg',
               engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
             };
+          } catch (err: any) {
+            console.warn(`[tts-multi] ${model} aborted/failed (no cascade):`, err?.message || err);
+            // CRITICAL: Never cascade a timed-out/aborted batch to another key or Gemini model!
+            return null;
+          } finally {
+            clearTimeout(timer);
           }
+        }
 
-          if (mime.includes('pcm') || mime.includes('l16')) {
-            return {
-              buffer: this.wrapPcmToWav(rawBuf, 24000, 1, 16),
-              mimeType: 'audio/wav',
-              engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
-            };
-          }
-
-          return {
-            buffer: rawBuf,
-            mimeType: 'audio/mpeg',
-            engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
-          };
-        } catch (err: any) {
-          console.warn(`[tts-multi] ${model} aborted/failed (no cascade):`, err?.message || err);
-          // CRITICAL: Never cascade a timed-out/aborted batch to another Gemini model!
-          return null;
-        } finally {
-          clearTimeout(timer);
+        if (triedAnyKey) {
+          this.markModelCooldown(model, 5 * 60 * 1000);
         }
       }
 
