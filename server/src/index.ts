@@ -1,8 +1,18 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+
+for (const envCandidate of [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), 'server', '.env'),
+  path.resolve(__dirname, '../.env')
+]) {
+  if (fs.existsSync(envCandidate)) {
+    dotenv.config({ path: envCandidate, override: true });
+  }
+}
 import dns from 'dns';
 import net from 'net';
 import { Server } from 'socket.io';

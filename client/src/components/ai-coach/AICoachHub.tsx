@@ -152,7 +152,23 @@ const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, spea
   return male ? 'Madhur Neural' : 'Swara Neural';
 };
 
-const PODCAST_BATCH_TURN_SIZE = 55;
+const FIRST_BATCH_TURN_SIZE = 6;
+const NEXT_BATCH_TURN_SIZE = 14;
+
+const getBatchRangeForTurn = (turnIndex: number, totalTurns: number): { batchStart: number; batchEnd: number } => {
+  if (turnIndex < FIRST_BATCH_TURN_SIZE) {
+    return {
+      batchStart: 0,
+      batchEnd: Math.min(totalTurns - 1, FIRST_BATCH_TURN_SIZE - 1)
+    };
+  }
+  const offset = turnIndex - FIRST_BATCH_TURN_SIZE;
+  const batchIdx = Math.floor(offset / NEXT_BATCH_TURN_SIZE);
+  const batchStart = FIRST_BATCH_TURN_SIZE + batchIdx * NEXT_BATCH_TURN_SIZE;
+  const batchEnd = Math.min(totalTurns - 1, batchStart + NEXT_BATCH_TURN_SIZE - 1);
+  return { batchStart, batchEnd };
+};
+
 const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
 const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
 
@@ -843,6 +859,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     }, 50);
   };
 
+  const batchInFlightRef = useRef<Map<string, Promise<string | null>>>(new Map());
+
   const playTurn = useCallback(async (index: number) => {
     if (!audioDiscussion || !audioDiscussion.turns || index >= audioDiscussion.turns.length) {
       stopAudio();
@@ -859,40 +877,55 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
     const turn = audioDiscussion.turns[index];
 
-    // 1. Primary Studio Multi-Speaker Batch Player (up to 55 turns in 1 single Gemini TTS API call!)
+    const fetchBatchBlobUrl = (bStart: number, bEnd: number): Promise<string | null> => {
+      const bTurns = audioDiscussion.turns.slice(bStart, bEnd + 1);
+      const bSig = bTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
+      const bKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${bStart}-${bEnd}|${bSig}`;
+
+      const cached = audioCacheRef.current.get(bKey);
+      if (cached) return Promise.resolve(cached);
+
+      const existingPromise = batchInFlightRef.current.get(bKey);
+      if (existingPromise) return existingPromise;
+
+      const reqPromise = fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          podcastId: audioDiscussion.id,
+          turns: bTurns,
+          language: audioLang,
+          voiceStyle: hostVoiceStyle,
+          ttsModel
+        })
+      })
+        .then(async res => {
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          audioCacheRef.current.set(bKey, url);
+          return url;
+        })
+        .catch(err => {
+          console.warn('Multi-speaker batch TTS failed:', err);
+          return null;
+        })
+        .finally(() => {
+          batchInFlightRef.current.delete(bKey);
+        });
+
+      batchInFlightRef.current.set(bKey, reqPromise);
+      return reqPromise;
+    };
+
+    // 1. Primary Studio Multi-Speaker Progressive Batch Player
+    // First batch = 6 turns (~5s fast start!), subsequent batches = 14 turns (preloaded in background while you listen!)
     if (hostVoiceStyle !== 'indian' && ttsModel !== 'edge-indian' && audioDiscussion.turns.length > 1) {
-      const batchStart = Math.floor(index / PODCAST_BATCH_TURN_SIZE) * PODCAST_BATCH_TURN_SIZE;
-      const batchEnd = Math.min(audioDiscussion.turns.length - 1, batchStart + PODCAST_BATCH_TURN_SIZE - 1);
+      const { batchStart, batchEnd } = getBatchRangeForTurn(index, audioDiscussion.turns.length);
       const batchTurns = audioDiscussion.turns.slice(batchStart, batchEnd + 1);
 
       if (batchTurns.length > 1) {
-        const batchSignature = batchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
-        const batchCacheKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${batchStart}-${batchEnd}|${batchSignature}`;
-        let batchBlobUrl = audioCacheRef.current.get(batchCacheKey);
-
-        if (!batchBlobUrl) {
-          try {
-            const res = await fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                podcastId: audioDiscussion.id,
-                turns: batchTurns,
-                language: audioLang,
-                voiceStyle: hostVoiceStyle,
-                ttsModel
-              })
-            });
-            if (res.ok) {
-              const blob = await res.blob();
-              if (myToken !== playbackTokenRef.current) return;
-              batchBlobUrl = URL.createObjectURL(blob);
-              audioCacheRef.current.set(batchCacheKey, batchBlobUrl);
-            }
-          } catch (err) {
-            console.warn('Multi-speaker batch TTS failed, falling back to single-turn TTS:', err);
-          }
-        }
+        const batchBlobUrl = await fetchBatchBlobUrl(batchStart, batchEnd);
 
         if (myToken !== playbackTokenRef.current) return;
 
@@ -956,36 +989,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
           });
 
-          // Preload the next batch in the background
-          const nextBatchStart = batchEnd + 1;
-          if (nextBatchStart < audioDiscussion.turns.length) {
-            const nextBatchEnd = Math.min(
-              audioDiscussion.turns.length - 1,
-              nextBatchStart + PODCAST_BATCH_TURN_SIZE - 1
-            );
-            const nextBatchTurns = audioDiscussion.turns.slice(nextBatchStart, nextBatchEnd + 1);
-            const nextBatchSig = nextBatchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
-            const nextBatchKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${nextBatchStart}-${nextBatchEnd}|${nextBatchSig}`;
-            if (!audioCacheRef.current.has(nextBatchKey)) {
-              fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  podcastId: audioDiscussion.id,
-                  turns: nextBatchTurns,
-                  language: audioLang,
-                  voiceStyle: hostVoiceStyle,
-                  ttsModel
-                })
-              })
-                .then(r => (r.ok ? r.blob() : null))
-                .then(b => {
-                  if (b && myToken === playbackTokenRef.current) {
-                    audioCacheRef.current.set(nextBatchKey, URL.createObjectURL(b));
-                  }
-                })
-                .catch(() => {});
-            }
+          // Immediately preload the next 14-turn batch in the background while current batch plays!
+          const nextTurnIdx = batchEnd + 1;
+          if (nextTurnIdx < audioDiscussion.turns.length) {
+            const nextRange = getBatchRangeForTurn(nextTurnIdx, audioDiscussion.turns.length);
+            void fetchBatchBlobUrl(nextRange.batchStart, nextRange.batchEnd);
           }
 
           return;

@@ -74,8 +74,8 @@ const GEMINI_VOICE_NAMES = new Set([
   'Zephyr'
 ]);
 
-export const EPISODE_BATCH_TURN_SIZE = 55;
-export const EPISODE_BATCH_MAX_CHARS = 10500;
+export const EPISODE_BATCH_TURN_SIZE = 14;
+export const EPISODE_BATCH_MAX_CHARS = 3500;
 
 export class NeuralTtsService {
   private pythonCmd: string;
@@ -356,12 +356,10 @@ export class NeuralTtsService {
           if (!res.ok) {
             if (res.status === 429 || res.status === 403) {
               this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
-              continue;
-            }
-            if (res.status === 404) {
+            } else if (res.status === 404) {
               this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
             }
-            break;
+            continue;
           }
 
           const data = (await res.json()) as any;
@@ -497,7 +495,7 @@ export class NeuralTtsService {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 160000);
+        const timer = setTimeout(() => controller.abort(), 45000);
 
         try {
           const res = await fetch(url, {
@@ -510,12 +508,10 @@ export class NeuralTtsService {
           if (!res.ok) {
             if (res.status === 429 || res.status === 403) {
               this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
-              continue;
-            }
-            if (res.status === 404) {
+            } else if (res.status === 404) {
               this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
             }
-            break;
+            continue;
           }
 
           const data = (await res.json()) as any;
