@@ -152,8 +152,8 @@ const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, spea
   return male ? 'Madhur Neural' : 'Swara Neural';
 };
 
-const FIRST_BATCH_TURN_SIZE = 6;
-const NEXT_BATCH_TURN_SIZE = 14;
+const FIRST_BATCH_TURN_SIZE = 10;
+const NEXT_BATCH_TURN_SIZE = 10;
 
 const getBatchRangeForTurn = (turnIndex: number, totalTurns: number): { batchStart: number; batchEnd: number } => {
   if (turnIndex < FIRST_BATCH_TURN_SIZE) {
@@ -918,9 +918,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       return reqPromise;
     };
 
-    // 1. Primary Studio Multi-Speaker Progressive Batch Player
-    // First batch = 6 turns (~5s fast start!), subsequent batches = 14 turns (preloaded in background while you listen!)
-    if (hostVoiceStyle !== 'indian' && ttsModel !== 'edge-indian' && audioDiscussion.turns.length > 1) {
+    // 1. Primary Studio Multi-Speaker Progressive Batch Player (10 turns per batch = ~3.5K tokens, safely < 10K TPM)
+    const isBatchMode = hostVoiceStyle !== 'indian' && ttsModel !== 'edge-indian' && audioDiscussion.turns.length > 1;
+    if (isBatchMode) {
       const { batchStart, batchEnd } = getBatchRangeForTurn(index, audioDiscussion.turns.length);
       const batchTurns = audioDiscussion.turns.slice(batchStart, batchEnd + 1);
 
@@ -961,6 +961,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           }
 
           let activeSyncedTurn = index;
+          let preloadedNextBatch = false;
           audio.ontimeupdate = () => {
             if (myToken !== playbackTokenRef.current) return;
             if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
@@ -972,6 +973,20 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               activeSyncedTurn = matched.turnIdx;
               setCurrentTurnIndex(matched.turnIdx);
               scrollToTurnInTranscript(matched.turnIdx);
+            }
+
+            // Lazy preload the next 10-turn batch ONLY after 50s of listening (or <=18s remaining)
+            // so two batches NEVER run in the same 60-second window and exceed the 10K TPM limit!
+            if (
+              !preloadedNextBatch &&
+              (audio.currentTime >= 50 || (audio.duration > 20 && audio.duration - audio.currentTime <= 18))
+            ) {
+              preloadedNextBatch = true;
+              const nextTurnIdx = batchEnd + 1;
+              if (nextTurnIdx < audioDiscussion.turns.length) {
+                const nextRange = getBatchRangeForTurn(nextTurnIdx, audioDiscussion.turns.length);
+                void fetchBatchBlobUrl(nextRange.batchStart, nextRange.batchEnd);
+              }
             }
           };
 
@@ -989,21 +1004,15 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
           });
 
-          // Immediately preload the next 14-turn batch in the background while current batch plays!
-          const nextTurnIdx = batchEnd + 1;
-          if (nextTurnIdx < audioDiscussion.turns.length) {
-            const nextRange = getBatchRangeForTurn(nextTurnIdx, audioDiscussion.turns.length);
-            void fetchBatchBlobUrl(nextRange.batchStart, nextRange.batchEnd);
-          }
-
           return;
         }
       }
     }
 
-    // 2. Single-turn Neural TTS endpoint (for 'indian' voice style or single-turn fallback)
-    const currentVoice = getHostVoice(hostVoiceStyle, audioLang, turn.speaker);
-    const cacheKey = `${ttsModel}|${currentVoice}|${audioLang}|${turn.text}`;
+    // 2. Single-turn Neural TTS endpoint (for 'indian' voice style, or Indian Neural fallback if batch failed)
+    const fallbackSingleModel = isBatchMode ? 'edge-indian' : ttsModel;
+    const currentVoice = getHostVoice(isBatchMode ? 'indian' : hostVoiceStyle, audioLang, turn.speaker);
+    const cacheKey = `${fallbackSingleModel}|${currentVoice}|${audioLang}|${turn.text}`;
     let blobUrl = audioCacheRef.current.get(cacheKey);
 
     if (!blobUrl) {
@@ -1016,7 +1025,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             speaker: turn.speaker,
             language: audioLang,
             voice: currentVoice,
-            ttsModel
+            ttsModel: fallbackSingleModel
           })
         });
 
@@ -1050,11 +1059,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
       });
 
-      // Preload next turn in background
+      // Preload next turn in background (using Indian Neural voice so it consumes 0 Gemini quota)
       if (index + 1 < audioDiscussion.turns.length) {
         const nextTurn = audioDiscussion.turns[index + 1];
-        const nextVoice = getHostVoice(hostVoiceStyle, audioLang, nextTurn.speaker);
-        const nextKey = `${ttsModel}|${nextVoice}|${audioLang}|${nextTurn.text}`;
+        const nextVoice = getHostVoice(isBatchMode ? 'indian' : hostVoiceStyle, audioLang, nextTurn.speaker);
+        const nextKey = `${fallbackSingleModel}|${nextVoice}|${audioLang}|${nextTurn.text}`;
         if (!audioCacheRef.current.has(nextKey)) {
           fetch(`${API_BASE_URL}/api/ai/tts`, {
             method: 'POST',
@@ -1064,7 +1073,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               speaker: nextTurn.speaker,
               language: audioLang,
               voice: nextVoice,
-              ttsModel
+              ttsModel: fallbackSingleModel
             })
           })
             .then(r => (r.ok ? r.blob() : null))

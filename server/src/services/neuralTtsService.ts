@@ -74,27 +74,73 @@ const GEMINI_VOICE_NAMES = new Set([
   'Zephyr'
 ]);
 
-export const EPISODE_BATCH_TURN_SIZE = 14;
-export const EPISODE_BATCH_MAX_CHARS = 3500;
+export const EPISODE_BATCH_TURN_SIZE = 10;
+export const EPISODE_BATCH_MAX_CHARS = 2200;
 
 export class NeuralTtsService {
   private pythonCmd: string;
   private keyIndex = 0;
   private quotaCooldownUntil = new Map<string, number>();
+  private modelCooldownUntil = new Map<string, number>();
+  private geminiSerializationPromise: Promise<any> = Promise.resolve();
+  private lastGeminiRequestFinishedAt = 0;
 
   constructor() {
     this.pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
   }
 
-  private getOrderedGeminiTtsModels(preferredModel?: string): string[] {
-    const clean = (preferredModel || '').trim();
-    if (clean && GEMINI_TTS_MODELS.includes(clean)) {
-      return [clean, ...GEMINI_TTS_MODELS.filter(m => m !== clean)];
+  /**
+   * Serializes all Gemini TTS requests so concurrent client calls can never burst simultaneously
+   * and exceed the 10K TPM / 3 RPM Free Tier rate limit.
+   */
+  private async runSerializedGeminiTts<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.geminiSerializationPromise;
+    let release!: () => void;
+    this.geminiSerializationPromise = new Promise<void>(resolve => {
+      release = resolve;
+    });
+
+    await prev.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      this.lastGeminiRequestFinishedAt = Date.now();
+      release();
     }
-    return [...GEMINI_TTS_MODELS];
+  }
+
+  /**
+   * Returns at most 2 models (the preferred model + 1 fallback model that is not on cooldown)
+   * so a single request can never cascade across all 5 Gemini TTS models at once.
+   */
+  private getOrderedGeminiTtsModels(preferredModel?: string, maxModels = 2): string[] {
+    const clean = (preferredModel || '').trim();
+    const ordered =
+      clean && GEMINI_TTS_MODELS.includes(clean)
+        ? [clean, ...GEMINI_TTS_MODELS.filter(m => m !== clean)]
+        : [...GEMINI_TTS_MODELS];
+
+    const available = ordered.filter(m => !this.isModelCoolingDown(m));
+    const list = available.length > 0 ? available : ordered.slice(0, 1);
+    return list.slice(0, maxModels);
+  }
+
+  private isModelCoolingDown(model: string): boolean {
+    const until = this.modelCooldownUntil.get(model);
+    if (!until) return false;
+    if (Date.now() > until) {
+      this.modelCooldownUntil.delete(model);
+      return false;
+    }
+    return true;
+  }
+
+  private markModelCooldown(model: string, durationMs: number): void {
+    this.modelCooldownUntil.set(model, Date.now() + durationMs);
   }
 
   private isModelKeyCoolingDown(model: string, apiKey: string): boolean {
+    if (this.isModelCoolingDown(model)) return true;
     const keyId = `${model}:${apiKey.slice(-6)}`;
     const until = this.quotaCooldownUntil.get(keyId);
     if (!until) return false;
@@ -290,7 +336,7 @@ export class NeuralTtsService {
   }
 
   /**
-   * Synthesizes expressive studio speech using Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS (with auto-fallback).
+   * Synthesizes expressive studio speech using Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS (with safe 1-step fallback).
    */
   public async synthesizeGeminiTts(
     text: string,
@@ -302,48 +348,60 @@ export class NeuralTtsService {
     const keys = this.getGeminiApiKeys();
     if (!keys.length) return null;
 
-    const voiceName = this.resolveGeminiVoiceName(speaker, requestedVoice);
-    const hostName = this.normalizeSpeaker(speaker);
+    return this.runSerializedGeminiTts(async () => {
+      const voiceName = this.resolveGeminiVoiceName(speaker, requestedVoice);
+      const hostName = this.normalizeSpeaker(speaker);
 
-    // Subtle vocal direction prefix so Gemini 3.8 TTS nails Indian Hinglish / English podcast warmth
-    const stylePrefix =
-      language === 'hinglish'
-        ? `Speak in a warm, natural, energetic Indian Hinglish podcast host tone (${hostName}): `
-        : language === 'hindi'
-        ? `Speak in a warm, fluent, conversational Indian Hindi podcast host tone (${hostName}): `
-        : `Speak in an engaging, clear, conversational podcast host tone (${hostName}): `;
+      // Subtle vocal direction prefix so Gemini 3.8 TTS nails Indian Hinglish / English podcast warmth
+      const stylePrefix =
+        language === 'hinglish'
+          ? `Speak in a warm, natural, energetic Indian Hinglish podcast host tone (${hostName}): `
+          : language === 'hindi'
+          ? `Speak in a warm, fluent, conversational Indian Hindi podcast host tone (${hostName}): `
+          : `Speak in an engaging, clear, conversational podcast host tone (${hostName}): `;
 
-    const payload = {
-      contents: [
-        {
-          parts: [{ text: `${stylePrefix}${text}` }]
-        }
-      ],
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName
+      const payload = {
+        contents: [
+          {
+            parts: [{ text: `${stylePrefix}${text}` }]
+          }
+        ],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName
+              }
             }
           }
         }
-      }
-    };
+      };
 
-    const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
+      // At most 2 models (selected model + 1 fallback) to prevent cascading across all models
+      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel, 2);
 
-    for (const model of modelsToTry) {
-      for (let attempt = 0; attempt < keys.length; attempt++) {
-        const activeIdx = (this.keyIndex + attempt) % keys.length;
-        const apiKey = keys[activeIdx];
-        if (this.isModelKeyCoolingDown(model, apiKey)) {
-          continue;
+      for (const model of modelsToTry) {
+        if (this.isModelCoolingDown(model)) continue;
+
+        // Pick a single non-cooling-down key for this model (never double-hit the same model in one request)
+        let chosenKey: string | null = null;
+        let chosenIdx = this.keyIndex;
+        for (let attempt = 0; attempt < keys.length; attempt++) {
+          const idx = (this.keyIndex + attempt) % keys.length;
+          const candidateKey = keys[idx];
+          if (!this.isModelKeyCoolingDown(model, candidateKey)) {
+            chosenKey = candidateKey;
+            chosenIdx = idx;
+            break;
+          }
         }
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        if (!chosenKey) continue;
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(chosenKey)}`;
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 28000);
+        const timer = setTimeout(() => controller.abort(), 35000);
 
         try {
           const res = await fetch(url, {
@@ -355,9 +413,11 @@ export class NeuralTtsService {
 
           if (!res.ok) {
             if (res.status === 429 || res.status === 403) {
-              this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+              this.markModelKeyCooldown(model, chosenKey, 15 * 60 * 1000);
+              this.markModelCooldown(model, 5 * 60 * 1000);
             } else if (res.status === 404) {
-              this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
+              this.markModelKeyCooldown(model, chosenKey, 60 * 60 * 1000);
+              this.markModelCooldown(model, 60 * 60 * 1000);
             }
             continue;
           }
@@ -365,13 +425,13 @@ export class NeuralTtsService {
           const data = (await res.json()) as any;
           const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
           if (!inlineData?.data) {
-            continue;
+            return null;
           }
 
           const rawBuf = Buffer.from(inlineData.data, 'base64');
-          if (rawBuf.length === 0) continue;
+          if (rawBuf.length === 0) return null;
 
-          this.keyIndex = (activeIdx + 1) % keys.length;
+          this.keyIndex = (chosenIdx + 1) % keys.length;
           const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
 
           if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
@@ -396,20 +456,22 @@ export class NeuralTtsService {
             engine: `${model}:${voiceName}`
           };
         } catch (err: any) {
-          console.warn(`[tts] ${model} failed:`, err?.message || err);
+          console.warn(`[tts] ${model} aborted/failed (no cascade):`, err?.message || err);
+          // Do NOT cascade to other Gemini models on timeout/abort because Google already billed tokens for this call
+          return null;
         } finally {
           clearTimeout(timer);
         }
       }
-    }
 
-    return null;
+      return null;
+    });
   }
 
   /**
    * Synthesizes a multi-turn conversation between Aarav (Male) and Ananya (Female)
    * in a SINGLE Gemini TTS API call using native `multiSpeakerVoiceConfig`.
-   * Reduces API quota consumption by 8x–50x while producing seamless studio banter.
+   * Serialized and rate-guarded so a batch never cascades across all models or exceeds 10K TPM.
    */
   public async synthesizeMultiSpeakerGeminiTts(
     turns: Array<{ speaker?: string; text: string }>,
@@ -438,64 +500,83 @@ export class NeuralTtsService {
     const keys = this.getGeminiApiKeys();
     if (!keys.length) return null;
 
-    const aaravVoice = requestedVoice === 'notebooklm' ? 'Charon' : 'Puck';
-    const ananyaVoice = requestedVoice === 'notebooklm' ? 'Kore' : 'Aoede';
+    return this.runSerializedGeminiTts(async () => {
+      // Space out consecutive multi-speaker batch calls by at least 4 seconds
+      const elapsedSinceLast = Date.now() - this.lastGeminiRequestFinishedAt;
+      if (this.lastGeminiRequestFinishedAt > 0 && elapsedSinceLast < 4000) {
+        await new Promise(r => setTimeout(r, 4000 - elapsedSinceLast));
+      }
 
-    const styleHeader =
-      language === 'hinglish'
-        ? 'Read this warm, natural, energetic Indian Hinglish study podcast conversation between Aarav and Ananya:\n\n'
-        : language === 'hindi'
-        ? 'Read this warm, fluent, conversational Indian Hindi study podcast conversation between Aarav and Ananya:\n\n'
-        : 'Read this engaging, clear, natural study podcast conversation between Aarav and Ananya:\n\n';
+      const aaravVoice = requestedVoice === 'notebooklm' ? 'Charon' : 'Puck';
+      const ananyaVoice = requestedVoice === 'notebooklm' ? 'Kore' : 'Aoede';
 
-    const dialogueScript = validTurns.map(t => `${t.speaker}: ${t.text}`).join('\n\n');
+      const styleHeader =
+        language === 'hinglish'
+          ? 'Read this warm, natural, energetic Indian Hinglish study podcast conversation between Aarav and Ananya:\n\n'
+          : language === 'hindi'
+          ? 'Read this warm, fluent, conversational Indian Hindi study podcast conversation between Aarav and Ananya:\n\n'
+          : 'Read this engaging, clear, natural study podcast conversation between Aarav and Ananya:\n\n';
 
-    const payload = {
-      contents: [
-        {
-          parts: [{ text: `${styleHeader}${dialogueScript}` }]
-        }
-      ],
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          multiSpeakerVoiceConfig: {
-            speakerVoiceConfigs: [
-              {
-                speaker: 'Aarav',
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: aaravVoice
+      const dialogueScript = validTurns.map(t => `${t.speaker}: ${t.text}`).join('\n\n');
+
+      const payload = {
+        contents: [
+          {
+            parts: [{ text: `${styleHeader}${dialogueScript}` }]
+          }
+        ],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            multiSpeakerVoiceConfig: {
+              speakerVoiceConfigs: [
+                {
+                  speaker: 'Aarav',
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: aaravVoice
+                    }
+                  }
+                },
+                {
+                  speaker: 'Ananya',
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: ananyaVoice
+                    }
                   }
                 }
-              },
-              {
-                speaker: 'Ananya',
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: ananyaVoice
-                  }
-                }
-              }
-            ]
+              ]
+            }
           }
         }
-      }
-    };
+      };
 
-    const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
+      // Try at most 2 models (user's selected model + 1 immediate fallback if 429/404)
+      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel, 2);
 
-    for (const model of modelsToTry) {
-      for (let attempt = 0; attempt < keys.length; attempt++) {
-        const activeIdx = (this.keyIndex + attempt) % keys.length;
-        const apiKey = keys[activeIdx];
-        if (this.isModelKeyCoolingDown(model, apiKey)) {
-          continue;
+      for (const model of modelsToTry) {
+        if (this.isModelCoolingDown(model)) continue;
+
+        // Pick a single non-cooling-down key for this model (never double-hit the same model in one batch)
+        let chosenKey: string | null = null;
+        let chosenIdx = this.keyIndex;
+        for (let attempt = 0; attempt < keys.length; attempt++) {
+          const idx = (this.keyIndex + attempt) % keys.length;
+          const candidateKey = keys[idx];
+          if (!this.isModelKeyCoolingDown(model, candidateKey)) {
+            chosenKey = candidateKey;
+            chosenIdx = idx;
+            break;
+          }
         }
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        if (!chosenKey) continue;
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(chosenKey)}`;
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 45000);
+        // 75s timeout so a valid 10-turn batch generation is never aborted prematurely after tokens are billed
+        const timer = setTimeout(() => controller.abort(), 75000);
 
         try {
           const res = await fetch(url, {
@@ -507,9 +588,11 @@ export class NeuralTtsService {
 
           if (!res.ok) {
             if (res.status === 429 || res.status === 403) {
-              this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+              this.markModelKeyCooldown(model, chosenKey, 15 * 60 * 1000);
+              this.markModelCooldown(model, 5 * 60 * 1000);
             } else if (res.status === 404) {
-              this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
+              this.markModelKeyCooldown(model, chosenKey, 60 * 60 * 1000);
+              this.markModelCooldown(model, 60 * 60 * 1000);
             }
             continue;
           }
@@ -517,13 +600,13 @@ export class NeuralTtsService {
           const data = (await res.json()) as any;
           const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
           if (!inlineData?.data) {
-            continue;
+            return null;
           }
 
           const rawBuf = Buffer.from(inlineData.data, 'base64');
-          if (rawBuf.length === 0) continue;
+          if (rawBuf.length === 0) return null;
 
-          this.keyIndex = (activeIdx + 1) % keys.length;
+          this.keyIndex = (chosenIdx + 1) % keys.length;
           const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
 
           if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
@@ -548,14 +631,16 @@ export class NeuralTtsService {
             engine: `${model}:multi(${aaravVoice}+${ananyaVoice})`
           };
         } catch (err: any) {
-          console.warn(`[tts-multi] ${model} failed:`, err?.message || err);
+          console.warn(`[tts-multi] ${model} aborted/failed (no cascade):`, err?.message || err);
+          // CRITICAL: Never cascade a timed-out/aborted batch to another Gemini model!
+          return null;
         } finally {
           clearTimeout(timer);
         }
       }
-    }
 
-    return null;
+      return null;
+    });
   }
 
   /**
@@ -814,17 +899,7 @@ export class NeuralTtsService {
       console.warn(`[tts] edge-tts fallback notice:`, e?.message || e);
     }
 
-    // 3. If Edge-TTS was preferred but failed, try Gemini TTS!
-    if (preferEdgeVoice) {
-      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language, undefined, preferredModel);
-      if (geminiRes && geminiRes.buffer.length > 0) {
-        const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
-        fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
-        return geminiRes;
-      }
-    }
-
-    // 4. Priority #4: Google Cloud Neural2 TTS
+    // 3. Priority #3: Google Cloud Neural2 TTS
     try {
       const cloudBuf = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
       if (cloudBuf && cloudBuf.length > 0) {
@@ -832,7 +907,7 @@ export class NeuralTtsService {
       }
     } catch {}
 
-    // 5. Priority #5: Google translate_tts fallback
+    // 4. Priority #4: Google translate_tts fallback
     const googleBuf = await this.synthesizeGoogle(cleanedText, speaker, language);
     if (googleBuf && googleBuf.length > 0) {
       return { buffer: googleBuf, mimeType: 'audio/mpeg', engine: 'google-translate-tts' };
@@ -850,8 +925,8 @@ export class NeuralTtsService {
   }
 
   /**
-   * Synthesizes a batch of dialogue turns (up to 55 turns) in a single multi-speaker Gemini TTS call
-   * with disk caching, falling back to turn-by-turn Indian neural synthesis if needed.
+   * Synthesizes a batch of dialogue turns (up to 10 turns) in a single multi-speaker Gemini TTS call
+   * with disk caching, falling back to turn-by-turn Indian Edge Neural synthesis (0 Gemini quota!) if needed.
    */
   private async synthesizeMultiSpeakerBatch(
     batchTurns: Array<{ speaker?: string; text: string }>,
@@ -909,21 +984,23 @@ export class NeuralTtsService {
       }
     }
 
-    // Fallback: synthesize turns individually and merge
+    // Fallback: synthesize turns using FREE Unlimited Indian Edge Neural voices ONLY!
+    // CRITICAL: Never call Gemini TTS turn-by-turn here, as that would consume 10x–50x quota!
     const buffers: Buffer[] = [];
     let allWav = true;
 
     for (const turn of normalizedBatch) {
+      const indianFallbackVoice =
+        language === 'english'
+          ? (turn.speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural')
+          : (turn.speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural');
+
       const res = await this.synthesizeWithMeta({
         text: turn.text,
         speaker: turn.speaker,
         language,
-        ttsModel: effectiveModel,
-        voice: preferEdgeVoice
-          ? (language === 'english'
-              ? (turn.speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural')
-              : (turn.speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural'))
-          : effectiveStyle
+        ttsModel: 'edge-indian',
+        voice: indianFallbackVoice
       });
       if (res.mimeType !== 'audio/wav') {
         allWav = false;
@@ -933,18 +1010,17 @@ export class NeuralTtsService {
 
     if (allWav) {
       const mergedWav = this.mergeWavBuffers(buffers, 280);
-      fs.promises.writeFile(wavBatchCacheFile, mergedWav).catch(() => {});
       return {
         buffer: mergedWav,
         mimeType: 'audio/wav',
-        engine: 'gemini-batch-merger'
+        engine: 'edge-batch-merger'
       };
     }
 
     return {
       buffer: Buffer.concat(buffers),
       mimeType: 'audio/mpeg',
-      engine: 'mp3-batch-merger'
+      engine: 'edge-mp3-batch-merger'
     };
   }
 
