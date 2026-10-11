@@ -169,7 +169,7 @@ export class GeminiService {
               // Header auth keeps the key out of URLs and logs.
               'x-goog-api-key': activeKey
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(this.payloadForModel(payload, model)),
             signal: controller.signal
           });
 
@@ -277,6 +277,20 @@ export class GeminiService {
     }
     payload.generationConfig = generationConfig;
     return payload;
+  }
+
+  /** Gemini 3 models deprecate sampling parameters such as temperature. */
+  private payloadForModel(payload: Record<string, unknown>, model: string): Record<string, unknown> {
+    if (!model.startsWith('gemini-3.')) return payload;
+
+    const generationConfig = payload.generationConfig;
+    if (!generationConfig || typeof generationConfig !== 'object' || Array.isArray(generationConfig)) {
+      return payload;
+    }
+
+    const compatibleGenerationConfig = { ...(generationConfig as Record<string, unknown>) };
+    delete compatibleGenerationConfig.temperature;
+    return { ...payload, generationConfig: compatibleGenerationConfig };
   }
 
   /** Free-form text generation with metadata (model used). */

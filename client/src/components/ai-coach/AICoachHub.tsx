@@ -293,6 +293,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const [activeTopic, setActiveTopic] = useState(initialTopic);
   const [activeDomain, setActiveDomain] = useState(initialDomain);
   const [sourceMaterial, setSourceMaterial] = useState(initialMaterial);
+  const [sourceMaterialTopic, setSourceMaterialTopic] = useState(initialTopic);
 
   // Active Workspace Tab
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('audio');
@@ -362,15 +363,48 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const podcastGenerationAbortRef = useRef<AbortController | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
   const playbackTokenRef = useRef(0);
+  const MAX_AUDIO_CACHE_ENTRIES = 24;
+
+  const cacheAudioUrl = (key: string, url: string) => {
+    const previous = audioCacheRef.current.get(key);
+    if (previous) {
+      URL.revokeObjectURL(url);
+      audioCacheRef.current.delete(key);
+      audioCacheRef.current.set(key, previous);
+      return;
+    }
+
+    audioCacheRef.current.set(key, url);
+    while (audioCacheRef.current.size > MAX_AUDIO_CACHE_ENTRIES) {
+      const oldestKey = audioCacheRef.current.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      const oldestUrl = audioCacheRef.current.get(oldestKey);
+      if (oldestUrl && activeAudioRef.current?.src === oldestUrl) {
+        audioCacheRef.current.delete(oldestKey);
+        audioCacheRef.current.set(oldestKey, oldestUrl);
+        continue;
+      }
+      audioCacheRef.current.delete(oldestKey);
+      if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+    }
+  };
 
   // Sync active podcast to localStorage so page reload never loses it
   useEffect(() => {
     try {
       if (audioDiscussion && Array.isArray(audioDiscussion.turns) && audioDiscussion.turns.length > 0) {
         localStorage.setItem(PODCAST_ACTIVE_STORAGE_KEY, JSON.stringify(audioDiscussion));
+      } else {
+        localStorage.removeItem(PODCAST_ACTIVE_STORAGE_KEY);
       }
     } catch {}
   }, [audioDiscussion]);
+
+  useEffect(() => {
+    if (audioDiscussion?.docTitle && audioDiscussion.docTitle !== activeTopic) {
+      setActiveTopic(audioDiscussion.docTitle);
+    }
+  }, [audioDiscussion?.docTitle, audioDiscussion?.id]);
 
   // Sync podcast library to localStorage
   useEffect(() => {
@@ -550,6 +584,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setActiveTopic(preset.title);
     setActiveDomain(preset.domain);
     setSourceMaterial(preset.content);
+    setSourceMaterialTopic(preset.title);
     // Reset generated content for new topic
     resetGeneratedContent(preset.title);
     addToast('Study Topic Updated', `Switched to ${preset.title}`, 'info');
@@ -588,6 +623,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         setActiveTopic(cleanTitle);
         setActiveDomain(extracted.usedOcr ? 'Scanned PDF (Free Local OCR)' : 'Uploaded PDF Document');
         setSourceMaterial(extracted.text);
+        setSourceMaterialTopic(cleanTitle);
         setTempEditorTitle(cleanTitle);
         setTempEditorText(extracted.text);
         resetGeneratedContent(cleanTitle);
@@ -602,6 +638,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         setActiveTopic(cleanTitle);
         setActiveDomain('Custom File');
         setSourceMaterial(text);
+        setSourceMaterialTopic(cleanTitle);
         setTempEditorTitle(cleanTitle);
         setTempEditorText(text);
         resetGeneratedContent(cleanTitle);
@@ -625,6 +662,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setActiveTopic(noteTitle);
     setActiveDomain('Student Notes');
     setSourceMaterial(tempEditorText.trim());
+    setSourceMaterialTopic(noteTitle);
     resetGeneratedContent(noteTitle);
     setIsEditorOpen(false);
     addToast('Notes Saved!', 'AI Coach is now analyzing your custom study material.', 'success');
@@ -635,6 +673,10 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   // =========================================================================
 
   const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang) => {
+    if (sourceMaterialTopic !== activeTopic) {
+      addToast('Study Material Needed', 'Load the source notes for this episode before generating another language.', 'warning');
+      return;
+    }
     cancelPodcastGeneration();
     const requestId = ++podcastGenerationIdRef.current;
     const controller = new AbortController();
@@ -696,7 +738,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       savedPodcasts.find(p => p.docTitle === activeTopic && (p.language || 'hinglish') === language) || null;
     setAudioDiscussion(matchingSaved);
     setCurrentTurnIndex(0);
-    if (!matchingSaved && shouldRegenerate) void generateAudioDiscussion(language);
+    if (!matchingSaved && shouldRegenerate) {
+      if (sourceMaterialTopic === activeTopic) {
+        void generateAudioDiscussion(language);
+      } else {
+        addToast('Study Material Needed', 'Load the source notes for this episode before generating another language.', 'warning');
+      }
+    }
   };
 
   const handleSelectSavedPodcast = (podcast: AudioDiscussion) => {
@@ -738,7 +786,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
     if (podcast.id) {
       try {
-        await fetch(`${API_BASE_URL}/api/ai/podcasts/${encodeURIComponent(podcast.id)}`, {
+        const query = currentUser?.id ? `?userId=${encodeURIComponent(currentUser.id)}` : '';
+        await fetch(`${API_BASE_URL}/api/ai/podcasts/${encodeURIComponent(podcast.id)}${query}`, {
           method: 'DELETE'
         });
       } catch {}
@@ -765,17 +814,19 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (!res.ok) throw new Error('Failed to synthesize episode');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      const contentType = (res.headers.get('content-type') || blob.type).toLowerCase();
+      const extension = contentType.includes('wav') ? 'wav' : contentType.includes('mpeg') ? 'mp3' : 'audio';
       const a = document.createElement('a');
       const safeName = (audioDiscussion.title || activeTopic || 'studyos-podcast')
         .replace(/[^a-zA-Z0-9_-]+/g, '_')
         .slice(0, 60);
       a.href = url;
-      a.download = `${safeName}.wav`;
+      a.download = `${safeName}.${extension}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      addToast('Download Complete! 🎧', 'Full studio WAV podcast downloaded to your device.', 'success');
+      addToast('Download Complete! 🎧', `Full studio ${extension.toUpperCase()} podcast downloaded to your device.`, 'success');
     } catch (err: any) {
       console.error('Download podcast error:', err);
       addToast('Download Failed', 'Could not synthesize full episode audio.', 'alert');
@@ -879,8 +930,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
     const fetchBatchBlobUrl = (bStart: number, bEnd: number): Promise<string | null> => {
       const bTurns = audioDiscussion.turns.slice(bStart, bEnd + 1);
-      const bSig = bTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
-      const bKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${bStart}-${bEnd}|${bSig}`;
+      const bSig = bTurns.map(t => `${t.speaker}:${t.text}`).join('|');
+      const podcastKey = audioDiscussion.id || `${audioDiscussion.docTitle}|${audioDiscussion.title}`;
+      const bKey = `multibatch|${podcastKey}|${ttsModel}|${hostVoiceStyle}|${audioLang}|${bStart}-${bEnd}|${bSig}`;
 
       const cached = audioCacheRef.current.get(bKey);
       if (cached) return Promise.resolve(cached);
@@ -903,7 +955,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           if (!res.ok) return null;
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          audioCacheRef.current.set(bKey, url);
+          cacheAudioUrl(bKey, url);
           return url;
         })
         .catch(err => {
@@ -1033,7 +1085,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           const blob = await res.blob();
           if (myToken !== playbackTokenRef.current) return;
           blobUrl = URL.createObjectURL(blob);
-          audioCacheRef.current.set(cacheKey, blobUrl);
+          cacheAudioUrl(cacheKey, blobUrl);
         }
       } catch (err) {
         console.warn('Neural TTS failed, falling back to Web Speech:', err);
@@ -1079,7 +1131,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             .then(r => (r.ok ? r.blob() : null))
             .then(b => {
               if (b && myToken === playbackTokenRef.current) {
-                audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
+                cacheAudioUrl(nextKey, URL.createObjectURL(b));
               }
             })
             .catch(() => {});

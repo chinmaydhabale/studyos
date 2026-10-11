@@ -128,6 +128,7 @@ export interface SavedPodcastRecord {
   language: 'hinglish' | 'hindi' | 'english';
   turns: Array<{ speaker: 'Aarav' | 'Ananya' | 'Alex' | 'Sam'; text: string; emotion?: string }>;
   source?: 'gemini' | 'fallback';
+  sourceHash?: string;
   telegramFileId?: string;
   telegramMessageId?: number;
   createdAt: string;
@@ -1625,22 +1626,22 @@ export class StorageService {
 
   public getSavedPodcasts(userId?: string): SavedPodcastRecord[] {
     if (userId) {
-      const userItems = this.savedPodcasts.filter(p => !p.userId || p.userId === userId);
-      return userItems.length > 0 ? userItems : this.savedPodcasts;
+      return this.savedPodcasts.filter(p => p.userId === userId);
     }
-    return this.savedPodcasts;
+    return this.savedPodcasts.filter(p => !p.userId);
   }
 
-  public getSavedPodcastById(id: string): SavedPodcastRecord | undefined {
-    return this.savedPodcasts.find(p => p.id === id);
+  public getSavedPodcastById(id: string, userId?: string): SavedPodcastRecord | undefined {
+    return this.savedPodcasts.find(p => p.id === id && p.userId === userId);
   }
 
   public savePodcast(
     podcast: Omit<SavedPodcastRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
   ): SavedPodcastRecord {
     const id = podcast.id || `pod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const existingIdx = this.savedPodcasts.findIndex(
-      p => p.id === id || (p.docTitle === podcast.docTitle && p.language === podcast.language && p.title === podcast.title)
+    const existingIdx = this.savedPodcasts.findIndex(p =>
+      p.userId === podcast.userId &&
+      (p.id === id || (p.docTitle === podcast.docTitle && p.language === podcast.language && p.title === podcast.title))
     );
 
     const record: SavedPodcastRecord = {
@@ -1666,9 +1667,10 @@ export class StorageService {
   public updatePodcastTelegramInfo(
     id: string,
     telegramFileId: string,
-    telegramMessageId: number
+    telegramMessageId: number,
+    userId?: string
   ): SavedPodcastRecord | undefined {
-    const item = this.savedPodcasts.find(p => p.id === id);
+    const item = this.savedPodcasts.find(p => p.id === id && p.userId === userId);
     if (!item) return undefined;
     item.telegramFileId = telegramFileId;
     item.telegramMessageId = telegramMessageId;
@@ -1676,9 +1678,9 @@ export class StorageService {
     return item;
   }
 
-  public deletePodcast(id: string): boolean {
+  public deletePodcast(id: string, userId?: string): boolean {
     const before = this.savedPodcasts.length;
-    this.savedPodcasts = this.savedPodcasts.filter(p => p.id !== id);
+    this.savedPodcasts = this.savedPodcasts.filter(p => p.id !== id || p.userId !== userId);
     if (this.savedPodcasts.length !== before) {
       this.savePodcastsToDisk();
       return true;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { storage, localDateKey } from './storageService.js';
 import { gemini, DEFAULT_GEMINI_MODEL } from './geminiService.js';
 import { StudyTask, QuizQuestion, Flashcard } from '../types.js';
@@ -129,6 +130,8 @@ export interface NotebookStudyPack {
 const MAX_PAGE_CHARS = 10000;
 const MAX_SELECTION_CHARS = 1500;
 const MAX_NOTEBOOK_SOURCE_CHARS = 120000;
+const PODCAST_SCRIPT_SEGMENT_CHARS = 36000;
+const PODCAST_SCRIPT_CACHE_VERSION = 'v1';
 
 const EXAM_COACH_PERSONA =
   'You are StudyOS AI Coach, a world-class expert mentor and tutor for students preparing for competitive exams ' +
@@ -155,6 +158,8 @@ const EXAM_COACH_PERSONA =
   '   - Never leave formulas unformatted.';
 
 export class AICoachService {
+  private podcastGenerationInFlight = new Map<string, Promise<NotebookAudioOverview>>();
+
   /** Model id currently in use, for the client status badge. */
   public getModel(): string {
     return gemini.getModel();
@@ -1699,25 +1704,39 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       return [trimmed];
     }
 
-    // Split along "--- Page X ---" or double-newline paragraph boundaries
-    const blocks = trimmed.split(/(?=---\s*Page\s*\d+\s*---|\n\n)/g);
+    // Split along page or paragraph boundaries, then hard-split oversized blocks
+    // so a single long paragraph cannot exceed the model's source budget.
+    const blocks = trimmed
+      .split(/(?=---\s*Page\s*\d+\s*---|\n\n)/g)
+      .flatMap(block => {
+        const parts: string[] = [];
+        let remaining = block.trim();
+        while (remaining.length > maxSegmentChars) {
+          let splitAt = remaining.lastIndexOf(' ', maxSegmentChars);
+          if (splitAt < maxSegmentChars * 0.6) splitAt = maxSegmentChars;
+          parts.push(remaining.slice(0, splitAt).trim());
+          remaining = remaining.slice(splitAt).trim();
+        }
+        if (remaining) parts.push(remaining);
+        return parts;
+      });
     const segments: string[] = [];
     let current = '';
 
     for (const block of blocks) {
-      if ((current + block).length > maxSegmentChars && current.trim().length > 2000) {
+      const separator = current ? '\n\n' : '';
+      if (current && (current + separator + block).length > maxSegmentChars) {
         segments.push(current.trim());
         current = block;
       } else {
-        current += block;
+        current += separator + block;
       }
     }
     if (current.trim()) {
       segments.push(current.trim());
     }
 
-    // Cap at 4 segments (up to ~72,000 chars) so huge PDFs get 80-120+ turns without excessive API calls
-    return segments.slice(0, 4);
+    return segments;
   }
 
   public async generateAudioOverview(input: {
@@ -1735,6 +1754,51 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     if (!sourceText) {
       return this.fallbackAudioOverview(docTitle, language, sourceText);
     }
+
+    const sourceHash = createHash('sha256')
+      .update(`${PODCAST_SCRIPT_CACHE_VERSION}\0${PODCAST_SCRIPT_SEGMENT_CHARS}\0${input.userId || 'anonymous'}\0${docTitle}\0${language}\0${sourceText}`)
+      .digest('hex');
+    const cachedPodcast = storage.getSavedPodcasts(input.userId).find(podcast =>
+      podcast.source === 'gemini' &&
+      podcast.sourceHash === sourceHash &&
+      podcast.docTitle === docTitle &&
+      podcast.language === language &&
+      Array.isArray(podcast.turns) &&
+      podcast.turns.length >= 4
+    );
+    if (cachedPodcast) {
+      return { ...cachedPodcast, source: 'gemini' };
+    }
+
+    const inFlightKey = `${input.userId || 'anonymous'}:${sourceHash}`;
+    const inFlight = this.podcastGenerationInFlight.get(inFlightKey);
+    if (inFlight) return inFlight;
+
+    const generation = this.generateAudioOverviewUncached({
+      docTitle,
+      sourceText,
+      language,
+      userId: input.userId,
+      sourceHash
+    });
+    this.podcastGenerationInFlight.set(inFlightKey, generation);
+    try {
+      return await generation;
+    } finally {
+      if (this.podcastGenerationInFlight.get(inFlightKey) === generation) {
+        this.podcastGenerationInFlight.delete(inFlightKey);
+      }
+    }
+  }
+
+  private async generateAudioOverviewUncached(input: {
+    docTitle: string;
+    sourceText: string;
+    language: 'hinglish' | 'hindi' | 'english';
+    userId?: string;
+    sourceHash: string;
+  }): Promise<NotebookAudioOverview> {
+    const { docTitle, sourceText, language } = input;
 
     let languageDirective =
       'Language: HINGLISH (100% Authentic, Natural Indian Hinglish — Hindi + English). ' +
@@ -1756,7 +1820,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         'Include natural human speech patterns: contractions ("it\'s", "you\'re", "that\'s"), spontaneous reactions ("Wait, hold on Ananya—are you saying...", "Right?! And here\'s the wild part, Aarav...", "Hmm, let me think about how to picture that...", "Oh, that analogy is gold!"), mid-thought realizations, and genuine warmth.';
     }
 
-    const segments = this.splitSourceIntoPodcastSegments(sourceText, 18000);
+    const segments = this.splitSourceIntoPodcastSegments(sourceText, PODCAST_SCRIPT_SEGMENT_CHARS);
     const allTurns: AudioTurn[] = [];
     let episodeTitle = '';
     let episodeTagline = '';
@@ -1779,6 +1843,9 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         minTurns = 20;
         maxTurns = 28;
       }
+      const turnScale = Math.max(1, segText.length / 18000);
+      minTurns = Math.ceil(minTurns * turnScale);
+      maxTurns = Math.ceil(maxTurns * turnScale);
 
       let flowInstruction = '';
       if (segments.length === 1) {
@@ -1899,7 +1966,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         durationEstimate: `~${durationMinutes} min listen (${allTurns.length} turns)`,
         language,
         turns: allTurns,
-        source: 'gemini'
+        source: 'gemini',
+        sourceHash: input.sourceHash
       });
       return {
         ...saved,

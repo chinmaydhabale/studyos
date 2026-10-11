@@ -1258,7 +1258,8 @@ app.get('/api/ai/podcasts', (req, res) => {
 });
 
 app.delete('/api/ai/podcasts/:id', (req, res) => {
-  const deleted = storage.deletePodcast(req.params.id);
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+  const deleted = storage.deletePodcast(req.params.id, userId);
   res.json({ success: deleted });
 });
 
@@ -1287,7 +1288,7 @@ app.post('/api/ai/podcasts/episode-audio', async (req, res) => {
 });
 
 app.post('/api/ai/podcasts/save-telegram', async (req, res) => {
-  const { podcastId, title, docTitle, language, turns, voice, voiceStyle, ttsModel } = req.body || {};
+  const { podcastId, userId, title, docTitle, language, turns, voice, voiceStyle, ttsModel } = req.body || {};
   if (!Array.isArray(turns) || turns.length === 0) {
     return res.status(400).json({ error: 'turns array is required' });
   }
@@ -1312,7 +1313,7 @@ app.post('/api/ai/podcasts/save-telegram', async (req, res) => {
 
     const uploaded = await telegramService.uploadDocument(result.buffer, fileName, result.mimeType, caption);
     if (podcastId) {
-      storage.updatePodcastTelegramInfo(podcastId, uploaded.telegramFileId, uploaded.telegramMessageId);
+      storage.updatePodcastTelegramInfo(podcastId, uploaded.telegramFileId, uploaded.telegramMessageId, userId);
     }
 
     res.json({

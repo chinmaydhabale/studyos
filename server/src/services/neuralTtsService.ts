@@ -351,9 +351,15 @@ export class NeuralTtsService {
     return this.runSerializedGeminiTts(async () => {
       const voiceName = this.resolveGeminiVoiceName(speaker, requestedVoice);
       const hostName = this.normalizeSpeaker(speaker);
-
-      // Subtle vocal direction prefix so Gemini 3.8 TTS nails Indian Hinglish / English podcast warmth
-      const stylePrefix =
+      // Keep the transcript verbatim; Gemini 3.8 reads text literally and expects
+      // sustained delivery direction in speech_metadata.
+      const style =
+        language === 'hinglish'
+          ? 'Warm, natural, energetic Indian Hinglish podcast delivery'
+          : language === 'hindi'
+          ? 'Warm, fluent, conversational Indian Hindi podcast delivery'
+          : 'Engaging, clear, conversational podcast delivery';
+      const legacyStylePrefix =
         language === 'hinglish'
           ? `Speak in a warm, natural, energetic Indian Hinglish podcast host tone (${hostName}): `
           : language === 'hindi'
@@ -363,16 +369,15 @@ export class NeuralTtsService {
       const payload = {
         contents: [
           {
-            parts: [{ text: `${stylePrefix}${text}` }]
+            role: 'user',
+            parts: [{ text, speech_metadata: { style } }]
           }
         ],
         generationConfig: {
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName
-              }
+              voice: voiceName
             }
           }
         }
@@ -383,6 +388,20 @@ export class NeuralTtsService {
 
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
+
+        // Gemini 3.1/2.5 TTS use the legacy prompt and prebuiltVoiceConfig format.
+        // Keep their fallback working while using structured metadata on Gemini 3.8.
+        const modelPayload = model.startsWith('gemini-3.8-')
+          ? payload
+          : {
+              contents: [{ parts: [{ text: `${legacyStylePrefix}${text}` }] }],
+              generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  voiceConfig: { prebuiltVoiceConfig: { voiceName } }
+                }
+              }
+            };
 
         let triedAnyKey = false;
         for (let attempt = 0; attempt < keys.length; attempt++) {
@@ -402,7 +421,7 @@ export class NeuralTtsService {
             const res = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
+              body: JSON.stringify(modelPayload),
               signal: controller.signal
             });
 
@@ -512,19 +531,28 @@ export class NeuralTtsService {
       const aaravVoice = requestedVoice === 'notebooklm' ? 'Charon' : 'Puck';
       const ananyaVoice = requestedVoice === 'notebooklm' ? 'Kore' : 'Aoede';
 
-      const styleHeader =
+      const style =
+        language === 'hinglish'
+          ? 'Warm, natural, energetic Indian Hinglish study podcast delivery'
+          : language === 'hindi'
+          ? 'Warm, fluent, conversational Indian Hindi study podcast delivery'
+          : 'Engaging, clear, natural study podcast delivery';
+      const legacyStyleHeader =
         language === 'hinglish'
           ? 'Read this warm, natural, energetic Indian Hinglish study podcast conversation between Aarav and Ananya:\n\n'
           : language === 'hindi'
           ? 'Read this warm, fluent, conversational Indian Hindi study podcast conversation between Aarav and Ananya:\n\n'
           : 'Read this engaging, clear, natural study podcast conversation between Aarav and Ananya:\n\n';
-
-      const dialogueScript = validTurns.map(t => `${t.speaker}: ${t.text}`).join('\n\n');
+      const legacyDialogueScript = validTurns.map(t => `${t.speaker}: ${t.text}`).join('\n\n');
 
       const payload = {
         contents: [
           {
-            parts: [{ text: `${styleHeader}${dialogueScript}` }]
+            role: 'user',
+            parts: validTurns.map(t => ({
+              text: t.text,
+              speech_metadata: { speaker: t.speaker, style }
+            }))
           }
         ],
         generationConfig: {
@@ -560,6 +588,30 @@ export class NeuralTtsService {
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
 
+        // Older TTS fallbacks need speaker labels in the prompt and the legacy voice schema.
+        const modelPayload = model.startsWith('gemini-3.8-')
+          ? payload
+          : {
+              contents: [{ parts: [{ text: `${legacyStyleHeader}${legacyDialogueScript}` }] }],
+              generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  multiSpeakerVoiceConfig: {
+                    speakerVoiceConfigs: [
+                      {
+                        speaker: 'Aarav',
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: aaravVoice } }
+                      },
+                      {
+                        speaker: 'Ananya',
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: ananyaVoice } }
+                      }
+                    ]
+                  }
+                }
+              }
+            };
+
         let triedAnyKey = false;
         for (let attempt = 0; attempt < keys.length; attempt++) {
           const activeIdx = (this.keyIndex + attempt) % keys.length;
@@ -579,7 +631,7 @@ export class NeuralTtsService {
             const res = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
+              body: JSON.stringify(modelPayload),
               signal: controller.signal
             });
 
@@ -954,7 +1006,7 @@ export class NeuralTtsService {
     const serialized = normalizedBatch.map(t => `${t.speaker}:${t.text}`).join('||');
     const batchHash = crypto
       .createHash('sha256')
-      .update(`gemini38_multibatch_v2|${effectiveStyle}|${language}|${serialized}`)
+      .update(`gemini38_multibatch_v3|${effectiveStyle}|${effectiveModel}|${language}|${serialized}`)
       .digest('hex');
 
     const wavBatchCacheFile = path.join(CACHE_DIR, `batch_${batchHash}.wav`);
