@@ -54,13 +54,16 @@ import { pdfjsLib, extractPageText } from '../../lib/pdfjs.js';
 import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
 
 // Types for AI Coach Features
+type PodcastSpeaker = 'Aarav' | 'Ananya' | 'Alex' | 'Sam';
+
 interface AudioTurn {
-  speaker: 'Alex' | 'Sam';
+  speaker: PodcastSpeaker;
   text: string;
   emotion?: string;
 }
 
 interface AudioDiscussion {
+  id?: string;
   docTitle: string;
   title: string;
   tagline: string;
@@ -68,26 +71,49 @@ interface AudioDiscussion {
   language?: 'hinglish' | 'hindi' | 'english';
   turns: AudioTurn[];
   source?: 'gemini' | 'fallback';
+  telegramFileId?: string;
+  telegramMessageId?: number;
+  createdAt?: string;
 }
 
 type AudioLanguage = 'hinglish' | 'hindi' | 'english';
-type HostVoiceStyle = 'notebooklm' | 'indian' | 'multilingual';
+type HostVoiceStyle = 'gemini38' | 'notebooklm' | 'indian';
 
-const getHostVoice = (style: HostVoiceStyle, language: AudioLanguage, speaker: 'Alex' | 'Sam'): string => {
-  if (style === 'indian' && language !== 'english') {
-    return speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
-  }
-  if (style === 'notebooklm' && language === 'english') {
-    return speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
-  }
-  return speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
+const isMaleHost = (speaker?: string): boolean => {
+  const s = (speaker || '').toLowerCase();
+  return s !== 'ananya' && s !== 'sam' && s !== 'female';
 };
 
-const getHostVoiceLabel = (style: HostVoiceStyle, language: AudioLanguage, speaker: 'Alex' | 'Sam'): string =>
-  getHostVoice(style, language, speaker)
-    .replace(/^[^-]+-[^-]+-/, '')
-    .replace(/Neural$/, '')
-    .replace(/Multilingual$/, ' Multilingual');
+const displaySpeakerName = (speaker?: string): 'Aarav' | 'Ananya' =>
+  isMaleHost(speaker) ? 'Aarav' : 'Ananya';
+
+const getHostVoice = (style: HostVoiceStyle, language: AudioLanguage, speaker: PodcastSpeaker): string => {
+  const male = isMaleHost(speaker);
+  if (style === 'gemini38') {
+    return male ? 'Puck' : 'Aoede';
+  }
+  if (style === 'notebooklm') {
+    return male ? 'Charon' : 'Kore';
+  }
+  if (language !== 'english') {
+    return male ? 'hi-IN-MadhurNeural' : 'hi-IN-SwaraNeural';
+  }
+  return male ? 'en-US-AndrewMultilingualNeural' : 'en-US-AvaMultilingualNeural';
+};
+
+const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, speaker: PodcastSpeaker): string => {
+  const male = isMaleHost(speaker);
+  if (style === 'gemini38') {
+    return male ? 'Gemini 3.8 • Puck' : 'Gemini 3.8 • Aoede';
+  }
+  if (style === 'notebooklm') {
+    return male ? 'Gemini 3.8 • Charon' : 'Gemini 3.8 • Kore';
+  }
+  return male ? 'Madhur Neural' : 'Swara Neural';
+};
+
+const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
+const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
 
 interface ConceptCheatSheet {
   docTitle: string;
@@ -225,24 +251,108 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
   // ----------------------------------------------------
-  // 1. Audio Deep Dive State & Audio Player
+  // 1. Audio Deep Dive State & Persistent Podcast Library
   // ----------------------------------------------------
-  const [audioDiscussion, setAudioDiscussion] = useState<AudioDiscussion | null>(null);
-  const [audioLang, setAudioLang] = useState<AudioLanguage>('hinglish');
-  const [hostVoiceStyle, setHostVoiceStyle] = useState<HostVoiceStyle>('multilingual');
+  const [savedPodcasts, setSavedPodcasts] = useState<AudioDiscussion[]>(() => {
+    try {
+      const raw = localStorage.getItem(PODCAST_LIBRARY_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  const [audioDiscussion, setAudioDiscussion] = useState<AudioDiscussion | null>(() => {
+    try {
+      const raw = localStorage.getItem(PODCAST_ACTIVE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.turns) && parsed.turns.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
+  });
+
+  const [audioLang, setAudioLang] = useState<AudioLanguage>(() => {
+    try {
+      const raw = localStorage.getItem(PODCAST_ACTIVE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.language === 'hindi' || parsed?.language === 'english' || parsed?.language === 'hinglish') {
+          return parsed.language;
+        }
+      }
+    } catch {}
+    return 'hinglish';
+  });
+
+  const [hostVoiceStyle, setHostVoiceStyle] = useState<HostVoiceStyle>('gemini38');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [audioBuffering, setAudioBuffering] = useState(false);
+  const [isTelegramSaving, setIsTelegramSaving] = useState(false);
+  const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
 
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const podcastGenerationIdRef = useRef(0);
   const podcastGenerationAbortRef = useRef<AbortController | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
-  // Incremented on every stop/new play so an in-flight (buffering) turn can detect
-  // that it was cancelled and abort before it starts audio.
   const playbackTokenRef = useRef(0);
+
+  // Sync active podcast to localStorage so page reload never loses it
+  useEffect(() => {
+    try {
+      if (audioDiscussion && Array.isArray(audioDiscussion.turns) && audioDiscussion.turns.length > 0) {
+        localStorage.setItem(PODCAST_ACTIVE_STORAGE_KEY, JSON.stringify(audioDiscussion));
+      }
+    } catch {}
+  }, [audioDiscussion]);
+
+  // Sync podcast library to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(PODCAST_LIBRARY_STORAGE_KEY, JSON.stringify(savedPodcasts.slice(0, 30)));
+    } catch {}
+  }, [savedPodcasts]);
+
+  // Fetch server-stored podcasts on mount and merge with local library
+  useEffect(() => {
+    const query = currentUser?.id ? `?userId=${encodeURIComponent(currentUser.id)}` : '';
+    fetch(`${API_BASE_URL}/api/ai/podcasts${query}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data && Array.isArray(data.podcasts) && data.podcasts.length > 0) {
+          setSavedPodcasts(prev => {
+            const byKey = new Map<string, AudioDiscussion>();
+            [...data.podcasts, ...prev].forEach((p: AudioDiscussion) => {
+              if (p && Array.isArray(p.turns) && p.turns.length > 0) {
+                const key = p.id || `${p.docTitle}|${p.language || 'hinglish'}|${p.title}`;
+                if (!byKey.has(key)) byKey.set(key, p);
+              }
+            });
+            return Array.from(byKey.values()).slice(0, 30);
+          });
+          setAudioDiscussion(current => current || data.podcasts[0]);
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.id]);
+
+  const upsertPodcastToLibrary = useCallback((podcast: AudioDiscussion) => {
+    setSavedPodcasts(prev => {
+      const key = podcast.id || `${podcast.docTitle}|${podcast.language || 'hinglish'}|${podcast.title}`;
+      const filtered = prev.filter(
+        p => (p.id || `${p.docTitle}|${p.language || 'hinglish'}|${p.title}`) !== key
+      );
+      return [podcast, ...filtered].slice(0, 30);
+    });
+  }, []);
 
   const cancelPodcastGeneration = () => {
     podcastGenerationIdRef.current += 1;
@@ -349,11 +459,16 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   ]);
 
   // Clear every piece of generated content so a new source never shows stale
-  // artifacts (study plan, podcast, flashcards, quiz, cheat sheet, chat).
+  // artifacts (study plan, flashcards, quiz, cheat sheet, chat), while restoring
+  // any previously saved podcast for the newly selected topic.
   const resetGeneratedContent = (title: string) => {
     cancelPodcastGeneration();
     clearAudioCache();
-    setAudioDiscussion(null);
+    const matchingSaved =
+      savedPodcasts.find(p => p.docTitle === title && (p.language || 'hinglish') === audioLang) ||
+      savedPodcasts.find(p => p.docTitle === title) ||
+      null;
+    setAudioDiscussion(matchingSaved);
     setCurrentTurnIndex(0);
     setFlashcards([]);
     setQuizQuestions([]);
@@ -439,7 +554,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   };
 
   // =========================================================================
-  // 1. Audio Deep Dive Engine (Google TTS + Native Speech)
+  // 1. Audio Deep Dive Engine (Gemini 3.8 TTS + Neural + Native Speech)
   // =========================================================================
 
   const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang) => {
@@ -457,7 +572,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         body: JSON.stringify({
           docTitle: activeTopic,
           sourceText: sourceMaterial,
-          language: requestedLanguage
+          language: requestedLanguage,
+          userId: currentUser?.id
         })
       });
       if (!res.ok) throw new Error('Audio generation failed');
@@ -466,12 +582,19 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (!Array.isArray(data.turns) || data.turns.length === 0) {
         throw new Error('Audio generation returned an empty script');
       }
-      setAudioDiscussion(data);
+      const enriched: AudioDiscussion = {
+        ...data,
+        docTitle: data.docTitle || activeTopic,
+        language: data.language || requestedLanguage,
+        createdAt: data.createdAt || new Date().toISOString()
+      };
+      setAudioDiscussion(enriched);
+      upsertPodcastToLibrary(enriched);
       setCurrentTurnIndex(0);
-      if (data.source === 'fallback') {
+      if (enriched.source === 'fallback') {
         addToast('Notes-based fallback ready', 'AI script generation was unavailable; this recap uses excerpts from your source notes.', 'warning');
       } else {
-        addToast('Podcast Generated!', `Created ${data.turns.length}-turn deep dive discussion.`, 'success');
+        addToast('Podcast Generated & Saved!', `Aarav & Ananya created a ${enriched.turns.length}-turn deep dive.`, 'success');
       }
     } catch (err: any) {
       if (controller.signal.aborted || requestId !== podcastGenerationIdRef.current) return;
@@ -492,9 +615,139 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     stopAudio();
     clearAudioCache();
     setAudioLang(language);
-    setAudioDiscussion(null);
+    const matchingSaved =
+      savedPodcasts.find(p => p.docTitle === activeTopic && (p.language || 'hinglish') === language) || null;
+    setAudioDiscussion(matchingSaved);
     setCurrentTurnIndex(0);
-    if (shouldRegenerate) void generateAudioDiscussion(language);
+    if (!matchingSaved && shouldRegenerate) void generateAudioDiscussion(language);
+  };
+
+  const handleSelectSavedPodcast = (podcast: AudioDiscussion) => {
+    stopAudio();
+    clearAudioCache();
+    setAudioDiscussion(podcast);
+    setCurrentTurnIndex(0);
+    if (podcast.docTitle) {
+      setActiveTopic(podcast.docTitle);
+    }
+    if (podcast.language === 'hinglish' || podcast.language === 'hindi' || podcast.language === 'english') {
+      setAudioLang(podcast.language);
+    }
+    addToast('Podcast Loaded', `Loaded "${podcast.title}"`, 'info');
+  };
+
+  const handleDeleteSavedPodcast = async (podcast: AudioDiscussion, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const targetKey = podcast.id || `${podcast.docTitle}|${podcast.language || 'hinglish'}|${podcast.title}`;
+    setSavedPodcasts(prev => {
+      const remaining = prev.filter(
+        p => (p.id || `${p.docTitle}|${p.language || 'hinglish'}|${p.title}`) !== targetKey
+      );
+      if (
+        audioDiscussion &&
+        (audioDiscussion.id || `${audioDiscussion.docTitle}|${audioDiscussion.language || 'hinglish'}|${audioDiscussion.title}`) === targetKey
+      ) {
+        stopAudio();
+        const nextPodcast = remaining[0] || null;
+        setAudioDiscussion(nextPodcast);
+        if (!nextPodcast) {
+          try {
+            localStorage.removeItem(PODCAST_ACTIVE_STORAGE_KEY);
+          } catch {}
+        }
+      }
+      return remaining;
+    });
+
+    if (podcast.id) {
+      try {
+        await fetch(`${API_BASE_URL}/api/ai/podcasts/${encodeURIComponent(podcast.id)}`, {
+          method: 'DELETE'
+        });
+      } catch {}
+    }
+    addToast('Podcast Removed', 'Removed episode from saved library.', 'info');
+  };
+
+  const handleDownloadFullPodcast = async () => {
+    if (!audioDiscussion || isDownloadingAudio) return;
+    setIsDownloadingAudio(true);
+    addToast('Synthesizing Full Episode...', 'Merging Aarav & Ananya voices with Gemini 3.8 TTS...', 'info');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          podcastId: audioDiscussion.id,
+          turns: audioDiscussion.turns,
+          language: audioLang,
+          voiceStyle: hostVoiceStyle
+        })
+      });
+      if (!res.ok) throw new Error('Failed to synthesize episode');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = (audioDiscussion.title || activeTopic || 'studyos-podcast')
+        .replace(/[^a-zA-Z0-9_-]+/g, '_')
+        .slice(0, 60);
+      a.href = url;
+      a.download = `${safeName}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      addToast('Download Complete! 🎧', 'Full studio WAV podcast downloaded to your device.', 'success');
+    } catch (err: any) {
+      console.error('Download podcast error:', err);
+      addToast('Download Failed', 'Could not synthesize full episode audio.', 'alert');
+    } finally {
+      setIsDownloadingAudio(false);
+    }
+  };
+
+  const handleBackupPodcastToTelegram = async () => {
+    if (!audioDiscussion || isTelegramSaving) return;
+    if (!currentUser?.id) {
+      addToast('Login Required', 'Please sign in and connect your Telegram Study Channel first.', 'warning');
+      return;
+    }
+    setIsTelegramSaving(true);
+    addToast('Uploading to Telegram Cloud...', 'Synthesizing full episode & uploading to your Telegram channel...', 'info');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/podcasts/save-telegram`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          podcastId: audioDiscussion.id,
+          docTitle: audioDiscussion.docTitle || activeTopic,
+          title: audioDiscussion.title,
+          tagline: audioDiscussion.tagline,
+          language: audioLang,
+          voiceStyle: hostVoiceStyle,
+          turns: audioDiscussion.turns
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Telegram upload failed');
+      }
+      const updated: AudioDiscussion = {
+        ...audioDiscussion,
+        id: data.podcastId || audioDiscussion.id,
+        telegramFileId: data.telegramFileId,
+        telegramMessageId: data.telegramMessageId
+      };
+      setAudioDiscussion(updated);
+      upsertPodcastToLibrary(updated);
+      addToast('Saved to Telegram Cloud! ☁️', 'Full podcast episode uploaded to your Telegram Study Channel.', 'success');
+    } catch (err: any) {
+      console.error('Telegram podcast backup error:', err);
+      addToast('Telegram Backup Failed', err.message || 'Make sure your Telegram Channel is connected in Vault.', 'alert');
+    } finally {
+      setIsTelegramSaving(false);
+    }
   };
 
   const stopAudio = () => {
@@ -628,7 +881,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(turn.text);
     utterance.rate = playbackRate;
-    utterance.pitch = turn.speaker === 'Alex' ? 1.0 : 1.15;
+    utterance.pitch = isMaleHost(turn.speaker) ? 1.0 : 1.15;
     utterance.lang = audioLang === 'hindi' ? 'hi-IN' : audioLang === 'hinglish' ? 'hi-IN' : 'en-IN';
 
     utterance.onend = () => {
@@ -1089,11 +1342,11 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
                 {/* Host Avatars */}
                 <div className="flex items-center gap-6">
-                  {/* Host Alex */}
+                  {/* Host Aarav (Male) */}
                   <div className="flex flex-col items-center">
                     <div
                       className={`w-16 h-16 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all ${
-                        isPlaying && audioDiscussion?.turns[currentTurnIndex]?.speaker === 'Alex'
+                        isPlaying && isMaleHost(audioDiscussion?.turns[currentTurnIndex]?.speaker)
                           ? 'bg-gradient-to-tr from-cyan-500 to-blue-600 ring-4 ring-cyan-400/50 scale-105'
                           : 'bg-slate-800 text-slate-400 border border-white/10'
                       }`}
@@ -1101,9 +1354,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       👨‍🏫
                     </div>
                     <span className="text-xs font-bold text-white mt-1.5">
-                      Alex ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Alex')})
+                      Aarav ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Aarav')})
                     </span>
-                    <span className="text-[10px] text-cyan-400 font-medium">Curious Host</span>
+                    <span className="text-[10px] text-cyan-400 font-medium">Curious Host (Male)</span>
                   </div>
 
                   {/* VS / Soundwave indicator */}
@@ -1113,14 +1366,14 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       <span className={`w-1 rounded-full bg-indigo-400 transition-all ${isPlaying ? 'h-4 animate-pulse delay-75' : 'h-1.5'}`} />
                       <span className={`w-1 rounded-full bg-purple-400 transition-all ${isPlaying ? 'h-5 animate-pulse delay-150' : 'h-3'}`} />
                     </div>
-                    <span className="text-[10px] text-slate-500 mt-1 font-mono">2-Host AI</span>
+                    <span className="text-[10px] text-slate-500 mt-1 font-mono">Gemini 3.8</span>
                   </div>
 
-                  {/* Host Sam */}
+                  {/* Host Ananya (Female) */}
                   <div className="flex flex-col items-center">
                     <div
                       className={`w-16 h-16 rounded-2xl flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all ${
-                        isPlaying && audioDiscussion?.turns[currentTurnIndex]?.speaker === 'Sam'
+                        isPlaying && audioDiscussion?.turns[currentTurnIndex] && !isMaleHost(audioDiscussion.turns[currentTurnIndex].speaker)
                           ? 'bg-gradient-to-tr from-indigo-500 to-purple-600 ring-4 ring-indigo-400/50 scale-105'
                           : 'bg-slate-800 text-slate-400 border border-white/10'
                       }`}
@@ -1128,18 +1381,28 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       👩‍🎓
                     </div>
                     <span className="text-xs font-bold text-white mt-1.5">
-                      Sam ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Sam')})
+                      Ananya ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Ananya')})
                     </span>
-                    <span className="text-[10px] text-indigo-400 font-medium">Exam Topper</span>
+                    <span className="text-[10px] text-indigo-400 font-medium">Exam Topper (Female)</span>
                   </div>
                 </div>
 
-                {/* Episode Meta & Language Controls */}
+                {/* Episode Meta & Cloud Status */}
                 <div className="flex-1 text-center md:text-left min-w-0">
                   <div className="flex items-center justify-center md:justify-start gap-2 mb-1 flex-wrap">
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-semibold border border-cyan-500/30">
-                      Podcast Deep Dive
+                      Gemini 3.8 Podcast
                     </span>
+                    {audioDiscussion && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold border border-emerald-500/30">
+                        ✓ Auto-Saved
+                      </span>
+                    )}
+                    {audioDiscussion?.telegramFileId && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30">
+                        ☁️ Backed up on Telegram
+                      </span>
+                    )}
                     {audioDiscussion?.source === 'fallback' && (
                       <span
                         className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/30"
@@ -1156,7 +1419,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     {audioDiscussion?.title || `${activeTopic} - In-Depth Conversation`}
                   </h3>
                   <p className="text-xs text-slate-400 line-clamp-2 mt-1">
-                    {audioDiscussion?.tagline || 'Alex and Sam break down every concept, derivation, and exam trick in natural dialogue.'}
+                    {audioDiscussion?.tagline || 'Aarav and Ananya break down every concept, derivation, and exam trick in natural Hinglish & English dialogue.'}
                   </p>
                 </div>
               </div>
@@ -1168,31 +1431,31 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10 flex-wrap">
                   <Mic className="w-3.5 h-3.5 text-cyan-400 ml-2" />
                   <button
+                    onClick={() => { setHostVoiceStyle('gemini38'); stopAudio(); clearAudioCache(); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      hostVoiceStyle === 'gemini38' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Gemini 3.8 Flash TTS Studio Voices: Puck (Aarav) & Aoede (Ananya)"
+                  >
+                    ✨ Gemini 3.8 Studio
+                  </button>
+                  <button
                     onClick={() => { setHostVoiceStyle('notebooklm'); stopAudio(); clearAudioCache(); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                      hostVoiceStyle === 'notebooklm' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                      hostVoiceStyle === 'notebooklm' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
-                    title="Christopher and Jenny for English; multilingual voices for Hindi and Hinglish"
+                    title="Gemini 3.8 Deep Voices: Charon (Aarav) & Kore (Ananya)"
                   >
-                    🎙️ NotebookLM Style
+                    🎙️ NotebookLM Deep
                   </button>
                   <button
                     onClick={() => { setHostVoiceStyle('indian'); stopAudio(); clearAudioCache(); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'indian' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
-                    title="Madhur and Swara for Hindi and Hinglish; multilingual voices for English"
+                    title="Indian Neural Voices: Madhur (Aarav) & Swara (Ananya)"
                   >
                     🇮🇳 Indian Educators
-                  </button>
-                  <button
-                    onClick={() => { setHostVoiceStyle('multilingual'); stopAudio(); clearAudioCache(); }}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                      hostVoiceStyle === 'multilingual' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-                    }`}
-                    title="Bilingual Multilingual Studio (Andrew & Ava)"
-                  >
-                    🌐 Multilingual Pro
                   </button>
                 </div>
 
@@ -1208,20 +1471,20 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     Hinglish (Natural)
                   </button>
                   <button
-                    onClick={() => handleAudioLanguageChange('hindi')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                      audioLang === 'hindi' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Hindi (हिंदी)
-                  </button>
-                  <button
                     onClick={() => handleAudioLanguageChange('english')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       audioLang === 'english' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                   >
                     English
+                  </button>
+                  <button
+                    onClick={() => handleAudioLanguageChange('hindi')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                      audioLang === 'hindi' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Hindi (हिंदी)
                   </button>
                 </div>
 
@@ -1269,8 +1532,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   </button>
                 </div>
 
-                {/* Speed & Re-generate */}
-                <div className="flex items-center gap-2">
+                {/* Speed, Download WAV, Telegram Cloud Backup & Re-generate */}
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => {
                       const rates = [0.75, 1.0, 1.25, 1.5];
@@ -1279,9 +1542,48 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       if (activeAudioRef.current) activeAudioRef.current.playbackRate = next;
                     }}
                     className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-mono font-bold border border-white/10 transition-colors"
+                    title="Playback Speed"
                   >
                     {playbackRate}x
                   </button>
+
+                  {audioDiscussion && (
+                    <>
+                      <button
+                        onClick={handleDownloadFullPodcast}
+                        disabled={isDownloadingAudio}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        title="Download full merged episode (.wav)"
+                      >
+                        {isDownloadingAudio ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isDownloadingAudio ? 'Merging WAV...' : 'Download WAV'}</span>
+                      </button>
+
+                      <button
+                        onClick={handleBackupPodcastToTelegram}
+                        disabled={isTelegramSaving}
+                        className="px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                        title="Backup full studio WAV audio permanently to your Telegram Study Channel"
+                      >
+                        {isTelegramSaving ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Send className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {isTelegramSaving
+                            ? 'Uploading...'
+                            : audioDiscussion.telegramFileId
+                              ? 'Re-sync Telegram'
+                              : 'Save to Telegram'}
+                        </span>
+                      </button>
+                    </>
+                  )}
 
                   <button
                     onClick={() => void generateAudioDiscussion()}
@@ -1294,6 +1596,71 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 </div>
               </div>
             </div>
+
+            {/* Saved Podcasts Library (Persistent Across Reloads) */}
+            {savedPodcasts.length > 0 && (
+              <div className="bg-slate-900/90 border border-white/10 rounded-3xl p-5 shadow-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-emerald-400" />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Saved Podcast Library ({savedPodcasts.length})
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    Stored locally & on server • Never lost on reload
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+                  {savedPodcasts.map((pod, idx) => {
+                    const podKey = pod.id || `${pod.docTitle}|${pod.language || 'hinglish'}|${pod.title}|${idx}`;
+                    const isSelected =
+                      audioDiscussion &&
+                      (audioDiscussion.id
+                        ? audioDiscussion.id === pod.id
+                        : audioDiscussion.title === pod.title && audioDiscussion.docTitle === pod.docTitle);
+                    return (
+                      <div
+                        key={podKey}
+                        onClick={() => handleSelectSavedPodcast(pod)}
+                        className={`group flex items-center justify-between gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-cyan-950/40 border-cyan-500/50 shadow-md'
+                            : 'bg-slate-950/50 border-white/5 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              {pod.language || 'hinglish'}
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              {pod.turns?.length || 0} turns
+                            </span>
+                            {pod.telegramFileId && (
+                              <span className="text-[10px] text-sky-400 font-semibold" title="Backed up on Telegram">
+                                ☁️ TG
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs font-bold text-white truncate">{pod.title}</p>
+                          <p className="text-[11px] text-slate-400 truncate">{pod.docTitle}</p>
+                        </div>
+
+                        <button
+                          onClick={(e) => void handleDeleteSavedPodcast(pod, e)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 opacity-70 group-hover:opacity-100 transition-all"
+                          title="Delete saved podcast"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Transcript Card */}
             <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-xl flex flex-col">
@@ -1318,7 +1685,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     disabled={Boolean(loadingAction)}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
                   >
-                    Generate Audio Script Now
+                    Generate Audio Script with Aarav & Ananya
                   </button>
                 </div>
               ) : (
@@ -1328,7 +1695,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 >
                   {audioDiscussion.turns.map((turn, idx) => {
                     const isCurrent = idx === currentTurnIndex;
-                    const isAlex = turn.speaker === 'Alex';
+                    const isMale = isMaleHost(turn.speaker);
+                    const speakerLabel = displaySpeakerName(turn.speaker);
                     return (
                       <div
                         id={`turn-${idx}`}
@@ -1336,7 +1704,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                         onClick={() => playTurn(idx)}
                         className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
                           isCurrent
-                            ? isAlex
+                            ? isMale
                               ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-500/10'
                               : 'bg-indigo-950/40 border-indigo-500/60 shadow-lg shadow-indigo-500/10'
                             : 'bg-slate-950/40 border-white/5 hover:border-white/20'
@@ -1346,12 +1714,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                           <div className="flex items-center gap-2">
                             <span
                               className={`text-[11px] font-bold px-2 py-0.5 rounded-lg ${
-                                isAlex
+                                isMale
                                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                                   : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                               }`}
                             >
-                              {turn.speaker}
+                              {isMale ? '👨‍🏫 ' : '👩‍🎓 '}
+                              {speakerLabel}
                             </span>
                             {turn.emotion && (
                               <span className="text-[10px] text-slate-500 italic">

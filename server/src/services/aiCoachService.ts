@@ -81,12 +81,13 @@ export interface PdfAssistResult {
 
 // NotebookLM Types
 export interface AudioTurn {
-  speaker: 'Alex' | 'Sam';
+  speaker: 'Aarav' | 'Ananya' | 'Alex' | 'Sam';
   text: string;
   emotion?: string;
 }
 
 export interface NotebookAudioOverview {
+  id?: string;
   docTitle: string;
   title: string;
   tagline: string;
@@ -94,6 +95,9 @@ export interface NotebookAudioOverview {
   language?: 'hinglish' | 'hindi' | 'english';
   turns: AudioTurn[];
   source: AISource;
+  telegramFileId?: string;
+  telegramMessageId?: number;
+  createdAt?: string;
 }
 
 export interface NotebookBriefingDoc {
@@ -1639,21 +1643,20 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     }
 
     let languageDirective =
-      'Language: HINGLISH. Write the podcast dialogue in authentic, natural conversational Hinglish (the way intelligent Indian educators and students speak). ' +
-      'CRUCIAL FOR NATURAL INDIAN PRONUNCIATION: Write all spoken conversational Hindi sentences in DEVANAGARI script (e.g. "अरे सैम!", "बिल्कुल सही बात!", "लेकिन यहाँ एक बहुत बड़ा ट्विस्ट है...", "चलो इसे एक आसान उदाहरण से समझते हैं..."). ' +
-      'Write technical terms, formulas, key concepts, and common English phrases in English or standard terminology (e.g. Thermodynamics, First Law, Heat Engine, Internal Energy, Work Done, Isolated System, Efficiency, Common Pitfalls). ' +
-      'Alex and Sam must sound like two enthusiastic, brilliant friends having an insightful conversation over chai, making every complex concept intuitive and fun. ' +
-      'Do NOT write Hindi in Roman script; using Devanagari for the Hindi parts ensures the neural voice pronounces every word with authentic native Indian warmth and cadence without any foreign accent!';
+      'Language: HINGLISH (Natural Indian Hinglish — Hindi + English). Write the podcast dialogue in authentic, natural conversational Hinglish (the way intelligent Indian educators and toppers speak). ' +
+      'HOST GENDERS & GRAMMAR: Aarav is MALE (uses male Hindi verb forms like "मैं समझता हूँ", "अगर मैं पूछूँ", "मुझे लगता है") and Ananya is FEMALE (uses female Hindi verb forms like "मैं बताती हूँ", "चलो मैं समझाती हूँ", "मैंने देखा है"). ' +
+      'CRUCIAL FOR GEMINI 3.8 TTS PRONUNCIATION: Write conversational Hindi words in DEVANAGARI script (e.g. "अरे अनन्या!", "बिल्कुल सही पकड़ा आरव!", "लेकिन यहाँ एक बहुत बड़ा exam trap है...", "चलो इसे एक आसान shortcut से समझते हैं...") and keep all technical terms, exam names, formulas, and English phrases in English script (e.g. Repo Rate, Thermodynamics, First Law, Efficiency, Ratio, Percentage, Syllogism, IBPS PO, SBI). ' +
+      'Aarav and Ananya must sound like two enthusiastic, brilliant Indian study partners having an insightful conversation over chai!';
     if (language === 'hindi') {
       languageDirective =
         'Language: PURE HINDI (हिंदी). Write the podcast dialogue in warm, fluent, engaging conversational Hindi using Devanagari script throughout. ' +
-        'Alex and Sam talk like two passionate, brilliant study partners sitting across the table with cups of chai. ' +
-        'Use natural spoken phrases like "अरे वाह सैम!", "बिल्कुल सही बात!", "अब यहाँ एक बहुत बड़ा ट्विस्ट है...", "परीक्षा में विद्यार्थी अक्सर यहीं गलती करते हैं...". ' +
+        'HOST GENDERS: Aarav (आरव) is MALE and Ananya (अनन्या) is FEMALE — strictly use gender-accurate Hindi verb endings for each speaker. ' +
+        'Use natural spoken phrases like "अरे वाह अनन्या!", "बिल्कुल सही बात आरव!", "अब यहाँ एक बहुत बड़ा ट्विस्ट है...", "परीक्षा में विद्यार्थी अक्सर यहीं गलती करते हैं...". ' +
         'Explain every technical term with clarity, using standard Hindi terminology while keeping the tone lively, respectful, and motivating.';
     } else if (language === 'english') {
       languageDirective =
-        'Language: ENGLISH (Indian Educator & NotebookLM Style). Write the podcast dialogue in charismatic, witty, deeply insightful English in the signature Google NotebookLM style. ' +
-        'Alex is curious and energetic; Sam is structured, perceptive, and clear. They banter naturally, use vivid analogies, and tie ideas to competitive exam mastery.';
+        'Language: ENGLISH (Indian Educator & Google NotebookLM Style). Write the podcast dialogue in charismatic, witty, deeply insightful English in the signature Google NotebookLM style. ' +
+        'Aarav (Male Host) is curious, energetic, and asks sharp student-perspective questions; Ananya (Female Co-Host) is structured, perceptive, and shares topper shortcuts and vivid analogies.';
     }
 
     const result = await gemini.generateJson<{
@@ -1664,11 +1667,11 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     }>({
       tier: 'heavy',
       systemInstruction:
-        'You are the lead showrunner and audio director for Google NotebookLM Deep Dive Podcasts. ' +
-        'You write scripts for two world-class co-hosts: Alex (curious, relatable, asks the tough questions, catches student confusion points) ' +
-        'and Sam (analytical, calm, deep-thinker, gives unforgettable real-world analogies and topper exam secrets). ' +
+        'You are the lead showrunner and audio director for StudyOS & Google NotebookLM Deep Dive Podcasts (powered by Gemini 3.8 TTS). ' +
+        'You write scripts for two world-class Indian co-hosts: Aarav (Male Host — curious, relatable, asks tough student questions, catches confusion points) ' +
+        'and Ananya (Female Co-Host — analytical, exam topper, gives unforgettable real-world analogies and 30-second exam shortcuts). ' +
         'THEIR BANTER IS FAMOUS FOR FEELING 100% ALIVE, WITTY, AND HUMAN: ' +
-        'They react dynamically ("Wait, wait, Sam, back up a second!", "Haha, exactly Alex!", "Spot on!"), build on each other’s thoughts, ' +
+        'They react dynamically ("Wait, wait, Ananya, hold on a second!", "Haha, exactly Aarav!", "Spot on!"), build on each other’s thoughts, ' +
         'and never lecture monotonously. Keep each turn to 1 to 3 spoken sentences with one clear idea. ' +
         'Tie every factual claim to the source and avoid repetition. ' +
         'CRITICAL FOR AUDIO: Write pure spoken words only. Never include markdown symbols (*, #, _, `, bullet points, brackets) or raw math notation (write "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Respond with JSON only.\n' +
@@ -1676,9 +1679,9 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Generate an 8-12 turn, roughly 5-7 minute audio deep dive between Alex and Sam, grounded only in the source. ' +
+        'Generate an 8-12 turn, roughly 5-7 minute audio deep dive between Aarav (Male) and Ananya (Female), grounded only in the source. ' +
         'Prioritize the core principles, definitions, one useful example, and the most important exam pitfalls. Do not invent facts that are absent from the source. ' +
-        'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
+        'Aarav and Ananya must alternate naturally. Give each turn speaker ("Aarav" or "Ananya"), dialogue text, and emotion tone.',
       schema: {
         type: 'OBJECT',
         properties: {
@@ -1709,7 +1712,10 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         .slice(0, 14)
         .map(t => {
           const speakerRaw = (t?.speaker || '').toLowerCase();
-          const speaker: 'Alex' | 'Sam' = speakerRaw.includes('sam') ? 'Sam' : 'Alex';
+          const speaker: 'Aarav' | 'Ananya' =
+            speakerRaw.includes('ananya') || speakerRaw.includes('sam') || speakerRaw.includes('female')
+              ? 'Ananya'
+              : 'Aarav';
           return {
             speaker,
             text: this.cleanString(t?.text, 2000) || '',
@@ -1721,19 +1727,24 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       if (turns.length >= 4) {
         const wordCount = turns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
         const durationMinutes = Math.max(1, Math.round(wordCount / 135));
-        return {
+        const saved = storage.savePodcast({
+          userId: input.userId,
           docTitle,
           title: this.cleanString(result.title, 200) || `${docTitle}: The Deep Dive`,
-          tagline: this.cleanString(result.tagline, 250) || 'An engaging conversation breaking down the core concepts.',
+          tagline: this.cleanString(result.tagline, 250) || 'Aarav & Ananya break down the core concepts and exam tricks.',
           durationEstimate: `~${durationMinutes} min listen`,
           language,
           turns,
+          source: 'gemini'
+        });
+        return {
+          ...saved,
           source: 'gemini'
         };
       }
     }
 
-    return this.fallbackAudioOverview(docTitle, language, sourceText);
+    return this.fallbackAudioOverview(docTitle, language, sourceText, input.userId);
   }
 
   public async askSourceQuestion(input: {
@@ -1966,7 +1977,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
   private fallbackAudioOverview(
     docTitle: string,
     language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
-    sourceText = ''
+    sourceText = '',
+    userId?: string
   ): NotebookAudioOverview {
     const snippets = sourceText
       .replace(/---\s*Page\s+\d+\s*---/gi, ' ')
@@ -1976,14 +1988,14 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       .slice(0, 6);
     const selectedSnippets = snippets.length ? snippets : [sourceText.trim().slice(0, 500)].filter(Boolean);
     const intro = language === 'english'
-      ? `Welcome to ${docTitle}. We are using the provided notes for this source-based audio recap.`
+      ? `Welcome to ${docTitle}. Aarav and Ananya are using your provided notes for this source-based audio recap.`
       : language === 'hindi'
-        ? `${docTitle} के इस ऑडियो पुनरावलोकन में हम दिए गए notes के मुख्य अंश पढ़ेंगे।`
-        : `${docTitle} ke is audio recap mein hum aapke notes ke key points sunenge.`;
-    const turns: AudioTurn[] = [{ speaker: 'Alex', text: intro, emotion: 'conversational' }];
+        ? `${docTitle} के इस ऑडियो पुनरावलोकन में आरव और अनन्या दिए गए notes के मुख्य अंश पढ़ेंगे।`
+        : `${docTitle} ke is audio recap mein Aarav aur Ananya aapke notes ke key points sunayenge.`;
+    const turns: AudioTurn[] = [{ speaker: 'Aarav', text: intro, emotion: 'conversational' }];
 
     selectedSnippets.forEach((snippet, index) => {
-      const speaker: 'Alex' | 'Sam' = index % 2 === 0 ? 'Sam' : 'Alex';
+      const speaker: 'Aarav' | 'Ananya' = index % 2 === 0 ? 'Ananya' : 'Aarav';
       const leadIn = language === 'english'
         ? `Key point ${index + 1} from the source:`
         : language === 'hindi'
@@ -1994,13 +2006,18 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     const wordCount = turns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
     const durationMinutes = Math.max(1, Math.round(wordCount / 135));
-    return {
+    const saved = storage.savePodcast({
+      userId,
       docTitle,
       title: `${docTitle}: ${language === 'hindi' ? 'स्रोत आधारित पुनरावलोकन' : language === 'english' ? 'Source-based recap' : 'Notes se Hinglish recap'}`,
       tagline: 'AI script generation was unavailable, so this recap reads key excerpts from your source notes.',
       durationEstimate: `~${durationMinutes} min listen`,
       language,
       turns,
+      source: 'fallback'
+    });
+    return {
+      ...saved,
       source: 'fallback'
     };
   }

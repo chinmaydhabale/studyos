@@ -10,43 +10,90 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
+export type PodcastSpeaker = 'Aarav' | 'Ananya' | 'Alex' | 'Sam';
+
 export interface TTSRequest {
   text: string;
   voice?: string;
-  speaker?: 'Alex' | 'Sam';
+  speaker?: PodcastSpeaker;
   language?: 'hinglish' | 'hindi' | 'english';
   rate?: string;
   pitch?: string;
 }
 
+export interface TTSResult {
+  buffer: Buffer;
+  mimeType: 'audio/wav' | 'audio/mpeg';
+  engine: string;
+}
+
 export const NEURAL_VOICES = {
-  hindi: {
-    Alex: 'hi-IN-MadhurNeural',
-    Sam: 'hi-IN-SwaraNeural'
-  },
-  hinglish: {
-    Alex: 'hi-IN-MadhurNeural',
-    Sam: 'hi-IN-SwaraNeural'
-  },
-  english: {
-    Alex: 'en-US-ChristopherNeural',
-    Sam: 'en-US-JennyNeural'
+  gemini38: {
+    Aarav: 'Puck',
+    Ananya: 'Aoede'
   },
   notebooklm: {
-    Alex: 'en-US-ChristopherNeural',
-    Sam: 'en-US-JennyNeural'
+    Aarav: 'Charon',
+    Ananya: 'Kore'
+  },
+  hindi: {
+    Aarav: 'hi-IN-MadhurNeural',
+    Ananya: 'hi-IN-SwaraNeural'
+  },
+  hinglish: {
+    Aarav: 'hi-IN-MadhurNeural',
+    Ananya: 'hi-IN-SwaraNeural'
+  },
+  english: {
+    Aarav: 'en-US-ChristopherNeural',
+    Ananya: 'en-US-JennyNeural'
   },
   multilingual: {
-    Alex: 'en-US-AndrewMultilingualNeural',
-    Sam: 'en-US-AvaMultilingualNeural'
+    Aarav: 'en-US-AndrewMultilingualNeural',
+    Ananya: 'en-US-AvaMultilingualNeural'
   }
 };
 
+const GEMINI_TTS_MODELS = [
+  'gemini-3.8-flash-tts',
+  'gemini-3.8-flash-lite-tts',
+  'gemini-2.5-flash-preview-tts'
+];
+
+const GEMINI_VOICE_NAMES = new Set([
+  'Puck',
+  'Aoede',
+  'Charon',
+  'Kore',
+  'Fenrir',
+  'Leda',
+  'Orus',
+  'Zephyr'
+]);
+
 export class NeuralTtsService {
   private pythonCmd: string;
+  private keyIndex = 0;
 
   constructor() {
     this.pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  }
+
+  private getGeminiApiKeys(): string[] {
+    const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    return raw
+      .split(',')
+      .map(k => k.trim())
+      .filter(k => k.length > 0);
+  }
+
+  public isFemaleSpeaker(speaker?: string): boolean {
+    const s = (speaker || '').toLowerCase();
+    return s === 'ananya' || s === 'sam' || s === 'female';
+  }
+
+  public normalizeSpeaker(speaker?: string): 'Aarav' | 'Ananya' {
+    return this.isFemaleSpeaker(speaker) ? 'Ananya' : 'Aarav';
   }
 
   private escapeXml(text: string): string {
@@ -93,6 +140,223 @@ export class NeuralTtsService {
       .replace(/[()[\]{}]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /**
+   * Wraps raw signed 16-bit PCM audio in a standard 44-byte RIFF WAV header.
+   */
+  public wrapPcmToWav(pcmBuffer: Buffer, sampleRate = 24000, numChannels = 1, bitsPerSample = 16): Buffer {
+    const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+    const blockAlign = (numChannels * bitsPerSample) / 8;
+    const dataSize = pcmBuffer.length;
+    const header = Buffer.alloc(44);
+
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16); // Subchunk1Size (16 for PCM)
+    header.writeUInt16LE(1, 20); // AudioFormat (1 = PCM)
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+
+    return Buffer.concat([header, pcmBuffer]);
+  }
+
+  /**
+   * Extracts raw PCM payload and format metadata from a RIFF WAV buffer.
+   */
+  private extractPcmFromWav(wavBuffer: Buffer): {
+    pcm: Buffer;
+    sampleRate: number;
+    numChannels: number;
+    bitsPerSample: number;
+  } | null {
+    if (wavBuffer.length < 44 || wavBuffer.toString('ascii', 0, 4) !== 'RIFF') {
+      return null;
+    }
+    const numChannels = wavBuffer.readUInt16LE(22) || 1;
+    const sampleRate = wavBuffer.readUInt32LE(24) || 24000;
+    const bitsPerSample = wavBuffer.readUInt16LE(34) || 16;
+
+    // Locate 'data' chunk
+    let offset = 12;
+    while (offset + 8 <= wavBuffer.length) {
+      const chunkId = wavBuffer.toString('ascii', offset, offset + 4);
+      const chunkSize = wavBuffer.readUInt32LE(offset + 4);
+      if (chunkId === 'data') {
+        const start = offset + 8;
+        const end = Math.min(wavBuffer.length, start + chunkSize);
+        return {
+          pcm: wavBuffer.subarray(start, end),
+          sampleRate,
+          numChannels,
+          bitsPerSample
+        };
+      }
+      offset += 8 + chunkSize + (chunkSize % 2);
+    }
+
+    return {
+      pcm: wavBuffer.subarray(44),
+      sampleRate,
+      numChannels,
+      bitsPerSample
+    };
+  }
+
+  /**
+   * Merges multiple WAV buffers into a single WAV file with a natural 280ms studio pause between turns.
+   */
+  public mergeWavBuffers(buffers: Buffer[], pauseMs = 280): Buffer {
+    const valid = buffers.map(b => this.extractPcmFromWav(b)).filter((x): x is NonNullable<typeof x> => x !== null);
+    if (valid.length === 0) {
+      return Buffer.concat(buffers);
+    }
+
+    const { sampleRate, numChannels, bitsPerSample } = valid[0];
+    const bytesPerSample = bitsPerSample / 8;
+    const silenceSamples = Math.floor((sampleRate * pauseMs) / 1000);
+    const silenceBuffer = Buffer.alloc(silenceSamples * numChannels * bytesPerSample, 0);
+
+    const pcmParts: Buffer[] = [];
+    valid.forEach((item, index) => {
+      pcmParts.push(item.pcm);
+      if (index < valid.length - 1) {
+        pcmParts.push(silenceBuffer);
+      }
+    });
+
+    return this.wrapPcmToWav(Buffer.concat(pcmParts), sampleRate, numChannels, bitsPerSample);
+  }
+
+  /**
+   * Resolves the Gemini 3.8 prebuilt voice name for Aarav (Male) and Ananya (Female).
+   */
+  private resolveGeminiVoiceName(speaker?: string, requestedVoice?: string): string {
+    const isFemale = this.isFemaleSpeaker(speaker);
+    if (requestedVoice && GEMINI_VOICE_NAMES.has(requestedVoice)) {
+      return requestedVoice;
+    }
+    if (requestedVoice === 'notebooklm') {
+      return isFemale ? 'Kore' : 'Charon';
+    }
+    // Default Gemini 3.8 Studio voices: Puck (Male - Aarav) & Aoede (Female - Ananya)
+    return isFemale ? 'Aoede' : 'Puck';
+  }
+
+  /**
+   * Synthesizes expressive studio speech using Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS.
+   */
+  public async synthesizeGeminiTts(
+    text: string,
+    speaker?: PodcastSpeaker,
+    language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
+    requestedVoice?: string
+  ): Promise<TTSResult | null> {
+    const keys = this.getGeminiApiKeys();
+    if (!keys.length) return null;
+
+    const voiceName = this.resolveGeminiVoiceName(speaker, requestedVoice);
+    const hostName = this.normalizeSpeaker(speaker);
+
+    // Subtle vocal direction prefix so Gemini 3.8 TTS nails Indian Hinglish / English podcast warmth
+    const stylePrefix =
+      language === 'hinglish'
+        ? `Speak in a warm, natural, energetic Indian Hinglish podcast host tone (${hostName}): `
+        : language === 'hindi'
+        ? `Speak in a warm, fluent, conversational Indian Hindi podcast host tone (${hostName}): `
+        : `Speak in an engaging, clear, conversational podcast host tone (${hostName}): `;
+
+    const payload = {
+      contents: [
+        {
+          parts: [{ text: `${stylePrefix}${text}` }]
+        }
+      ],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName
+            }
+          }
+        }
+      }
+    };
+
+    for (const model of GEMINI_TTS_MODELS) {
+      for (let attempt = 0; attempt < keys.length; attempt++) {
+        const activeIdx = (this.keyIndex + attempt) % keys.length;
+        const apiKey = keys[activeIdx];
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 25000);
+
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+
+          if (!res.ok) {
+            if (res.status === 429 || res.status === 403) {
+              continue;
+            }
+            break;
+          }
+
+          const data = (await res.json()) as any;
+          const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+          if (!inlineData?.data) {
+            continue;
+          }
+
+          const rawBuf = Buffer.from(inlineData.data, 'base64');
+          if (rawBuf.length === 0) continue;
+
+          this.keyIndex = (activeIdx + 1) % keys.length;
+          const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
+
+          if (mime.includes('wav') || rawBuf.toString('ascii', 0, 4) === 'RIFF') {
+            return {
+              buffer: rawBuf,
+              mimeType: 'audio/wav',
+              engine: `${model}:${voiceName}`
+            };
+          }
+
+          if (mime.includes('pcm') || mime.includes('l16')) {
+            return {
+              buffer: this.wrapPcmToWav(rawBuf, 24000, 1, 16),
+              mimeType: 'audio/wav',
+              engine: `${model}:${voiceName}`
+            };
+          }
+
+          return {
+            buffer: rawBuf,
+            mimeType: 'audio/mpeg',
+            engine: `${model}:${voiceName}`
+          };
+        } catch (err: any) {
+          console.warn(`[tts] ${model} failed:`, err?.message || err);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -174,16 +438,17 @@ export class NeuralTtsService {
    */
   private async synthesizeGoogleCloud(
     text: string,
-    speaker?: 'Alex' | 'Sam',
+    speaker?: PodcastSpeaker,
     language?: 'hinglish' | 'hindi' | 'english'
   ): Promise<Buffer | null> {
     const apiKey = process.env.GOOGLE_TTS_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) return null;
 
+    const isFemale = this.isFemaleSpeaker(speaker);
     const isHindi = language === 'hindi' || language === 'hinglish';
     const voiceName = isHindi
-      ? (speaker === 'Sam' ? 'hi-IN-Neural2-B' : 'hi-IN-Neural2-A')
-      : (speaker === 'Sam' ? 'en-IN-Neural2-B' : 'en-IN-Neural2-A');
+      ? (isFemale ? 'hi-IN-Neural2-A' : 'hi-IN-Neural2-B')
+      : (isFemale ? 'en-IN-Neural2-A' : 'en-IN-Neural2-B');
     const langCode = isHindi ? 'hi-IN' : 'en-IN';
 
     const payload = JSON.stringify({
@@ -191,8 +456,8 @@ export class NeuralTtsService {
       voice: { languageCode: langCode, name: voiceName },
       audioConfig: {
         audioEncoding: 'MP3',
-        speakingRate: speaker === 'Alex' ? 1.03 : 0.98,
-        pitch: speaker === 'Alex' ? 1.5 : -1.5
+        speakingRate: isFemale ? 1.0 : 1.03,
+        pitch: isFemale ? 1.2 : -1.0
       }
     });
 
@@ -241,17 +506,12 @@ export class NeuralTtsService {
    */
   public async synthesizeGoogle(
     text: string,
-    speaker?: 'Alex' | 'Sam',
+    speaker?: PodcastSpeaker,
     language?: 'hinglish' | 'hindi' | 'english'
   ): Promise<Buffer> {
-    let ttsLang = 'hi';
-    if (language === 'english') {
-      ttsLang = 'en-IN';
-    } else {
-      ttsLang = 'hi';
-    }
-
-    const speed = speaker === 'Sam' ? 0.98 : 1.0;
+    const ttsLang = language === 'english' ? 'en-IN' : 'hi';
+    const isFemale = this.isFemaleSpeaker(speaker);
+    const speed = isFemale ? 0.98 : 1.0;
     const chunks = this.chunkText(text);
     const audioBuffers: Buffer[] = [];
 
@@ -264,80 +524,167 @@ export class NeuralTtsService {
   }
 
   /**
-   * Main synthesis entry point.
+   * Primary synthesis with metadata (buffer, mimeType, engine).
    * Priority:
-   * 1. Check local disk cache (instant response).
-   * 2. Attempt Google Cloud Neural2 TTS if key is active.
-   * 3. Google Text-to-Speech (native Google voice, 0-config, highly fluent).
-   * 4. Edge-tts (fallback if available).
+   * 1. Local disk cache (.wav or .mp3) -> 0ms instant response.
+   * 2. Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS (Puck for Aarav [Male], Aoede for Ananya [Female]).
+   * 3. Edge-TTS neural voices (if requested or fallback).
+   * 4. Google Cloud Neural2 TTS.
+   * 5. Google translate_tts fallback.
    */
-  public async synthesize(req: TTSRequest): Promise<Buffer> {
+  public async synthesizeWithMeta(req: TTSRequest): Promise<TTSResult> {
     const cleanedText = this.cleanTextForSpeech(req.text || '');
     if (!cleanedText) {
       throw new Error('Text is empty after cleaning');
     }
 
-    const speaker = req.speaker || 'Alex';
+    const speaker = this.normalizeSpeaker(req.speaker);
     const language = req.language || 'hinglish';
-    let voice = req.voice;
+    const requestedVoice = req.voice || 'gemini-3.8';
 
-    // Resolve optimal studio voice if generic, default, or auto
-    if (!voice || voice === 'google-tts' || voice === 'default' || voice === 'auto') {
-      if (language === 'english') {
-        voice = speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
-      } else if (language === 'hinglish') {
-        voice = speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
-      } else {
-        voice = speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
-      }
-    }
-
-    // Include synthesis settings and bump the version so older voice mappings are not reused.
     const hash = crypto
       .createHash('sha256')
-      .update(`neural_v4|${voice}|${speaker}|${language}|${req.rate || '+0%'}|${req.pitch || '+0Hz'}|${cleanedText}`)
+      .update(`gemini38_v5|${requestedVoice}|${speaker}|${language}|${req.rate || '+0%'}|${req.pitch || '+0Hz'}|${cleanedText}`)
       .digest('hex');
-    const cacheFile = path.join(CACHE_DIR, `${hash}.mp3`);
 
-    if (fs.existsSync(cacheFile)) {
+    const wavCacheFile = path.join(CACHE_DIR, `${hash}.wav`);
+    const mp3CacheFile = path.join(CACHE_DIR, `${hash}.mp3`);
+
+    if (fs.existsSync(wavCacheFile)) {
       try {
-        const cached = await fs.promises.readFile(cacheFile);
+        const cached = await fs.promises.readFile(wavCacheFile);
         if (cached.length > 0) {
-          return cached;
+          return { buffer: cached, mimeType: 'audio/wav', engine: 'disk-cache-wav' };
         }
       } catch {}
     }
 
-    let buffer: Buffer | null = null;
-
-    // 1. Priority #1: Studio-grade Neural TTS (Edge-TTS: Christopher, Jenny, Madhur, Swara)
-    try {
-      buffer = await this.synthesizeEdgeTts(cleanedText, voice, req.rate, req.pitch);
-    } catch (e: any) {
-      console.warn(`[tts] edge-tts error for voice "${voice}", falling back to secondary:`, e?.message || e);
+    if (fs.existsSync(mp3CacheFile)) {
+      try {
+        const cached = await fs.promises.readFile(mp3CacheFile);
+        if (cached.length > 0) {
+          return { buffer: cached, mimeType: 'audio/mpeg', engine: 'disk-cache-mp3' };
+        }
+      } catch {}
     }
 
-    // 2. Priority #2: Google Cloud Neural2 TTS if active
-    if (!buffer) {
-      try {
-        buffer = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
-      } catch (err) {
-        console.warn('[tts] Google Cloud TTS error, falling back to Google TTS:', err);
+    const preferEdgeVoice = requestedVoice.endsWith('Neural');
+
+    // 1. Priority #1: Gemini 3.8 TTS (unless an explicit Edge Neural voice was requested)
+    if (!preferEdgeVoice) {
+      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language, requestedVoice);
+      if (geminiRes && geminiRes.buffer.length > 0) {
+        const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
+        fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
+        return geminiRes;
       }
     }
 
-    // 3. Priority #3: Google translate_tts fallback
-    if (!buffer) {
-      buffer = await this.synthesizeGoogle(cleanedText, speaker, language);
+    // Resolve Edge fallback voice for Aarav (Male) & Ananya (Female)
+    let edgeVoice = preferEdgeVoice ? requestedVoice : '';
+    if (!edgeVoice) {
+      if (language === 'english') {
+        edgeVoice = speaker === 'Ananya' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
+      } else if (language === 'hinglish') {
+        edgeVoice = speaker === 'Ananya' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
+      } else {
+        edgeVoice = speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
+      }
     }
 
-    // Write to cache
-    if (buffer && buffer.length > 0) {
-      fs.promises.writeFile(cacheFile, buffer).catch(() => {});
-      return buffer;
+    // 2. Priority #2: Edge-TTS
+    try {
+      const edgeBuf = await this.synthesizeEdgeTts(cleanedText, edgeVoice, req.rate, req.pitch);
+      if (edgeBuf && edgeBuf.length > 0) {
+        fs.promises.writeFile(mp3CacheFile, edgeBuf).catch(() => {});
+        return { buffer: edgeBuf, mimeType: 'audio/mpeg', engine: `edge-tts:${edgeVoice}` };
+      }
+    } catch (e: any) {
+      console.warn(`[tts] edge-tts fallback notice:`, e?.message || e);
+    }
+
+    // 3. If Edge-TTS was preferred but failed, try Gemini 3.8 TTS!
+    if (preferEdgeVoice) {
+      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language);
+      if (geminiRes && geminiRes.buffer.length > 0) {
+        const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
+        fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
+        return geminiRes;
+      }
+    }
+
+    // 4. Priority #4: Google Cloud Neural2 TTS
+    try {
+      const cloudBuf = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
+      if (cloudBuf && cloudBuf.length > 0) {
+        fs.promises.writeFile(mp3CacheFile, cloudBuf).catch(() => {});
+        return { buffer: cloudBuf, mimeType: 'audio/mpeg', engine: 'google-cloud-neural2' };
+      }
+    } catch {}
+
+    // 5. Priority #5: Google translate_tts fallback
+    const googleBuf = await this.synthesizeGoogle(cleanedText, speaker, language);
+    if (googleBuf && googleBuf.length > 0) {
+      fs.promises.writeFile(mp3CacheFile, googleBuf).catch(() => {});
+      return { buffer: googleBuf, mimeType: 'audio/mpeg', engine: 'google-translate-tts' };
     }
 
     throw new Error('All TTS synthesis methods failed');
+  }
+
+  /**
+   * Backward-compatible buffer-only synthesis method.
+   */
+  public async synthesize(req: TTSRequest): Promise<Buffer> {
+    const res = await this.synthesizeWithMeta(req);
+    return res.buffer;
+  }
+
+  /**
+   * Synthesizes an entire multi-turn podcast episode between Aarav (Male) and Ananya (Female)
+   * and merges all turns into a single studio-grade audio file for download or Telegram Cloud storage.
+   */
+  public async synthesizeFullEpisode(
+    turns: Array<{ speaker?: string; text: string }>,
+    language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
+    voiceStyle?: string
+  ): Promise<TTSResult> {
+    const validTurns = (turns || []).filter(t => t && typeof t.text === 'string' && t.text.trim().length > 0);
+    if (!validTurns.length) {
+      throw new Error('No dialogue turns provided for episode synthesis');
+    }
+
+    const buffers: Buffer[] = [];
+    let allWav = true;
+
+    for (const turn of validTurns) {
+      const speaker = this.normalizeSpeaker(turn.speaker);
+      const res = await this.synthesizeWithMeta({
+        text: turn.text,
+        speaker,
+        language,
+        voice: voiceStyle || (speaker === 'Ananya' ? 'Aoede' : 'Puck')
+      });
+      if (res.mimeType !== 'audio/wav') {
+        allWav = false;
+      }
+      buffers.push(res.buffer);
+    }
+
+    if (allWav) {
+      const mergedWav = this.mergeWavBuffers(buffers, 280);
+      return {
+        buffer: mergedWav,
+        mimeType: 'audio/wav',
+        engine: 'gemini-3.8-episode-merger'
+      };
+    }
+
+    return {
+      buffer: Buffer.concat(buffers),
+      mimeType: 'audio/mpeg',
+      engine: 'mp3-episode-merger'
+    };
   }
 
   /**

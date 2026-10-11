@@ -118,6 +118,21 @@ function readJsonSafe<T>(filePath: string, fallback: T): T {
   }
 }
 
+export interface SavedPodcastRecord {
+  id: string;
+  userId?: string;
+  docTitle: string;
+  title: string;
+  tagline: string;
+  durationEstimate: string;
+  language: 'hinglish' | 'hindi' | 'english';
+  turns: Array<{ speaker: 'Aarav' | 'Ananya' | 'Alex' | 'Sam'; text: string; emotion?: string }>;
+  source?: 'gemini' | 'fallback';
+  telegramFileId?: string;
+  telegramMessageId?: number;
+  createdAt: string;
+}
+
 export class StorageService {
   private users: Map<string, UserProfile> = new Map();
   private userCredentials: Map<string, { passwordHash: string; salt: string }> = new Map();
@@ -133,6 +148,7 @@ export class StorageService {
   private groups: Map<string, StudyGroup> = new Map();
   private documents: Map<string, StudyDocument> = new Map();
   private mockTestRecords: MockTestRecord[] = [];
+  private savedPodcasts: SavedPodcastRecord[] = [];
   private dataDir: string;
 
   constructor() {
@@ -309,7 +325,14 @@ export class StorageService {
         this.mockTestRecords = mocksData;
       }
 
-      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups, ${this.mockTestRecords.length} mock tests.`);
+      // 10. Saved Podcasts
+      const podcastsFile = path.join(this.dataDir, 'podcasts.json');
+      const podcastsData = readJsonSafe<SavedPodcastRecord[]>(podcastsFile, []);
+      if (podcastsData.length > 0) {
+        this.savedPodcasts = podcastsData;
+      }
+
+      console.log(`✅ Disk storage loaded: ${this.users.size} users, ${this.userCredentials.size} accounts with credentials, ${this.groups.size} groups, ${this.mockTestRecords.length} mock tests, ${this.savedPodcasts.length} podcasts.`);
     } catch (err: any) {
       console.warn('[storage] Error loading from disk:', err.message);
     }
@@ -326,6 +349,11 @@ export class StorageService {
     this.saveNotesToDisk();
     this.saveFlashcardsToDisk();
     this.saveMockTestRecordsToDisk();
+    this.savePodcastsToDisk();
+  }
+
+  public savePodcastsToDisk(): void {
+    writeJsonSafe(path.join(this.dataDir, 'podcasts.json'), this.savedPodcasts);
   }
 
   public saveMockTestRecordsToDisk(): void {
@@ -1594,6 +1622,70 @@ export class StorageService {
     }
     return this.mockTestRecords;
   }
+
+  public getSavedPodcasts(userId?: string): SavedPodcastRecord[] {
+    if (userId) {
+      const userItems = this.savedPodcasts.filter(p => !p.userId || p.userId === userId);
+      return userItems.length > 0 ? userItems : this.savedPodcasts;
+    }
+    return this.savedPodcasts;
+  }
+
+  public getSavedPodcastById(id: string): SavedPodcastRecord | undefined {
+    return this.savedPodcasts.find(p => p.id === id);
+  }
+
+  public savePodcast(
+    podcast: Omit<SavedPodcastRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
+  ): SavedPodcastRecord {
+    const id = podcast.id || `pod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const existingIdx = this.savedPodcasts.findIndex(
+      p => p.id === id || (p.docTitle === podcast.docTitle && p.language === podcast.language && p.title === podcast.title)
+    );
+
+    const record: SavedPodcastRecord = {
+      ...podcast,
+      id: existingIdx >= 0 ? this.savedPodcasts[existingIdx].id : id,
+      telegramFileId: podcast.telegramFileId || (existingIdx >= 0 ? this.savedPodcasts[existingIdx].telegramFileId : undefined),
+      telegramMessageId: podcast.telegramMessageId || (existingIdx >= 0 ? this.savedPodcasts[existingIdx].telegramMessageId : undefined),
+      createdAt: podcast.createdAt || new Date().toISOString()
+    };
+
+    if (existingIdx >= 0) {
+      this.savedPodcasts.splice(existingIdx, 1);
+    }
+
+    this.savedPodcasts.unshift(record);
+    if (this.savedPodcasts.length > 50) {
+      this.savedPodcasts = this.savedPodcasts.slice(0, 50);
+    }
+    this.savePodcastsToDisk();
+    return record;
+  }
+
+  public updatePodcastTelegramInfo(
+    id: string,
+    telegramFileId: string,
+    telegramMessageId: number
+  ): SavedPodcastRecord | undefined {
+    const item = this.savedPodcasts.find(p => p.id === id);
+    if (!item) return undefined;
+    item.telegramFileId = telegramFileId;
+    item.telegramMessageId = telegramMessageId;
+    this.savePodcastsToDisk();
+    return item;
+  }
+
+  public deletePodcast(id: string): boolean {
+    const before = this.savedPodcasts.length;
+    this.savedPodcasts = this.savedPodcasts.filter(p => p.id !== id);
+    if (this.savedPodcasts.length !== before) {
+      this.savePodcastsToDisk();
+      return true;
+    }
+    return false;
+  }
 }
 
 export const storage = new StorageService();
+

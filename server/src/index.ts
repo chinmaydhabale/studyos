@@ -1204,16 +1204,86 @@ app.post('/api/ai/tts', async (req, res) => {
     return res.status(400).json({ error: 'text is required' });
   }
   try {
-    const audioBuffer = await neuralTts.synthesize({ text, speaker, language, voice, rate, pitch });
+    const result = await neuralTts.synthesizeWithMeta({ text, speaker, language, voice, rate, pitch });
     res.set({
-      'Content-Type': 'audio/mpeg',
-      'Content-Length': audioBuffer.length.toString(),
+      'Content-Type': result.mimeType,
+      'Content-Length': result.buffer.length.toString(),
+      'X-TTS-Engine': result.engine,
       'Cache-Control': 'public, max-age=86400'
     });
-    res.send(audioBuffer);
+    res.send(result.buffer);
   } catch (err: any) {
     console.error('[tts] neural synthesis failed:', err?.message || err);
     res.status(500).json({ error: 'Neural TTS generation failed', details: err?.message });
+  }
+});
+
+// Saved Podcasts Library & Telegram Cloud Backup Endpoints
+app.get('/api/ai/podcasts', (req, res) => {
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+  res.json({ podcasts: storage.getSavedPodcasts(userId) });
+});
+
+app.delete('/api/ai/podcasts/:id', (req, res) => {
+  const deleted = storage.deletePodcast(req.params.id);
+  res.json({ success: deleted });
+});
+
+app.post('/api/ai/podcasts/episode-audio', async (req, res) => {
+  const { turns, language, voice } = req.body || {};
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return res.status(400).json({ error: 'turns array is required' });
+  }
+  try {
+    const result = await neuralTts.synthesizeFullEpisode(turns, language || 'hinglish', voice);
+    res.set({
+      'Content-Type': result.mimeType,
+      'Content-Length': result.buffer.length.toString(),
+      'X-TTS-Engine': result.engine
+    });
+    res.send(result.buffer);
+  } catch (err: any) {
+    console.error('[tts] episode-audio synthesis failed:', err?.message || err);
+    res.status(500).json({ error: 'Full episode synthesis failed', details: err?.message });
+  }
+});
+
+app.post('/api/ai/podcasts/save-telegram', async (req, res) => {
+  const { podcastId, title, docTitle, language, turns, voice } = req.body || {};
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return res.status(400).json({ error: 'turns array is required' });
+  }
+  try {
+    const result = await neuralTts.synthesizeFullEpisode(turns, language || 'hinglish', voice);
+    const ext = result.mimeType === 'audio/wav' ? 'wav' : 'mp3';
+    const safeName = (title || docTitle || 'StudyOS_Podcast')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .slice(0, 60);
+    const fileName = `${safeName}_Aarav_Ananya.${ext}`;
+    const caption =
+      `🎙️ StudyOS AI Podcast (Gemini 3.8 Studio)\n` +
+      `📚 Topic: ${title || docTitle || 'Deep Dive'}\n` +
+      `🗣️ Hosts: Aarav (Male) & Ananya (Female)\n` +
+      `🌐 Language: ${(language || 'hinglish').toUpperCase()}\n` +
+      `🔢 Turns: ${turns.length}`;
+
+    const uploaded = await telegramService.uploadDocument(result.buffer, fileName, result.mimeType, caption);
+    if (podcastId) {
+      storage.updatePodcastTelegramInfo(podcastId, uploaded.telegramFileId, uploaded.telegramMessageId);
+    }
+
+    res.json({
+      success: true,
+      telegramFileId: uploaded.telegramFileId,
+      telegramMessageId: uploaded.telegramMessageId,
+      fileName: uploaded.fileName,
+      message: 'Full podcast audio saved to your Telegram Channel!'
+    });
+  } catch (err: any) {
+    console.error('[podcast-telegram] upload failed:', err?.message || err);
+    res.status(500).json({
+      error: err?.message || 'Failed to upload podcast to Telegram Channel'
+    });
   }
 });
 
