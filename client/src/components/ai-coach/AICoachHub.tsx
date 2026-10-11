@@ -112,7 +112,7 @@ const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, spea
   return male ? 'Madhur Neural' : 'Swara Neural';
 };
 
-const PODCAST_BATCH_TURN_SIZE = 8;
+const PODCAST_BATCH_TURN_SIZE = 55;
 const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
 const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
 

@@ -73,7 +73,8 @@ const GEMINI_VOICE_NAMES = new Set([
   'Zephyr'
 ]);
 
-export const EPISODE_BATCH_TURN_SIZE = 8;
+export const EPISODE_BATCH_TURN_SIZE = 55;
+export const EPISODE_BATCH_MAX_CHARS = 10500;
 
 export class NeuralTtsService {
   private pythonCmd: string;
@@ -467,7 +468,7 @@ export class NeuralTtsService {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 65000);
+        const timer = setTimeout(() => controller.abort(), 160000);
 
         try {
           const res = await fetch(url, {
@@ -902,8 +903,7 @@ export class NeuralTtsService {
 
   /**
    * Synthesizes an entire multi-turn podcast episode (or batch of turns) between Aarav (Male) and Ananya (Female)
-   * using Gemini's `multiSpeakerVoiceConfig` in batches of 8 turns (~10x fewer API requests!)
-   * and merges all batches into a single studio-grade audio file.
+   * using Gemini's `multiSpeakerVoiceConfig` up to its full 16,384 audio token limit (~55 turns / ~11.5 mins in 1 API request!).
    */
   public async synthesizeFullEpisode(
     turns: Array<{ speaker?: string; text: string }>,
@@ -915,15 +915,35 @@ export class NeuralTtsService {
       throw new Error('No dialogue turns provided for episode synthesis');
     }
 
-    if (validTurns.length <= EPISODE_BATCH_TURN_SIZE) {
-      return this.synthesizeMultiSpeakerBatch(validTurns, language, voiceStyle);
+    const batches: Array<Array<{ speaker?: string; text: string }>> = [];
+    let currentBatch: Array<{ speaker?: string; text: string }> = [];
+    let currentChars = 0;
+
+    for (const turn of validTurns) {
+      const cleanedLen = this.cleanTextForSpeech(turn.text).length;
+      if (
+        currentBatch.length > 0 &&
+        (currentBatch.length >= EPISODE_BATCH_TURN_SIZE || currentChars + cleanedLen > EPISODE_BATCH_MAX_CHARS)
+      ) {
+        batches.push(currentBatch);
+        currentBatch = [];
+        currentChars = 0;
+      }
+      currentBatch.push(turn);
+      currentChars += cleanedLen;
+    }
+    if (currentBatch.length > 0) {
+      batches.push(currentBatch);
+    }
+
+    if (batches.length === 1) {
+      return this.synthesizeMultiSpeakerBatch(batches[0], language, voiceStyle);
     }
 
     const batchBuffers: Buffer[] = [];
     let allWav = true;
 
-    for (let i = 0; i < validTurns.length; i += EPISODE_BATCH_TURN_SIZE) {
-      const chunk = validTurns.slice(i, i + EPISODE_BATCH_TURN_SIZE);
+    for (const chunk of batches) {
       const batchRes = await this.synthesizeMultiSpeakerBatch(chunk, language, voiceStyle);
       if (batchRes.mimeType !== 'audio/wav') {
         allWav = false;
