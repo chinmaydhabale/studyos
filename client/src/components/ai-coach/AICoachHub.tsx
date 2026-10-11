@@ -50,7 +50,7 @@ import { API_BASE_URL } from '../../config.js';
 import { useSocket } from '../../context/SocketContext.js';
 import { useStudy } from '../../context/StudyContext.js';
 import { Flashcard, QuizQuestion } from '../../types.js';
-import { pdfjsLib, extractPageText } from '../../lib/pdfjs.js';
+import { extractFullDocumentText } from '../../lib/pdfjs.js';
 import { FormattedAiMessage } from '../common/FormattedAiMessage.js';
 
 // Types for AI Coach Features
@@ -497,7 +497,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     addToast('Study Topic Updated', `Switched to ${preset.title}`, 'info');
   };
 
-  // Upload PDF Handler
+  // Upload PDF Handler (Full Multi-Page Extraction + Gemini 3.8 Flash Vision OCR for Scanned PDFs)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -505,29 +505,47 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setIsUploading(true);
     stopAudio();
     try {
-      if (file.type === 'application/pdf') {
-        const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-        const pdf = await loadingTask.promise;
-        let fullText = '';
-        const pagesToRead = Math.min(pdf.numPages, 10); // read up to first 10 pages
-        for (let i = 1; i <= pagesToRead; i++) {
-          const pageText = await extractPageText(pdf, i);
-          fullText += `\n--- Page ${i} ---\n` + pageText;
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      if (isPdf) {
+        const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ');
+        setLoadingAction('Reading PDF pages...');
+        const extracted = await extractFullDocumentText({
+          file,
+          docTitle: cleanTitle,
+          apiBaseUrl: API_BASE_URL,
+          maxPages: 60,
+          maxChars: 120000,
+          onProgress: (status) => setLoadingAction(status)
+        });
+
+        if (!extracted.text.trim()) {
+          addToast(
+            'Empty PDF',
+            'Could not extract readable text from this PDF. Try pasting notes or using a clearer scan.',
+            'alert'
+          );
+          return;
         }
 
-        const cleanTitle = file.name.replace(/\.pdf$/i, '');
         setActiveTopic(cleanTitle);
-        setActiveDomain('Uploaded Document');
-        setSourceMaterial(fullText.trim() || 'No selectable text found in this PDF.');
+        setActiveDomain(extracted.usedOcr ? 'Scanned PDF (Gemini 3.8 OCR)' : 'Uploaded PDF Document');
+        setSourceMaterial(extracted.text);
+        setTempEditorTitle(cleanTitle);
+        setTempEditorText(extracted.text);
         resetGeneratedContent(cleanTitle);
-        addToast('PDF Processed!', `Extracted text from ${pagesToRead} pages of "${cleanTitle}"`, 'success');
+        addToast(
+          extracted.usedOcr ? 'Scanned PDF Read with Gemini 3.8 OCR! ✨' : 'PDF Processed Completely!',
+          `Extracted ${extracted.text.length.toLocaleString()} chars across ${extracted.pagesRead}/${extracted.totalPages} pages of "${cleanTitle}". Ready for Podcast & Study Tools!`,
+          'success'
+        );
       } else {
         const text = await file.text();
         const cleanTitle = file.name.replace(/\.[^/.]+$/, '');
         setActiveTopic(cleanTitle);
         setActiveDomain('Custom File');
         setSourceMaterial(text);
+        setTempEditorTitle(cleanTitle);
+        setTempEditorText(text);
         resetGeneratedContent(cleanTitle);
         addToast('File Loaded!', `Loaded contents of "${cleanTitle}"`, 'success');
       }
@@ -536,6 +554,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       addToast('Upload Error', 'Failed to read document text. Please try another file.', 'alert');
     } finally {
       setIsUploading(false);
+      setLoadingAction(prev => (prev && (prev.includes('PDF') || prev.includes('page') || prev.includes('OCR')) ? null : prev));
       if (e.target) e.target.value = '';
     }
   };

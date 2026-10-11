@@ -28,7 +28,12 @@ import { API_BASE_URL } from '../../config.js';
 import { VoiceChatPanel } from '../voice-chat/VoiceChatPanel.js';
 import { PdfPageView } from './PdfPageView.js';
 import { PDFAiPanel } from './PDFAiPanel.js';
-import { extractPageText, pdfjsLib, PDFDocumentProxy } from '../../lib/pdfjs.js';
+import {
+  extractFullDocumentText,
+  extractPageTextWithOcrFallback,
+  loadPdfDocument,
+  PDFDocumentProxy
+} from '../../lib/pdfjs.js';
 
 interface PDFReaderViewProps {
   onAskAiDoubt?: (prompt: string, source?: { title: string; text: string }) => void;
@@ -437,46 +442,26 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     setIsPreparingAiSource(true);
     let preparedSource: { title: string; text: string } | null = null;
     try {
-      const pageLimit = Math.min(sourcePdf.numPages, MAX_AI_COACH_SOURCE_PAGES);
-      const pageSections: string[] = [];
-      let totalChars = 0;
-      let processedPageCount = 0;
-      let truncated = pageLimit < sourcePdf.numPages;
+      const extracted = await extractFullDocumentText({
+        pdf: sourcePdf,
+        docTitle: document.title,
+        apiBaseUrl: API_BASE_URL,
+        maxPages: MAX_AI_COACH_SOURCE_PAGES,
+        maxChars: MAX_AI_COACH_SOURCE_CHARS
+      });
 
-      for (let page = 1; page <= pageLimit && totalChars < MAX_AI_COACH_SOURCE_CHARS; page++) {
-        processedPageCount = page;
-        const pageText = await extractPageText(sourcePdf, page);
-        if (!pageText) continue;
-
-        const separator = pageSections.length ? '\n\n' : '';
-        const section = `Page ${page}: ${pageText}`;
-        const remainingChars = MAX_AI_COACH_SOURCE_CHARS - totalChars - separator.length;
-        if (section.length > remainingChars) {
-          pageSections.push(`${separator}${section.slice(0, Math.max(0, remainingChars))}`);
-          totalChars = MAX_AI_COACH_SOURCE_CHARS;
-          truncated = true;
-          break;
-        }
-
-        pageSections.push(`${separator}${section}`);
-        totalChars += separator.length + section.length;
-      }
-
-      if (processedPageCount < sourcePdf.numPages) truncated = true;
       if (activePdfDocRef.current?.id !== document.id) return;
 
-      let sourceText = pageSections.join('');
-      if (!sourceText.trim()) {
+      if (!extracted.text.trim()) {
         addToast('No Selectable Text', 'This PDF has no extractable text, so AI Coach Hub cannot create document-based materials from it.', 'alert');
         return;
       }
 
-      if (truncated) {
-        const note = '[Document text truncated for AI context.]';
-        sourceText = `${sourceText.slice(0, MAX_AI_COACH_SOURCE_CHARS - note.length - 2)}\n\n${note}`;
+      if (extracted.usedOcr) {
+        addToast('Scanned PDF Transcribed ✨', `Gemini 3.8 Vision OCR extracted text from "${document.title}".`, 'success');
       }
 
-      preparedSource = { title: document.title, text: sourceText };
+      preparedSource = { title: document.title, text: extracted.text };
     } catch (err) {
       console.error('Failed to extract PDF text for AI Coach Hub:', err);
       addToast('PDF Text Extraction Failed', 'Could not prepare this PDF for AI Coach Hub. Please try again.', 'alert');
@@ -539,7 +524,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
     setPdfDoc(null);
     setNumPages(0);
 
-    const loadingTask = pdfjsLib.getDocument({ url: pdfSourceUrl });
+    const loadingTask = loadPdfDocument({ url: pdfSourceUrl });
 
     loadingTask.promise
       .then(doc => {
@@ -716,7 +701,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
   const getPageText = async (page: number): Promise<string> => {
     if (!pdfDoc) return '';
     try {
-      return await extractPageText(pdfDoc, page);
+      return await extractPageTextWithOcrFallback(pdfDoc, page, API_BASE_URL, activePdfDoc?.title);
     } catch (err) {
       console.error(`Could not extract text for page ${page}:`, err);
       return '';

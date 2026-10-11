@@ -1171,6 +1171,21 @@ app.post('/api/ai/pdf-assist', async (req, res) => {
   }
 });
 
+// Multimodal PDF / Scanned Page OCR via Gemini 3.8 Flash
+app.post('/api/ai/pdf-ocr', async (req, res) => {
+  const { docTitle, pdfBase64, pageImages } = req.body || {};
+  if (!pdfBase64 && (!Array.isArray(pageImages) || pageImages.length === 0)) {
+    return res.status(400).json({ error: 'pdfBase64 or pageImages is required' });
+  }
+  try {
+    const result = await aiCoach.extractPdfTextWithGemini({ docTitle, pdfBase64, pageImages });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[ai] pdf-ocr failed:', err);
+    res.status(500).json({ error: err?.message || 'PDF OCR failed' });
+  }
+});
+
 // NotebookLM Studio Endpoints
 app.post('/api/ai/notebook/briefing', async (req, res) => {
   const { docTitle, sourceText, userId } = req.body || {};

@@ -1526,8 +1526,74 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
   }
 
   // ---------------------------------------------------------------------------
-  // 8. NotebookLM Studio Features: Briefing Doc, Audio Overview, Source Chat & Study Pack
+  // 8. NotebookLM Studio Features: PDF Multimodal OCR, Briefing Doc, Audio Overview, Source Chat & Study Pack
   // ---------------------------------------------------------------------------
+
+  /**
+   * Multimodal PDF / Scanned Page OCR powered by Gemini 3.8 Flash.
+   * Accepts either a raw PDF base64 payload (`application/pdf`) or rendered page
+   * images (`image/jpeg` / `image/png`) when client-side pdf.js text extraction
+   * returns empty or incomplete text (e.g. scanned notes, CamScanner PDFs, Hindi fonts).
+   */
+  public async extractPdfTextWithGemini(input: {
+    docTitle?: string;
+    pdfBase64?: string;
+    pageImages?: Array<{ page?: number; mimeType?: string; data: string }>;
+  }): Promise<{ text: string; pagesExtracted: number; modelUsed: string }> {
+    const docTitle = this.cleanString(input.docTitle, 200) || 'Uploaded PDF';
+    const inlineParts: Array<{ mimeType: string; data: string }> = [];
+    let pageLabels: number[] = [];
+
+    if (typeof input.pdfBase64 === 'string' && input.pdfBase64.trim()) {
+      const cleanBase64 = input.pdfBase64.replace(/^data:application\/pdf;base64,/, '').trim();
+      inlineParts.push({
+        mimeType: 'application/pdf',
+        data: cleanBase64
+      });
+    } else if (Array.isArray(input.pageImages) && input.pageImages.length > 0) {
+      for (const img of input.pageImages.slice(0, 12)) {
+        if (!img || typeof img.data !== 'string' || !img.data.trim()) continue;
+        const cleanData = img.data.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '').trim();
+        inlineParts.push({
+          mimeType: img.mimeType || 'image/jpeg',
+          data: cleanData
+        });
+        if (typeof img.page === 'number') pageLabels.push(img.page);
+      }
+    }
+
+    if (inlineParts.length === 0) {
+      return { text: '', pagesExtracted: 0, modelUsed: 'none' };
+    }
+
+    const pageContext =
+      pageLabels.length > 0
+        ? `These are rendered images of page(s) ${pageLabels.join(', ')} from "${docTitle}". Label each page clearly as "--- Page X ---".`
+        : `This is the PDF document "${docTitle}". Label each page clearly as "--- Page X ---".`;
+
+    const res = await gemini.generateTextWithMeta({
+      model: 'gemini-3.8-flash',
+      tier: 'heavy',
+      inlineData: inlineParts,
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+      systemInstruction:
+        'You are a high-precision multimodal OCR and document transcription engine powered by Gemini 3.8 Flash. ' +
+        'Extract ALL visible text, headings, bullet points, numbered questions, options, tables, mathematical formulas, and diagrams/labels from the provided PDF or page images accurately and completely. ' +
+        'Preserve both English and Hindi (Devanagari) text exactly as written. Write mathematical equations cleanly so they are 100% readable. Do not summarize or skip paragraphs—transcribe the complete content.',
+      prompt: `${pageContext}\n\nTranscribe the full text of every page completely and accurately:`
+    });
+
+    if (res && res.text && res.text.trim()) {
+      return {
+        text: res.text.trim(),
+        pagesExtracted: pageLabels.length || inlineParts.length,
+        modelUsed: res.modelUsed || 'gemini-3.8-flash'
+      };
+    }
+
+    return { text: '', pagesExtracted: 0, modelUsed: 'fallback' };
+  }
 
   public async generateBriefingDoc(input: {
     docTitle?: string;
@@ -1593,7 +1659,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       },
       temperature: 0.5,
       maxOutputTokens: 4096,
-      tier: 'heavy'
+      tier: 'heavy',
+      model: 'gemini-3.8-flash'
     });
 
     if (result && result.executiveSummary) {
@@ -1643,20 +1710,23 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     }
 
     let languageDirective =
-      'Language: HINGLISH (Natural Indian Hinglish — Hindi + English). Write the podcast dialogue in authentic, natural conversational Hinglish (the way intelligent Indian educators and toppers speak). ' +
-      'HOST GENDERS & GRAMMAR: Aarav is MALE (uses male Hindi verb forms like "मैं समझता हूँ", "अगर मैं पूछूँ", "मुझे लगता है") and Ananya is FEMALE (uses female Hindi verb forms like "मैं बताती हूँ", "चलो मैं समझाती हूँ", "मैंने देखा है"). ' +
-      'CRUCIAL FOR GEMINI 3.8 TTS PRONUNCIATION: Write conversational Hindi words in DEVANAGARI script (e.g. "अरे अनन्या!", "बिल्कुल सही पकड़ा आरव!", "लेकिन यहाँ एक बहुत बड़ा exam trap है...", "चलो इसे एक आसान shortcut से समझते हैं...") and keep all technical terms, exam names, formulas, and English phrases in English script (e.g. Repo Rate, Thermodynamics, First Law, Efficiency, Ratio, Percentage, Syllogism, IBPS PO, SBI). ' +
-      'Aarav and Ananya must sound like two enthusiastic, brilliant Indian study partners having an insightful conversation over chai!';
+      'Language: HINGLISH (100% Authentic, Natural Indian Hinglish — Hindi + English). ' +
+      'Write the dialogue exactly how two smart, warm, enthusiastic Indian friends/educators actually talk in real life! ' +
+      'HOST GENDERS & GRAMMAR: Aarav is MALE (always uses male Hindi grammar: "मैं सोच रहा था", "मुझे लगता है", "अगर मैं देखूँ") and Ananya is FEMALE (always uses female Hindi grammar: "मैं बताती हूँ", "मैंने नोटिस किया है", "चलो मैं समझाती हूँ"). ' +
+      'SCRIPT & TTS PRONUNCIATION RULE: Write Hindi conversational words in DEVANAGARI script and keep technical/English words in English script so Gemini 3.8 TTS pronounces both with 100% native perfection! ' +
+      'USE NATURAL HUMAN CONVERSATIONAL FILLERS & REACTIONS: Include spontaneous human expressions like "अरे अनन्या, एक सेकंड रुको...", "हाहा, बिल्कुल सही पकड़ा तुमने आरव!", "हम्म, सोचने वाली बात है यार...", "ओह अच्छा! अब समझ आया कि...", "Wait, सच में? मुझे तो हमेशा लगता था कि...", "सुनो-सुनो, यहीं पर तो असली ट्विस्ट है!". ' +
+      'Never sound like a textbook translation—use natural Indian analogies (chai, cricket, UPI, train ticket, pocket money, exam hall pressure) to make complex concepts click effortlessly!';
     if (language === 'hindi') {
       languageDirective =
-        'Language: PURE HINDI (हिंदी). Write the podcast dialogue in warm, fluent, engaging conversational Hindi using Devanagari script throughout. ' +
+        'Language: PURE SPOKEN HINDI (स्वाभाविक बोलचाल की हिंदी). Write the podcast dialogue in warm, natural, everyday spoken Hindi using Devanagari script throughout. ' +
         'HOST GENDERS: Aarav (आरव) is MALE and Ananya (अनन्या) is FEMALE — strictly use gender-accurate Hindi verb endings for each speaker. ' +
-        'Use natural spoken phrases like "अरे वाह अनन्या!", "बिल्कुल सही बात आरव!", "अब यहाँ एक बहुत बड़ा ट्विस्ट है...", "परीक्षा में विद्यार्थी अक्सर यहीं गलती करते हैं...". ' +
-        'Explain every technical term with clarity, using standard Hindi terminology while keeping the tone lively, respectful, and motivating.';
+        'Use organic human expressions like "अरे वाह अनन्या, यह तो कमाल की बात है!", "हम्म, बिल्कुल सही कहा आरव, लेकिन ज़रा सोचो...", "ओह अच्छा! अब पूरी बात साफ़ हुई!", "रुको-रुको, परीक्षा में विद्यार्थी ठीक यहीं फँसते हैं!". ' +
+        'Avoid stiff, robotic literary words when a simpler spoken Hindi explanation feels more human, and put English technical terms in natural phonetic flow.';
     } else if (language === 'english') {
       languageDirective =
-        'Language: ENGLISH (Indian Educator & Google NotebookLM Style). Write the podcast dialogue in charismatic, witty, deeply insightful English in the signature Google NotebookLM style. ' +
-        'Aarav (Male Host) is curious, energetic, and asks sharp student-perspective questions; Ananya (Female Co-Host) is structured, perceptive, and shares topper shortcuts and vivid analogies.';
+        'Language: NATURAL CONVERSATIONAL ENGLISH (Google NotebookLM & Indian Topper Podcast Style). ' +
+        'Write the dialogue so it sounds 100% like two real, witty, hyper-intelligent humans riffing off each other in a podcast studio. ' +
+        'Include natural human speech patterns: contractions ("it\'s", "you\'re", "that\'s"), spontaneous reactions ("Wait, hold on Ananya—are you saying...", "Right?! And here\'s the wild part, Aarav...", "Hmm, let me think about how to picture that...", "Oh, that analogy is gold!"), mid-thought realizations, and genuine warmth.';
     }
 
     const result = await gemini.generateJson<{
@@ -1665,23 +1735,29 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       durationEstimate?: string;
       turns?: Array<{ speaker?: string; text?: string; emotion?: string }>;
     }>({
+      model: 'gemini-3.8-flash',
       tier: 'heavy',
       systemInstruction:
-        'You are the lead showrunner and audio director for StudyOS & Google NotebookLM Deep Dive Podcasts (powered by Gemini 3.8 TTS). ' +
-        'You write scripts for two world-class Indian co-hosts: Aarav (Male Host — curious, relatable, asks tough student questions, catches confusion points) ' +
-        'and Ananya (Female Co-Host — analytical, exam topper, gives unforgettable real-world analogies and 30-second exam shortcuts). ' +
-        'THEIR BANTER IS FAMOUS FOR FEELING 100% ALIVE, WITTY, AND HUMAN: ' +
-        'They react dynamically ("Wait, wait, Ananya, hold on a second!", "Haha, exactly Aarav!", "Spot on!"), build on each other’s thoughts, ' +
-        'and never lecture monotonously. Keep each turn to 1 to 3 spoken sentences with one clear idea. ' +
-        'Tie every factual claim to the source and avoid repetition. ' +
-        'CRITICAL FOR AUDIO: Write pure spoken words only. Never include markdown symbols (*, #, _, `, bullet points, brackets) or raw math notation (write "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Respond with JSON only.\n' +
+        'You are the master podcast showrunner for StudyOS Audio Deep Dives, powered by Gemini 3.8 Flash and Gemini 3.8 TTS. ' +
+        'You write scripts for two unforgettable Indian hosts:\n' +
+        '- Aarav (Male Host): Curious, energetic, relatable, thinks out loud like a sharp student, asks the exact "Wait, why does that happen?" questions listeners have in their heads, and occasionally shares how he used to get confused by a concept.\n' +
+        '- Ananya (Female Co-Host): Warm, razor-sharp exam topper and storyteller who breaks down dense PDF material using vivid real-life analogies, reveals hidden exam traps, and gives 10-second mental shortcuts.\n\n' +
+        'RULES FOR 100% HUMAN-LIKE, UNSCRIPTED-FEELING CONVERSATION:\n' +
+        '1. NO ROBOTIC PING-PONG OR LECTURING: Never write stiff Q&A where Aarav asks a textbook question and Ananya recites a paragraph. Instead, make them finish each other\'s thoughts, react with surprise ("अरे बाप रे!", "ओह अच्छा!", "Wait, seriously?"), chuckle ("हाहा, बिल्कुल!"), and build momentum together.\n' +
+        '2. VARIED RHYTHM & PACING: Mix short, punchy 1-sentence reactions/interjections with rich 2-to-4 sentence storytelling explanations so the conversation breathes naturally.\n' +
+        '3. COVER THE ENTIRE UPLOADED MATERIAL DEEPLY: Walk through the specific definitions, numbers, formulas, examples, and edge cases from the provided source text—do not stay superficial.\n' +
+        '4. PURE SPOKEN AUDIO FORMAT FOR GEMINI 3.8 TTS: Write ONLY what is spoken aloud. NEVER include markdown (*, #, _, `, bullets) or raw math symbols (write "Delta U barabar Q minus W" or "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Use natural punctuation (commas, ellipses "...", em-dashes "—", exclamation marks "!", question marks "?") to guide voice intonation and breathing pauses. Respond with JSON only.\n' +
         languageDirective,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Generate an 8-12 turn, roughly 5-7 minute audio deep dive between Aarav (Male) and Ananya (Female), grounded only in the source. ' +
-        'Prioritize the core principles, definitions, one useful example, and the most important exam pitfalls. Do not invent facts that are absent from the source. ' +
-        'Aarav and Ananya must alternate naturally. Give each turn speaker ("Aarav" or "Ananya"), dialogue text, and emotion tone.',
+        'Create a rich, 12 to 16 turn human-like podcast conversation (~6-8 minutes) between Aarav (Male) and Ananya (Female) covering all major concepts, examples, formulas, and exam traps in the source text.\n' +
+        'Structure the conversation flow organically:\n' +
+        '- Turns 1-2: Warm, spontaneous studio intro & a relatable hook about why this topic matters.\n' +
+        '- Turns 3-9: Deep, interactive exploration of the core concepts, formulas/mechanisms, and real-world analogies with natural back-and-forth reactions.\n' +
+        '- Turns 10-13: Crucial exam traps where students lose marks + Ananya\'s high-speed topper shortcuts.\n' +
+        '- Turns 14-16: Rapid-fire memory takeaway & energetic sign-off.\n' +
+        'Ensure Aarav and Ananya alternate turns naturally. Return JSON with title, tagline, durationEstimate, and turns[{speaker, text, emotion}].',
       schema: {
         type: 'OBJECT',
         properties: {
@@ -1703,13 +1779,13 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         },
         required: ['title', 'tagline', 'durationEstimate', 'turns']
       },
-      temperature: 0.7,
+      temperature: 0.82,
       maxOutputTokens: 8192
     });
 
     if (result && Array.isArray(result.turns) && result.turns.length >= 4) {
       const turns: AudioTurn[] = result.turns
-        .slice(0, 14)
+        .slice(0, 18)
         .map(t => {
           const speakerRaw = (t?.speaker || '').toLowerCase();
           const speaker: 'Aarav' | 'Ananya' =

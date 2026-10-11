@@ -19,11 +19,16 @@ export const GEMINI_MODELS = {
   lite: 'gemini-3.5-flash-lite'
 };
 
-const REQUEST_TIMEOUT_MS = 60000;
+const REQUEST_TIMEOUT_MS = 75000;
 
 export interface GeminiHistoryItem {
   role: 'user' | 'assistant' | 'model';
   text: string;
+}
+
+export interface GeminiInlineDataPart {
+  mimeType: string;
+  data: string;
 }
 
 export interface GeminiJsonRequest {
@@ -36,6 +41,7 @@ export interface GeminiJsonRequest {
   tier?: GeminiModelTier;
   model?: string;
   conversationHistory?: GeminiHistoryItem[];
+  inlineData?: GeminiInlineDataPart[];
 }
 
 export interface GeminiTextRequest {
@@ -46,6 +52,7 @@ export interface GeminiTextRequest {
   tier?: GeminiModelTier;
   model?: string;
   conversationHistory?: GeminiHistoryItem[];
+  inlineData?: GeminiInlineDataPart[];
 }
 
 export class GeminiService {
@@ -91,40 +98,47 @@ export class GeminiService {
     if (customModel) {
       modelsToTry = [
         customModel,
-        'gemini-3.5-flash-lite',
-        'gemini-3.5-flash',
         'gemini-3.8-flash',
         'gemini-3.7-flash',
         'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
         'gemini-2.5-flash',
-        'gemini-flash-latest',
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-        'gemini-1.5-flash',
+        'gemini-2.5-pro'
+      ];
+    } else if (tier === 'heavy') {
+      modelsToTry = [
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-2.5-flash',
         'gemini-2.5-pro',
-        'gemini-1.5-pro'
+        'gemini-3.5-flash-lite'
       ];
-    } else if (tier === 'lite') {
+    } else if (tier === 'balanced') {
       modelsToTry = [
-        'gemini-3.5-flash-lite',
-        'gemini-flash-lite-latest',
-        'gemini-2.0-flash-lite',
-        'gemini-2.5-flash',
-        'gemini-flash-latest',
-        'gemini-1.5-flash'
-      ];
-    } else {
-      // Default, heavy or balanced
-      const primary = this.getModel();
-      modelsToTry = [
-        primary,
-        'gemini-3.5-flash-lite',
         'gemini-3.5-flash',
         'gemini-3.8-flash',
         'gemini-2.5-flash',
-        'gemini-flash-latest',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
+        'gemini-3.5-flash-lite'
+      ];
+    } else if (tier === 'lite' || tier === 'flashcards') {
+      modelsToTry = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-2.5-flash'
+      ];
+    } else {
+      const primary = this.getModel();
+      modelsToTry = [
+        primary,
+        'gemini-3.8-flash',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
+        'gemini-2.5-flash',
         'gemini-2.5-pro'
       ];
     }
@@ -189,7 +203,10 @@ export class GeminiService {
   }
 
   private buildPayload(req: GeminiJsonRequest | GeminiTextRequest, json: boolean): Record<string, unknown> {
-    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    const contents: Array<{
+      role: 'user' | 'model';
+      parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>;
+    }> = [];
 
     if (req.conversationHistory && req.conversationHistory.length > 0) {
       for (const msg of req.conversationHistory) {
@@ -206,12 +223,27 @@ export class GeminiService {
       }
     }
 
+    const userParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+    if (Array.isArray(req.inlineData) && req.inlineData.length > 0) {
+      for (const item of req.inlineData) {
+        if (item && item.mimeType && item.data) {
+          userParts.push({
+            inlineData: {
+              mimeType: item.mimeType,
+              data: item.data
+            }
+          });
+        }
+      }
+    }
+    userParts.push({ text: req.prompt });
+
     if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
-      contents[contents.length - 1].parts[0].text += `\n\n${req.prompt}`;
+      contents[contents.length - 1].parts.push(...userParts);
     } else {
       contents.push({
         role: 'user',
-        parts: [{ text: req.prompt }]
+        parts: userParts
       });
     }
 
