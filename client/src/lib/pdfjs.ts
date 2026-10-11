@@ -84,13 +84,13 @@ export async function extractPageText(pdf: PDFDocumentProxy, pageNumber: number)
 }
 
 /**
- * Renders a single PDF page onto an offscreen canvas and returns a compressed
- * base64 JPEG string suitable for Gemini 3.8 Flash Vision OCR.
+ * Renders a single PDF page onto an offscreen canvas and returns a high-contrast
+ * PNG data URL suitable for local WebAssembly OCR (Tesseract.js).
  */
-export async function renderPageToJpegBase64(
+export async function renderPageToDataUrl(
   pdf: PDFDocumentProxy,
   pageNumber: number,
-  scale = 1.4
+  scale = 1.6
 ): Promise<string | null> {
   try {
     const page = await pdf.getPage(pageNumber);
@@ -101,26 +101,91 @@ export async function renderPageToJpegBase64(
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
+    // White background for clean OCR contrast on transparent PDFs
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const dataUrl = canvas.toDataURL('image/png');
     canvas.width = 0;
     canvas.height = 0;
-    const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '').trim();
-    return base64 || null;
+    return dataUrl || null;
   } catch (err) {
-    console.warn(`Failed to render page ${pageNumber} for OCR:`, err);
+    console.warn(`Failed to render page ${pageNumber} for local OCR:`, err);
     return null;
   }
 }
 
+let tesseractWorkerPromise: Promise<any> | null = null;
+
 /**
- * Extracts text from a single page, automatically falling back to Gemini 3.8 Flash
- * Vision OCR if the page is scanned or has fewer than 40 selectable characters.
+ * Dynamically loads Tesseract.js v5 WebAssembly OCR engine (English + Hindi) in the
+ * browser only when a scanned/image PDF is encountered. Uses 0 Gemini API quota!
+ */
+async function getLocalTesseractWorker(onProgress?: (status: string) => void): Promise<any> {
+  if (tesseractWorkerPromise) return tesseractWorkerPromise;
+
+  tesseractWorkerPromise = (async () => {
+    onProgress?.('Loading Free Local OCR Engine (0 AI Quota)...');
+    const win = window as any;
+    if (!win.Tesseract) {
+      await new Promise<void>((resolve, reject) => {
+        const existing = document.querySelector('script[data-tesseract-cdn]');
+        if (existing && win.Tesseract) {
+          resolve();
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        script.async = true;
+        script.setAttribute('data-tesseract-cdn', 'true');
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load Tesseract.js from CDN'));
+        document.head.appendChild(script);
+      });
+    }
+    const worker = await win.Tesseract.createWorker('eng+hin');
+    return worker;
+  })().catch(err => {
+    tesseractWorkerPromise = null;
+    throw err;
+  });
+
+  return tesseractWorkerPromise;
+}
+
+/**
+ * Runs 100% free, local browser-based OCR (Tesseract WebAssembly) on a single
+ * rendered PDF page. Consumes ZERO Gemini API quota.
+ */
+async function recognizePageLocally(
+  pdf: PDFDocumentProxy,
+  pageNumber: number,
+  onProgress?: (status: string) => void
+): Promise<string> {
+  const dataUrl = await renderPageToDataUrl(pdf, pageNumber, 1.6);
+  if (!dataUrl) return '';
+
+  try {
+    const worker = await getLocalTesseractWorker(onProgress);
+    const result = await worker.recognize(dataUrl);
+    const text = (result?.data?.text || '').trim();
+    return text;
+  } catch (err) {
+    console.warn(`Local Tesseract OCR failed on page ${pageNumber}:`, err);
+    return '';
+  }
+}
+
+/**
+ * Extracts text from a single page, automatically falling back to 100% Free Local
+ * Browser OCR (Tesseract.js WebAssembly) if the page is scanned (< 40 selectable chars).
+ * Uses ZERO Gemini API quota.
  */
 export async function extractPageTextWithOcrFallback(
   pdf: PDFDocumentProxy,
   pageNumber: number,
-  apiBaseUrl: string,
+  _apiBaseUrl?: string,
   docTitle?: string
 ): Promise<string> {
   const selectable = await extractPageText(pdf, pageNumber).catch(() => '');
@@ -133,56 +198,25 @@ export async function extractPageTextWithOcrFallback(
   const cached = ocrPageCache.get(cacheKey);
   if (cached) return cached;
 
-  const base64 = await renderPageToJpegBase64(pdf, pageNumber, 1.45);
-  if (!base64) return selectable;
-
-  try {
-    const res = await fetch(`${apiBaseUrl}/api/ai/pdf-ocr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        docTitle: docTitle || 'Study PDF',
-        pageImages: [{ page: pageNumber, mimeType: 'image/jpeg', data: base64 }]
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data.text === 'string' && data.text.trim()) {
-        const cleaned = data.text.replace(/^---\s*Page\s*\d+\s*---\s*/i, '').trim();
-        ocrPageCache.set(cacheKey, cleaned);
-        return cleaned;
-      }
-    }
-  } catch (err) {
-    console.warn(`OCR fallback failed for page ${pageNumber}:`, err);
+  const ocrText = await recognizePageLocally(pdf, pageNumber);
+  if (ocrText.trim()) {
+    ocrPageCache.set(cacheKey, ocrText.trim());
+    return ocrText.trim();
   }
 
   return selectable;
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 /**
  * Extracts comprehensive text across a full PDF document (up to `maxPages`),
- * and automatically invokes Gemini 3.8 Flash Vision OCR for scanned/image pages
- * or PDFs where standard selectable text is missing or incomplete.
+ * and automatically runs 100% Free Local Browser OCR (Tesseract.js WebAssembly,
+ * English + Hindi) for scanned/image pages so ZERO Gemini API quota is consumed.
  */
 export async function extractFullDocumentText(options: {
   file?: File;
   pdf?: PDFDocumentProxy;
   docTitle?: string;
-  apiBaseUrl: string;
+  apiBaseUrl?: string;
   maxPages?: number;
   maxChars?: number;
   onProgress?: (status: string) => void;
@@ -195,35 +229,10 @@ export async function extractFullDocumentText(options: {
   let ownedPdf = false;
 
   if (!pdfDoc && options.file) {
-    try {
-      const arrayBuffer = await options.file.arrayBuffer();
-      const loadingTask = loadPdfDocument({ data: arrayBuffer });
-      pdfDoc = await loadingTask.promise;
-      ownedPdf = true;
-    } catch (err) {
-      console.warn('pdf.js failed to parse PDF, attempting direct Gemini 3.8 PDF OCR:', err);
-      if (options.file.size <= 18 * 1024 * 1024) {
-        options.onProgress?.('Reading PDF with Gemini 3.8 Flash Vision...');
-        const pdfBase64 = await fileToBase64(options.file);
-        const res = await fetch(`${options.apiBaseUrl}/api/ai/pdf-ocr`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docTitle, pdfBase64 })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.text?.trim()) {
-            return {
-              text: data.text.trim().slice(0, maxChars),
-              pagesRead: data.pagesExtracted || 1,
-              totalPages: data.pagesExtracted || 1,
-              usedOcr: true
-            };
-          }
-        }
-      }
-      throw err;
-    }
+    const arrayBuffer = await options.file.arrayBuffer();
+    const loadingTask = loadPdfDocument({ data: arrayBuffer });
+    pdfDoc = await loadingTask.promise;
+    ownedPdf = true;
   }
 
   if (!pdfDoc) {
@@ -245,8 +254,8 @@ export async function extractFullDocumentText(options: {
       pageTexts.set(p, text);
       totalMeaningfulChars += text.length;
 
-      // Track sparse/scanned pages within the first 12 pages for Vision OCR
-      if (p <= 12 && text.length < 45) {
+      // Track sparse/scanned pages within the first 15 pages for Free Local OCR
+      if (p <= 15 && text.length < 45) {
         sparsePages.push(p);
       }
 
@@ -258,61 +267,30 @@ export async function extractFullDocumentText(options: {
     let usedOcr = false;
     const needsOcr =
       totalMeaningfulChars < 160 ||
-      (sparsePages.length > 0 && sparsePages.length >= Math.min(pagesToRead, 12) * 0.5);
+      (sparsePages.length > 0 && sparsePages.length >= Math.min(pagesToRead, 15) * 0.5);
 
     if (needsOcr && sparsePages.length > 0) {
-      const pagesForOcr = sparsePages.slice(0, 12);
-      const batchSize = 4;
+      const pagesForOcr = sparsePages.slice(0, 15);
+      const fingerprint = (pdfDoc as any).fingerprints?.[0] || docTitle;
 
-      for (let i = 0; i < pagesForOcr.length; i += batchSize) {
-        const batch = pagesForOcr.slice(i, i + batchSize);
-        options.onProgress?.(
-          `Running Gemini 3.8 Vision OCR on page${batch.length > 1 ? 's' : ''} ${batch.join(', ')}...`
-        );
-
-        const pageImages: Array<{ page: number; mimeType: string; data: string }> = [];
-        for (const pageNum of batch) {
-          const base64 = await renderPageToJpegBase64(pdfDoc, pageNum, 1.4);
-          if (base64) {
-            pageImages.push({ page: pageNum, mimeType: 'image/jpeg', data: base64 });
-          }
+      for (let i = 0; i < pagesForOcr.length; i++) {
+        const pageNum = pagesForOcr[i];
+        const cacheKey = `${fingerprint}:p${pageNum}`;
+        const cached = ocrPageCache.get(cacheKey);
+        if (cached) {
+          pageTexts.set(pageNum, cached);
+          usedOcr = true;
+          continue;
         }
 
-        if (pageImages.length > 0) {
-          try {
-            const res = await fetch(`${options.apiBaseUrl}/api/ai/pdf-ocr`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ docTitle, pageImages })
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data && typeof data.text === 'string' && data.text.trim()) {
-                usedOcr = true;
-                // Split by --- Page X --- if present, otherwise assign to first page in batch
-                const rawOcr: string = data.text.trim();
-                const splitRegex = /---\s*Page\s*(\d+)\s*---/gi;
-                const matches = Array.from(rawOcr.matchAll(splitRegex));
-                if (matches.length > 0) {
-                  for (let m = 0; m < matches.length; m++) {
-                    const pNum = Number(matches[m][1]);
-                    const startIdx = (matches[m].index ?? 0) + matches[m][0].length;
-                    const endIdx = m + 1 < matches.length ? (matches[m + 1].index ?? rawOcr.length) : rawOcr.length;
-                    const chunk = rawOcr.slice(startIdx, endIdx).trim();
-                    if (chunk && pNum >= 1) {
-                      pageTexts.set(pNum, chunk);
-                      const fingerprint = (pdfDoc as any).fingerprints?.[0] || docTitle;
-                      ocrPageCache.set(`${fingerprint}:p${pNum}`, chunk);
-                    }
-                  }
-                } else {
-                  pageTexts.set(batch[0], rawOcr);
-                }
-              }
-            }
-          } catch (ocrErr) {
-            console.warn('Batch OCR request failed:', ocrErr);
-          }
+        options.onProgress?.(
+          `Free Local OCR (0 AI Quota): Reading scanned page ${pageNum} (${i + 1}/${pagesForOcr.length})...`
+        );
+        const ocrText = await recognizePageLocally(pdfDoc, pageNum, options.onProgress);
+        if (ocrText.trim()) {
+          usedOcr = true;
+          pageTexts.set(pageNum, ocrText.trim());
+          ocrPageCache.set(cacheKey, ocrText.trim());
         }
       }
     }

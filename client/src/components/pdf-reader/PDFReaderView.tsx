@@ -458,7 +458,7 @@ export const PDFReaderView: React.FC<PDFReaderViewProps> = ({ onAskAiDoubt }) =>
       }
 
       if (extracted.usedOcr) {
-        addToast('Scanned PDF Transcribed ✨', `Gemini 3.8 Vision OCR extracted text from "${document.title}".`, 'success');
+        addToast('Scanned PDF Transcribed (0 AI Quota) ✨', `Free Local OCR extracted text from "${document.title}".`, 'success');
       }
 
       preparedSource = { title: document.title, text: extracted.text };

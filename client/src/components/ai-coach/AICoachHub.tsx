@@ -528,13 +528,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         }
 
         setActiveTopic(cleanTitle);
-        setActiveDomain(extracted.usedOcr ? 'Scanned PDF (Gemini 3.8 OCR)' : 'Uploaded PDF Document');
+        setActiveDomain(extracted.usedOcr ? 'Scanned PDF (Free Local OCR)' : 'Uploaded PDF Document');
         setSourceMaterial(extracted.text);
         setTempEditorTitle(cleanTitle);
         setTempEditorText(extracted.text);
         resetGeneratedContent(cleanTitle);
         addToast(
-          extracted.usedOcr ? 'Scanned PDF Read with Gemini 3.8 OCR! ✨' : 'PDF Processed Completely!',
+          extracted.usedOcr ? 'Scanned PDF Read (Free Local OCR • 0 AI Quota) ✨' : 'PDF Processed Completely!',
           `Extracted ${extracted.text.length.toLocaleString()} chars across ${extracted.pagesRead}/${extracted.totalPages} pages of "${cleanTitle}". Ready for Podcast & Study Tools!`,
           'success'
         );
