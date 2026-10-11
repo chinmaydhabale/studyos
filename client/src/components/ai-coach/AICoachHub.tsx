@@ -98,20 +98,21 @@ const getHostVoice = (style: HostVoiceStyle, language: AudioLanguage, speaker: P
   if (language !== 'english') {
     return male ? 'hi-IN-MadhurNeural' : 'hi-IN-SwaraNeural';
   }
-  return male ? 'en-US-AndrewMultilingualNeural' : 'en-US-AvaMultilingualNeural';
+  return male ? 'en-IN-PrabhatNeural' : 'en-IN-NeerjaNeural';
 };
 
 const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, speaker: PodcastSpeaker): string => {
   const male = isMaleHost(speaker);
   if (style === 'gemini38') {
-    return male ? 'Gemini 3.8 • Puck' : 'Gemini 3.8 • Aoede';
+    return male ? 'Gemini Studio • Puck' : 'Gemini Studio • Aoede';
   }
   if (style === 'notebooklm') {
-    return male ? 'Gemini 3.8 • Charon' : 'Gemini 3.8 • Kore';
+    return male ? 'Gemini Studio • Charon' : 'Gemini Studio • Kore';
   }
   return male ? 'Madhur Neural' : 'Swara Neural';
 };
 
+const PODCAST_BATCH_TURN_SIZE = 8;
 const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
 const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
 
@@ -783,6 +784,22 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setAudioBuffering(false);
   };
 
+  const scrollToTurnInTranscript = (turnIdx: number) => {
+    setTimeout(() => {
+      const turnEl = document.getElementById(`turn-${turnIdx}`);
+      if (turnEl && transcriptContainerRef.current) {
+        const container = transcriptContainerRef.current;
+        const containerRect = container.getBoundingClientRect();
+        const turnRect = turnEl.getBoundingClientRect();
+        const offsetTop = turnRect.top - containerRect.top + container.scrollTop;
+        container.scrollTo({
+          top: Math.max(0, offsetTop - 20),
+          behavior: 'smooth'
+        });
+      }
+    }, 50);
+  };
+
   const playTurn = useCallback(async (index: number) => {
     if (!audioDiscussion || !audioDiscussion.turns || index >= audioDiscussion.turns.length) {
       stopAudio();
@@ -795,28 +812,147 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setCurrentTurnIndex(index);
     setIsPlaying(true);
     setAudioBuffering(true);
+    scrollToTurnInTranscript(index);
 
     const turn = audioDiscussion.turns[index];
-    // Auto-scroll transcript to active turn strictly within transcript container
-    setTimeout(() => {
-      const turnEl = document.getElementById(`turn-${index}`);
-      if (turnEl && transcriptContainerRef.current) {
-        const container = transcriptContainerRef.current;
-        const containerRect = container.getBoundingClientRect();
-        const turnRect = turnEl.getBoundingClientRect();
-        const offsetTop = turnRect.top - containerRect.top + container.scrollTop;
-        container.scrollTo({
-          top: Math.max(0, offsetTop - 20),
-          behavior: 'smooth'
-        });
-      }
-    }, 50);
 
+    // 1. Primary Studio Multi-Speaker Batch Player (8 turns in 1 single Gemini TTS API call!)
+    if (hostVoiceStyle !== 'indian' && audioDiscussion.turns.length > 1) {
+      const batchStart = Math.floor(index / PODCAST_BATCH_TURN_SIZE) * PODCAST_BATCH_TURN_SIZE;
+      const batchEnd = Math.min(audioDiscussion.turns.length - 1, batchStart + PODCAST_BATCH_TURN_SIZE - 1);
+      const batchTurns = audioDiscussion.turns.slice(batchStart, batchEnd + 1);
+
+      if (batchTurns.length > 1) {
+        const batchSignature = batchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
+        const batchCacheKey = `multibatch|${hostVoiceStyle}|${audioLang}|${batchStart}-${batchEnd}|${batchSignature}`;
+        let batchBlobUrl = audioCacheRef.current.get(batchCacheKey);
+
+        if (!batchBlobUrl) {
+          try {
+            const res = await fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                podcastId: audioDiscussion.id,
+                turns: batchTurns,
+                language: audioLang,
+                voiceStyle: hostVoiceStyle
+              })
+            });
+            if (res.ok) {
+              const blob = await res.blob();
+              if (myToken !== playbackTokenRef.current) return;
+              batchBlobUrl = URL.createObjectURL(blob);
+              audioCacheRef.current.set(batchCacheKey, batchBlobUrl);
+            }
+          } catch (err) {
+            console.warn('Multi-speaker batch TTS failed, falling back to single-turn TTS:', err);
+          }
+        }
+
+        if (myToken !== playbackTokenRef.current) return;
+
+        if (batchBlobUrl) {
+          setAudioBuffering(false);
+
+          // Compute character-weighted timestamp boundaries for each turn in the batch
+          const lengths = batchTurns.map(t => Math.max(12, t.text.trim().length));
+          const totalChars = lengths.reduce((sum, n) => sum + n, 0) || 1;
+          let cumulative = 0;
+          const turnBounds = lengths.map((len, offset) => {
+            const startRatio = cumulative / totalChars;
+            cumulative += len;
+            const endRatio = cumulative / totalChars;
+            return { turnIdx: batchStart + offset, startRatio, endRatio };
+          });
+
+          const audio = new Audio(batchBlobUrl);
+          activeAudioRef.current = audio;
+          audio.playbackRate = playbackRate;
+
+          if (index > batchStart) {
+            const targetBound = turnBounds.find(b => b.turnIdx === index);
+            if (targetBound) {
+              const seekToTarget = () => {
+                if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                  audio.currentTime = Math.min(audio.duration - 0.1, targetBound.startRatio * audio.duration);
+                }
+              };
+              if (audio.readyState >= 1) seekToTarget();
+              else audio.addEventListener('loadedmetadata', seekToTarget, { once: true });
+            }
+          }
+
+          let activeSyncedTurn = index;
+          audio.ontimeupdate = () => {
+            if (myToken !== playbackTokenRef.current) return;
+            if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+            const ratio = audio.currentTime / audio.duration;
+            const matched =
+              turnBounds.find(b => ratio >= b.startRatio && ratio <= b.endRatio) ||
+              turnBounds[turnBounds.length - 1];
+            if (matched && matched.turnIdx !== activeSyncedTurn) {
+              activeSyncedTurn = matched.turnIdx;
+              setCurrentTurnIndex(matched.turnIdx);
+              scrollToTurnInTranscript(matched.turnIdx);
+            }
+          };
+
+          audio.onended = () => {
+            if (myToken === playbackTokenRef.current) {
+              playTurn(batchEnd + 1);
+            }
+          };
+
+          audio.onerror = () => {
+            if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
+          };
+
+          audio.play().catch(() => {
+            if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
+          });
+
+          // Preload the next 8-turn batch in the background
+          const nextBatchStart = batchEnd + 1;
+          if (nextBatchStart < audioDiscussion.turns.length) {
+            const nextBatchEnd = Math.min(
+              audioDiscussion.turns.length - 1,
+              nextBatchStart + PODCAST_BATCH_TURN_SIZE - 1
+            );
+            const nextBatchTurns = audioDiscussion.turns.slice(nextBatchStart, nextBatchEnd + 1);
+            const nextBatchSig = nextBatchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
+            const nextBatchKey = `multibatch|${hostVoiceStyle}|${audioLang}|${nextBatchStart}-${nextBatchEnd}|${nextBatchSig}`;
+            if (!audioCacheRef.current.has(nextBatchKey)) {
+              fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  podcastId: audioDiscussion.id,
+                  turns: nextBatchTurns,
+                  language: audioLang,
+                  voiceStyle: hostVoiceStyle
+                })
+              })
+                .then(r => (r.ok ? r.blob() : null))
+                .then(b => {
+                  if (b && myToken === playbackTokenRef.current) {
+                    audioCacheRef.current.set(nextBatchKey, URL.createObjectURL(b));
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+
+          return;
+        }
+      }
+    }
+
+    // 2. Single-turn Neural TTS endpoint (for 'indian' voice style or single-turn fallback)
     const currentVoice = getHostVoice(hostVoiceStyle, audioLang, turn.speaker);
     const cacheKey = `${currentVoice}|${audioLang}|${turn.text}`;
     let blobUrl = audioCacheRef.current.get(cacheKey);
 
-    // Try Neural TTS endpoint first
     if (!blobUrl) {
       try {
         const res = await fetch(`${API_BASE_URL}/api/ai/tts`, {
@@ -847,7 +983,6 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setAudioBuffering(false);
 
     if (blobUrl) {
-      // Play Neural Audio
       const audio = new Audio(blobUrl);
       activeAudioRef.current = audio;
       audio.playbackRate = playbackRate;
@@ -877,7 +1012,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               voice: nextVoice
             })
           })
-            .then(r => r.ok ? r.blob() : null)
+            .then(r => (r.ok ? r.blob() : null))
             .then(b => {
               if (b && myToken === playbackTokenRef.current) {
                 audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
