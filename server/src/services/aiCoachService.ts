@@ -1630,10 +1630,12 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
   }): Promise<NotebookAudioOverview> {
     const docTitle = this.cleanString(input.docTitle, 200) || 'Study Deep Dive';
     const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
-    const language = input.language || 'hinglish';
+    const language = input.language === 'hindi' || input.language === 'english' || input.language === 'hinglish'
+      ? input.language
+      : 'hinglish';
 
     if (!sourceText) {
-      return this.fallbackAudioOverview(docTitle, language);
+      return this.fallbackAudioOverview(docTitle, language, sourceText);
     }
 
     let languageDirective =
@@ -1667,15 +1669,15 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         'and Sam (analytical, calm, deep-thinker, gives unforgettable real-world analogies and topper exam secrets). ' +
         'THEIR BANTER IS FAMOUS FOR FEELING 100% ALIVE, WITTY, AND HUMAN: ' +
         'They react dynamically ("Wait, wait, Sam, back up a second!", "Haha, exactly Alex!", "Spot on!"), build on each other’s thoughts, ' +
-        'and never lecture monotonously. Each turn must have 3 to 6 rich, comprehensive sentences that thoroughly unpack every concept, ' +
-        'formula, exception, and trap from the source material. ' +
+        'and never lecture monotonously. Keep each turn to 1 to 3 spoken sentences with one clear idea. ' +
+        'Tie every factual claim to the source and avoid repetition. ' +
         'CRITICAL FOR AUDIO: Write pure spoken words only. Never include markdown symbols (*, #, _, `, bullet points, brackets) or raw math notation (write "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Respond with JSON only.\n' +
         languageDirective,
       prompt:
         `Document Title: "${docTitle}"\n\n` +
         `--- SOURCE TEXT START ---\n${sourceText}\n--- SOURCE TEXT END ---\n\n` +
-        'Generate a complete 16-24 turn Google NotebookLM style Audio Deep Dive between Alex and Sam unpacking this document in the specified language. ' +
-        'Cover all principles, definitions, derivations, real-world examples, and exam pitfalls in thorough detail. ' +
+        'Generate an 8-12 turn, roughly 5-7 minute audio deep dive between Alex and Sam, grounded only in the source. ' +
+        'Prioritize the core principles, definitions, one useful example, and the most important exam pitfalls. Do not invent facts that are absent from the source. ' +
         'Alex and Sam must alternate naturally. Give each turn speaker ("Alex" or "Sam"), dialogue text, and emotion tone.',
       schema: {
         type: 'OBJECT',
@@ -1704,6 +1706,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     if (result && Array.isArray(result.turns) && result.turns.length >= 4) {
       const turns: AudioTurn[] = result.turns
+        .slice(0, 14)
         .map(t => {
           const speakerRaw = (t?.speaker || '').toLowerCase();
           const speaker: 'Alex' | 'Sam' = speakerRaw.includes('sam') ? 'Sam' : 'Alex';
@@ -1716,11 +1719,13 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         .filter(t => t.text.length > 0);
 
       if (turns.length >= 4) {
+        const wordCount = turns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
+        const durationMinutes = Math.max(1, Math.round(wordCount / 135));
         return {
           docTitle,
           title: this.cleanString(result.title, 200) || `${docTitle}: The Deep Dive`,
           tagline: this.cleanString(result.tagline, 250) || 'An engaging conversation breaking down the core concepts.',
-          durationEstimate: this.cleanString(result.durationEstimate, 50) || `${Math.ceil(turns.length * 0.4)} min listen`,
+          durationEstimate: `~${durationMinutes} min listen`,
           language,
           turns,
           source: 'gemini'
@@ -1728,7 +1733,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       }
     }
 
-    return this.fallbackAudioOverview(docTitle, language);
+    return this.fallbackAudioOverview(docTitle, language, sourceText);
   }
 
   public async askSourceQuestion(input: {
@@ -1960,147 +1965,42 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
   private fallbackAudioOverview(
     docTitle: string,
-    language: 'hinglish' | 'hindi' | 'english' = 'hinglish'
+    language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
+    sourceText = ''
   ): NotebookAudioOverview {
-    if (language === 'hindi') {
-      return {
-        docTitle,
-        title: `${docTitle}: संपूर्ण ऑडियो विश्लेषण (Hindi Deep Dive)`,
-        tagline: 'एलेक्स और सैम के साथ इस विषय का सरल और रोचक अध्ययन।',
-        durationEstimate: '4 मिनट',
-        language: 'hindi',
-        turns: [
-          {
-            speaker: 'Alex',
-            text: `नमस्ते दोस्तों! आज हम ${docTitle} पर गहराई से चर्चा करेंगे। सैम, यह एक ऐसा अध्याय है जिसमें छात्र अक्सर उलझ जाते हैं।`,
-            emotion: 'curious'
-          },
-          {
-            speaker: 'Sam',
-            text: `बिल्कुल सही कहा एलेक्स! लेकिन अगर हम इसके बुनियादी सिद्धांतों को समझ लें, तो यह पूरी तरह आसान और स्पष्ट हो जाता है।`,
-            emotion: 'insightful'
-          },
-          {
-            speaker: 'Alex',
-            text: `तो शुरुआत कहाँ से करें? परीक्षा के लिए सबसे महत्वपूर्ण बात क्या है?`,
-            emotion: 'enthusiastic'
-          },
-          {
-            speaker: 'Sam',
-            text: `सबसे पहले मुख्य परिभाषाओं और मान्यताओं को समझें। जब नींव मजबूत होती है, तो कठिन से कठिन सवाल भी आसानी से हल हो जाते हैं।`,
-            emotion: 'explaining'
-          },
-          {
-            speaker: 'Alex',
-            text: `अक्सर छात्र परीक्षा में कहाँ अंक खो देते हैं? सामान्य गलतियाँ क्या होती हैं?`,
-            emotion: 'curious'
-          },
-          {
-            speaker: 'Sam',
-            text: `इकाइयों और सीमाओं में! छात्र बिना यूनिट्स बदले सीधे फॉर्मूला लगा देते हैं, जिससे उत्तर गलत हो जाता है।`,
-            emotion: 'warning'
-          },
-          {
-            speaker: 'Alex',
-            text: `शानदार सुझाव सैम! सही इकाइयाँ और लगातार दोहराव ही परीक्षा में सफलता दिलाता है।`,
-            emotion: 'inspired'
-          }
-        ],
-        source: 'fallback'
-      };
-    }
+    const snippets = sourceText
+      .replace(/---\s*Page\s+\d+\s*---/gi, ' ')
+      .split(/(?<=[.!?।])\s+|\n+/)
+      .map(part => part.trim().slice(0, 1000))
+      .filter(part => part.length > 20)
+      .slice(0, 6);
+    const selectedSnippets = snippets.length ? snippets : [sourceText.trim().slice(0, 500)].filter(Boolean);
+    const intro = language === 'english'
+      ? `Welcome to ${docTitle}. We are using the provided notes for this source-based audio recap.`
+      : language === 'hindi'
+        ? `${docTitle} के इस ऑडियो पुनरावलोकन में हम दिए गए notes के मुख्य अंश पढ़ेंगे।`
+        : `${docTitle} ke is audio recap mein hum aapke notes ke key points sunenge.`;
+    const turns: AudioTurn[] = [{ speaker: 'Alex', text: intro, emotion: 'conversational' }];
 
-    if (language === 'hinglish') {
-      return {
-        docTitle,
-        title: `${docTitle}: The Ultimate Hinglish Deep Dive`,
-        tagline: 'एलेक्स और सैम के साथ कांसेप्ट का कम्पलीट पोस्टमार्टम!',
-        durationEstimate: '4 min listen',
-        language: 'hinglish',
-        turns: [
-          {
-            speaker: 'Alex',
-            text: `अरे सैम! आज हम deep dive करने वाले हैं ${docTitle} पर। यह टॉपिक competitive exams में बहुत ज्यादा पूछा जाता है न?`,
-            emotion: 'curious'
-          },
-          {
-            speaker: 'Sam',
-            text: `बिल्कुल एलेक्स! और विद्यार्थी अक्सर इसमें silly mistakes कर देते हैं। लेकिन अगर basic fundamentals और concepts अच्छे से clear हों, तो स्कोरिंग बहुत आसान हो जाती है।`,
-            emotion: 'insightful'
-          },
-          {
-            speaker: 'Alex',
-            text: `सही बोला सैम! तो सबसे पहले विद्यार्थियों को किस चीज़ पर focus करना चाहिए?`,
-            emotion: 'enthusiastic'
-          },
-          {
-            speaker: 'Sam',
-            text: `सबसे पहले core definitions, formulas और assumptions को समझो। अगर foundation strong है, तो complex questions भी बिना किसी tension के solve हो जाते हैं।`,
-            emotion: 'explaining'
-          },
-          {
-            speaker: 'Alex',
-            text: `और exam hall में common traps क्या होते हैं जहाँ negative marking लगती है?`,
-            emotion: 'curious'
-          },
-          {
-            speaker: 'Sam',
-            text: `Units conversion और boundary conditions! जैसे विद्यार्थी Celsius को Kelvin में बदलना भूल जाते हैं और गलत option tick कर आते हैं।`,
-            emotion: 'warning'
-          },
-          {
-            speaker: 'Alex',
-            text: `बिल्कुल सटीक point! Formula लगाने से पहले units check करो और active recall से बार-बार revise करो!`,
-            emotion: 'inspired'
-          }
-        ],
-        source: 'fallback'
-      };
-    }
+    selectedSnippets.forEach((snippet, index) => {
+      const speaker: 'Alex' | 'Sam' = index % 2 === 0 ? 'Sam' : 'Alex';
+      const leadIn = language === 'english'
+        ? `Key point ${index + 1} from the source:`
+        : language === 'hindi'
+          ? `स्रोत से मुख्य अंश ${index + 1}:`
+          : `Notes ka key point ${index + 1}:`;
+      turns.push({ speaker, text: `${leadIn} ${snippet}`, emotion: 'explaining' });
+    });
 
+    const wordCount = turns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
+    const durationMinutes = Math.max(1, Math.round(wordCount / 135));
     return {
       docTitle,
-      title: `${docTitle}: The Deep Dive`,
-      tagline: 'Two hosts unpack everything you need to master this topic.',
-      durationEstimate: '4 min listen',
-      language: 'english',
-      turns: [
-        {
-          speaker: 'Alex',
-          text: `Welcome in everyone! Today we're diving deep into ${docTitle}. Sam, this is one of those topics that trips students up all the time.`,
-          emotion: 'curious'
-        },
-        {
-          speaker: 'Sam',
-          text: `It really is, Alex. But once you break it down into its fundamental mechanics, the whole picture becomes intuitive and crystal clear.`,
-          emotion: 'insightful'
-        },
-        {
-          speaker: 'Alex',
-          text: `So where does someone even start? What's the big picture mental model we should have in mind?`,
-          emotion: 'enthusiastic'
-        },
-        {
-          speaker: 'Sam',
-          text: `Think of it like building a pyramid. The base is the definitions and conservation principles. If the base is solid, the complex numericals solve themselves.`,
-          emotion: 'explaining'
-        },
-        {
-          speaker: 'Alex',
-          text: `That makes so much sense! And what about common traps on the exam? Where do students lose marks?`,
-          emotion: 'curious'
-        },
-        {
-          speaker: 'Sam',
-          text: `Almost always in boundary conditions and units! Students rush into the formula without checking if the assumptions hold true.`,
-          emotion: 'warning'
-        },
-        {
-          speaker: 'Alex',
-          text: `Golden advice right there. Check your assumptions, master the core laws, and practice active recall!`,
-          emotion: 'inspired'
-        }
-      ],
+      title: `${docTitle}: ${language === 'hindi' ? 'स्रोत आधारित पुनरावलोकन' : language === 'english' ? 'Source-based recap' : 'Notes se Hinglish recap'}`,
+      tagline: 'AI script generation was unavailable, so this recap reads key excerpts from your source notes.',
+      durationEstimate: `~${durationMinutes} min listen`,
+      language,
+      turns,
       source: 'fallback'
     };
   }

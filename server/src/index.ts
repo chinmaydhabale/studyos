@@ -1186,7 +1186,9 @@ app.post('/api/ai/notebook/briefing', async (req, res) => {
 
 app.post('/api/ai/notebook/audio-overview', async (req, res) => {
   const { docTitle, sourceText, language, userId } = req.body || {};
-  if (!sourceText) return res.status(400).json({ error: 'sourceText is required' });
+  if (typeof sourceText !== 'string' || !sourceText.trim()) {
+    return res.status(400).json({ error: 'sourceText is required' });
+  }
   try {
     const result = await aiCoach.generateAudioOverview({ docTitle, sourceText, language, userId });
     res.json(result);

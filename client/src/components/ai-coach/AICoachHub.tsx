@@ -70,6 +70,25 @@ interface AudioDiscussion {
   source?: 'gemini' | 'fallback';
 }
 
+type AudioLanguage = 'hinglish' | 'hindi' | 'english';
+type HostVoiceStyle = 'notebooklm' | 'indian' | 'multilingual';
+
+const getHostVoice = (style: HostVoiceStyle, language: AudioLanguage, speaker: 'Alex' | 'Sam'): string => {
+  if (style === 'indian' && language !== 'english') {
+    return speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
+  }
+  if (style === 'notebooklm' && language === 'english') {
+    return speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
+  }
+  return speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
+};
+
+const getHostVoiceLabel = (style: HostVoiceStyle, language: AudioLanguage, speaker: 'Alex' | 'Sam'): string =>
+  getHostVoice(style, language, speaker)
+    .replace(/^[^-]+-[^-]+-/, '')
+    .replace(/Neural$/, '')
+    .replace(/Multilingual$/, ' Multilingual');
+
 interface ConceptCheatSheet {
   docTitle: string;
   executiveSummary: string;
@@ -209,8 +228,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   // 1. Audio Deep Dive State & Audio Player
   // ----------------------------------------------------
   const [audioDiscussion, setAudioDiscussion] = useState<AudioDiscussion | null>(null);
-  const [audioLang, setAudioLang] = useState<'hinglish' | 'hindi' | 'english'>('hinglish');
-  const [hostVoiceStyle, setHostVoiceStyle] = useState<'notebooklm' | 'indian' | 'multilingual'>('notebooklm');
+  const [audioLang, setAudioLang] = useState<AudioLanguage>('hinglish');
+  const [hostVoiceStyle, setHostVoiceStyle] = useState<HostVoiceStyle>('multilingual');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
@@ -218,10 +237,32 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
+  const podcastGenerationIdRef = useRef(0);
+  const podcastGenerationAbortRef = useRef<AbortController | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
   // Incremented on every stop/new play so an in-flight (buffering) turn can detect
   // that it was cancelled and abort before it starts audio.
   const playbackTokenRef = useRef(0);
+
+  const cancelPodcastGeneration = () => {
+    podcastGenerationIdRef.current += 1;
+    podcastGenerationAbortRef.current?.abort();
+    podcastGenerationAbortRef.current = null;
+    setLoadingAction(previous => previous === 'Generating Audio Discussion...' ? null : previous);
+  };
+
+  const clearAudioCache = () => {
+    audioCacheRef.current.forEach(url => URL.revokeObjectURL(url));
+    audioCacheRef.current.clear();
+  };
+
+  useEffect(() => () => {
+    podcastGenerationIdRef.current += 1;
+    podcastGenerationAbortRef.current?.abort();
+    if (activeAudioRef.current) activeAudioRef.current.pause();
+    audioCacheRef.current.forEach(url => URL.revokeObjectURL(url));
+    audioCacheRef.current.clear();
+  }, []);
 
   // ----------------------------------------------------
   // 2. Chat / Doubt Assistant State
@@ -310,7 +351,10 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   // Clear every piece of generated content so a new source never shows stale
   // artifacts (study plan, podcast, flashcards, quiz, cheat sheet, chat).
   const resetGeneratedContent = (title: string) => {
+    cancelPodcastGeneration();
+    clearAudioCache();
     setAudioDiscussion(null);
+    setCurrentTurnIndex(0);
     setFlashcards([]);
     setQuizQuestions([]);
     setCheatSheet(null);
@@ -398,30 +442,59 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   // 1. Audio Deep Dive Engine (Google TTS + Native Speech)
   // =========================================================================
 
-  const generateAudioDiscussion = async () => {
+  const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang) => {
+    cancelPodcastGeneration();
+    const requestId = ++podcastGenerationIdRef.current;
+    const controller = new AbortController();
+    podcastGenerationAbortRef.current = controller;
     setLoadingAction('Generating Audio Discussion...');
     stopAudio();
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/notebook/audio-overview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           docTitle: activeTopic,
           sourceText: sourceMaterial,
-          language: audioLang
+          language: requestedLanguage
         })
       });
       if (!res.ok) throw new Error('Audio generation failed');
       const data: AudioDiscussion = await res.json();
+      if (requestId !== podcastGenerationIdRef.current) return;
+      if (!Array.isArray(data.turns) || data.turns.length === 0) {
+        throw new Error('Audio generation returned an empty script');
+      }
       setAudioDiscussion(data);
       setCurrentTurnIndex(0);
-      addToast('Podcast Generated!', `Created ${data.turns.length}-turn deep dive discussion.`, 'success');
+      if (data.source === 'fallback') {
+        addToast('Notes-based fallback ready', 'AI script generation was unavailable; this recap uses excerpts from your source notes.', 'warning');
+      } else {
+        addToast('Podcast Generated!', `Created ${data.turns.length}-turn deep dive discussion.`, 'success');
+      }
     } catch (err: any) {
+      if (controller.signal.aborted || requestId !== podcastGenerationIdRef.current) return;
       console.error('Failed to generate audio overview:', err);
       addToast('Audio Error', 'Could not generate discussion. Please try again.', 'alert');
     } finally {
-      setLoadingAction(null);
+      if (requestId === podcastGenerationIdRef.current) {
+        podcastGenerationAbortRef.current = null;
+        setLoadingAction(previous => previous === 'Generating Audio Discussion...' ? null : previous);
+      }
     }
+  };
+
+  const handleAudioLanguageChange = (language: AudioLanguage) => {
+    if (language === audioLang) return;
+    const shouldRegenerate = Boolean(audioDiscussion) || loadingAction === 'Generating Audio Discussion...';
+    cancelPodcastGeneration();
+    stopAudio();
+    clearAudioCache();
+    setAudioLang(language);
+    setAudioDiscussion(null);
+    setCurrentTurnIndex(0);
+    if (shouldRegenerate) void generateAudioDiscussion(language);
   };
 
   const stopAudio = () => {
@@ -452,8 +525,6 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setAudioBuffering(true);
 
     const turn = audioDiscussion.turns[index];
-    const isAlex = turn.speaker === 'Alex';
-
     // Auto-scroll transcript to active turn strictly within transcript container
     setTimeout(() => {
       const turnEl = document.getElementById(`turn-${index}`);
@@ -469,24 +540,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       }
     }, 50);
 
-    const getHostVoice = (speaker: 'Alex' | 'Sam') => {
-      if (hostVoiceStyle === 'notebooklm') {
-        return speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
-      } else if (hostVoiceStyle === 'indian') {
-        return speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
-      } else {
-        return speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
-      }
-    };
-
-    const currentVoice = getHostVoice(turn.speaker);
-    const cacheKey = `${turn.speaker}|${hostVoiceStyle}|${audioLang}|${playbackRate}|${turn.text}`;
+    const currentVoice = getHostVoice(hostVoiceStyle, audioLang, turn.speaker);
+    const cacheKey = `${currentVoice}|${audioLang}|${turn.text}`;
     let blobUrl = audioCacheRef.current.get(cacheKey);
 
     // Try Neural TTS endpoint first
     if (!blobUrl) {
       try {
-        const rateParam = playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%';
         const res = await fetch(`${API_BASE_URL}/api/ai/tts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -494,13 +554,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             text: turn.text,
             speaker: turn.speaker,
             language: audioLang,
-            voice: currentVoice,
-            rate: rateParam
+            voice: currentVoice
           })
         });
 
         if (res.ok) {
           const blob = await res.blob();
+          if (myToken !== playbackTokenRef.current) return;
           blobUrl = URL.createObjectURL(blob);
           audioCacheRef.current.set(cacheKey, blobUrl);
         }
@@ -520,20 +580,20 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       activeAudioRef.current = audio;
       audio.playbackRate = playbackRate;
       audio.onended = () => {
-        playTurn(index + 1);
+        if (myToken === playbackTokenRef.current) playTurn(index + 1);
       };
       audio.onerror = () => {
-        fallbackWebSpeech(turn, index);
+        if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
       };
       audio.play().catch(() => {
-        fallbackWebSpeech(turn, index);
+        if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
       });
 
       // Preload next turn in background
       if (index + 1 < audioDiscussion.turns.length) {
         const nextTurn = audioDiscussion.turns[index + 1];
-        const nextVoice = getHostVoice(nextTurn.speaker);
-        const nextKey = `${nextTurn.speaker}|${hostVoiceStyle}|${audioLang}|${playbackRate}|${nextTurn.text}`;
+        const nextVoice = getHostVoice(hostVoiceStyle, audioLang, nextTurn.speaker);
+        const nextKey = `${nextVoice}|${audioLang}|${nextTurn.text}`;
         if (!audioCacheRef.current.has(nextKey)) {
           fetch(`${API_BASE_URL}/api/ai/tts`, {
             method: 'POST',
@@ -542,26 +602,27 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               text: nextTurn.text,
               speaker: nextTurn.speaker,
               language: audioLang,
-              voice: nextVoice,
-              rate: playbackRate !== 1.0 ? `${Math.round((playbackRate - 1.0) * 100)}%` : '+0%'
+              voice: nextVoice
             })
           })
             .then(r => r.ok ? r.blob() : null)
             .then(b => {
-              if (b) audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
+              if (b && myToken === playbackTokenRef.current) {
+                audioCacheRef.current.set(nextKey, URL.createObjectURL(b));
+              }
             })
             .catch(() => {});
         }
       }
     } else {
       // Fallback to Web Speech API
-      fallbackWebSpeech(turn, index);
+      fallbackWebSpeech(turn, index, myToken);
     }
   }, [audioDiscussion, audioLang, hostVoiceStyle, playbackRate]);
 
-  const fallbackWebSpeech = (turn: AudioTurn, index: number) => {
+  const fallbackWebSpeech = (turn: AudioTurn, index: number, playbackToken: number) => {
     if (!('speechSynthesis' in window)) {
-      setIsPlaying(false);
+      if (playbackToken === playbackTokenRef.current) setIsPlaying(false);
       return;
     }
     window.speechSynthesis.cancel();
@@ -571,10 +632,10 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     utterance.lang = audioLang === 'hindi' ? 'hi-IN' : audioLang === 'hinglish' ? 'hi-IN' : 'en-IN';
 
     utterance.onend = () => {
-      playTurn(index + 1);
+      if (playbackToken === playbackTokenRef.current) playTurn(index + 1);
     };
     utterance.onerror = () => {
-      setIsPlaying(false);
+      if (playbackToken === playbackTokenRef.current) setIsPlaying(false);
     };
     window.speechSynthesis.speak(utterance);
   };
@@ -1040,7 +1101,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       👨‍🏫
                     </div>
                     <span className="text-xs font-bold text-white mt-1.5">
-                      Alex ({hostVoiceStyle === 'notebooklm' ? 'Christopher' : hostVoiceStyle === 'indian' ? 'Madhur' : 'Andrew'})
+                      Alex ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Alex')})
                     </span>
                     <span className="text-[10px] text-cyan-400 font-medium">Curious Host</span>
                   </div>
@@ -1067,7 +1128,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       👩‍🎓
                     </div>
                     <span className="text-xs font-bold text-white mt-1.5">
-                      Sam ({hostVoiceStyle === 'notebooklm' ? 'Jenny' : hostVoiceStyle === 'indian' ? 'Swara' : 'Ava'})
+                      Sam ({getHostVoiceLabel(hostVoiceStyle, audioLang, 'Sam')})
                     </span>
                     <span className="text-[10px] text-indigo-400 font-medium">Exam Topper</span>
                   </div>
@@ -1079,6 +1140,14 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-semibold border border-cyan-500/30">
                       Podcast Deep Dive
                     </span>
+                    {audioDiscussion?.source === 'fallback' && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/30"
+                        title="This recap uses excerpts from your source notes because AI script generation was unavailable."
+                      >
+                        Notes fallback
+                      </span>
+                    )}
                     <span className="text-xs text-slate-400">
                       {audioDiscussion ? audioDiscussion.durationEstimate || '~8 min' : '~8-10 min discussion'}
                     </span>
@@ -1099,25 +1168,25 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10 flex-wrap">
                   <Mic className="w-3.5 h-3.5 text-cyan-400 ml-2" />
                   <button
-                    onClick={() => { setHostVoiceStyle('notebooklm'); stopAudio(); }}
+                    onClick={() => { setHostVoiceStyle('notebooklm'); stopAudio(); clearAudioCache(); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'notebooklm' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
-                    title="Signature NotebookLM Podcast Voices (Christopher & Jenny)"
+                    title="Christopher and Jenny for English; multilingual voices for Hindi and Hinglish"
                   >
-                    🎙️ NotebookLM Style (Christopher & Jenny)
+                    🎙️ NotebookLM Style
                   </button>
                   <button
-                    onClick={() => { setHostVoiceStyle('indian'); stopAudio(); }}
+                    onClick={() => { setHostVoiceStyle('indian'); stopAudio(); clearAudioCache(); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'indian' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
-                    title="Warm Conversational Indian Educators (Madhur & Swara)"
+                    title="Madhur and Swara for Hindi and Hinglish; multilingual voices for English"
                   >
                     🇮🇳 Indian Educators
                   </button>
                   <button
-                    onClick={() => { setHostVoiceStyle('multilingual'); stopAudio(); }}
+                    onClick={() => { setHostVoiceStyle('multilingual'); stopAudio(); clearAudioCache(); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'multilingual' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1131,7 +1200,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10">
                   <Languages className="w-3.5 h-3.5 text-slate-400 ml-2" />
                   <button
-                    onClick={() => { setAudioLang('hinglish'); stopAudio(); }}
+                    onClick={() => handleAudioLanguageChange('hinglish')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       audioLang === 'hinglish' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1139,7 +1208,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     Hinglish (Natural)
                   </button>
                   <button
-                    onClick={() => { setAudioLang('hindi'); stopAudio(); }}
+                    onClick={() => handleAudioLanguageChange('hindi')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       audioLang === 'hindi' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1147,7 +1216,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     Hindi (हिंदी)
                   </button>
                   <button
-                    onClick={() => { setAudioLang('english'); stopAudio(); }}
+                    onClick={() => handleAudioLanguageChange('english')}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       audioLang === 'english' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1215,7 +1284,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   </button>
 
                   <button
-                    onClick={generateAudioDiscussion}
+                    onClick={() => void generateAudioDiscussion()}
                     disabled={Boolean(loadingAction)}
                     className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
                     title="Regenerate Discussion"
@@ -1245,7 +1314,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   <Headphones className="w-10 h-10 mx-auto text-slate-600" />
                   <p className="text-xs">No discussion script generated yet for this topic.</p>
                   <button
-                    onClick={generateAudioDiscussion}
+                    onClick={() => void generateAudioDiscussion()}
                     disabled={Boolean(loadingAction)}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
                   >

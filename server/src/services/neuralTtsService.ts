@@ -49,6 +49,34 @@ export class NeuralTtsService {
     this.pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
   }
 
+  private escapeXml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  /** Mark Devanagari and Latin spans so the Google fallback can switch language cues. */
+  private hinglishSsml(text: string): string {
+    const tokens = text.match(/[\u0900-\u097F]+|[A-Za-z0-9]+|[^A-Za-z0-9\u0900-\u097F]+/gu) || [text];
+    const spans: Array<{ lang: 'hi-IN' | 'en-IN'; text: string }> = [];
+    let currentLanguage: 'hi-IN' | 'en-IN' = 'hi-IN';
+
+    for (const token of tokens) {
+      if (/[\u0900-\u097F]/u.test(token)) currentLanguage = 'hi-IN';
+      else if (/[A-Za-z0-9]/u.test(token)) currentLanguage = 'en-IN';
+      const previous = spans[spans.length - 1];
+      if (previous?.lang === currentLanguage) previous.text += token;
+      else spans.push({ lang: currentLanguage, text: token });
+    }
+
+    return `<speak>${spans
+      .map(span => `<lang xml:lang="${span.lang}">${this.escapeXml(span.text)}</lang>`)
+      .join('')}</speak>`;
+  }
+
   /**
    * Cleans dialogue text before passing to the TTS synthesizer:
    * Strips markdown symbols, asterisks, bullet dashes, code ticks, brackets, and LaTeX commands.
@@ -159,7 +187,7 @@ export class NeuralTtsService {
     const langCode = isHindi ? 'hi-IN' : 'en-IN';
 
     const payload = JSON.stringify({
-      input: { text },
+      input: language === 'hinglish' ? { ssml: this.hinglishSsml(text) } : { text },
       voice: { languageCode: langCode, name: voiceName },
       audioConfig: {
         audioEncoding: 'MP3',
@@ -257,15 +285,17 @@ export class NeuralTtsService {
     if (!voice || voice === 'google-tts' || voice === 'default' || voice === 'auto') {
       if (language === 'english') {
         voice = speaker === 'Sam' ? 'en-US-JennyNeural' : 'en-US-ChristopherNeural';
+      } else if (language === 'hinglish') {
+        voice = speaker === 'Sam' ? 'en-US-AvaMultilingualNeural' : 'en-US-AndrewMultilingualNeural';
       } else {
         voice = speaker === 'Sam' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
       }
     }
 
-    // Versioned cache key so old flat robotic Google Translate files are never served
+    // Include synthesis settings and bump the version so older voice mappings are not reused.
     const hash = crypto
       .createHash('sha256')
-      .update(`neural_v3|${voice}|${speaker}|${language}|${cleanedText}`)
+      .update(`neural_v4|${voice}|${speaker}|${language}|${req.rate || '+0%'}|${req.pitch || '+0Hz'}|${cleanedText}`)
       .digest('hex');
     const cacheFile = path.join(CACHE_DIR, `${hash}.mp3`);
 
