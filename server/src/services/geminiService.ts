@@ -59,11 +59,19 @@ export class GeminiService {
   private currentKeyIndex = 0;
 
   private getApiKeys(): string[] {
-    const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-    return raw
-      .split(',')
-      .map(k => k.trim())
-      .filter(k => k.length > 0);
+    const raw = [
+      process.env.GEMINI_API_KEYS || '',
+      process.env.GEMINI_API_KEY || '',
+      process.env.GOOGLE_API_KEY || ''
+    ].join(',');
+    return Array.from(
+      new Set(
+        raw
+          .split(',')
+          .map(k => k.trim())
+          .filter(k => k.length > 0)
+      )
+    );
   }
 
   public getModel(): string {

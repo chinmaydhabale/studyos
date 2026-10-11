@@ -78,6 +78,46 @@ interface AudioDiscussion {
 
 type AudioLanguage = 'hinglish' | 'hindi' | 'english';
 type HostVoiceStyle = 'gemini38' | 'notebooklm' | 'indian';
+type TtsModelId =
+  | 'gemini-3.8-flash-tts'
+  | 'gemini-3.8-flash-lite-tts'
+  | 'gemini-3.1-flash-tts-preview'
+  | 'gemini-2.5-flash-preview-tts'
+  | 'gemini-2.5-pro-preview-tts'
+  | 'edge-indian';
+
+const TTS_MODEL_OPTIONS: Array<{ id: TtsModelId; label: string; shortLabel: string }> = [
+  {
+    id: 'gemini-3.8-flash-tts',
+    label: 'Gemini 3.8 Flash TTS (Default • Auto Fallback)',
+    shortLabel: 'Gemini 3.8 Flash TTS'
+  },
+  {
+    id: 'gemini-3.8-flash-lite-tts',
+    label: 'Gemini 3.8 Flash-Lite TTS (+ Auto Fallback)',
+    shortLabel: 'Gemini 3.8 Lite TTS'
+  },
+  {
+    id: 'gemini-3.1-flash-tts-preview',
+    label: 'Gemini 3.1 Flash TTS (+ Auto Fallback)',
+    shortLabel: 'Gemini 3.1 Flash TTS'
+  },
+  {
+    id: 'gemini-2.5-flash-preview-tts',
+    label: 'Gemini 2.5 Flash TTS (+ Auto Fallback)',
+    shortLabel: 'Gemini 2.5 Flash TTS'
+  },
+  {
+    id: 'gemini-2.5-pro-preview-tts',
+    label: 'Gemini 2.5 Pro TTS (+ Auto Fallback)',
+    shortLabel: 'Gemini 2.5 Pro TTS'
+  },
+  {
+    id: 'edge-indian',
+    label: 'Indian Neural TTS (Unlimited Free • No Quota)',
+    shortLabel: 'Indian Neural'
+  }
+];
 
 const isMaleHost = (speaker?: string): boolean => {
   const s = (speaker || '').toLowerCase();
@@ -292,6 +332,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   });
 
   const [hostVoiceStyle, setHostVoiceStyle] = useState<HostVoiceStyle>('gemini38');
+  const [ttsModel, setTtsModel] = useState<TtsModelId>('gemini-3.8-flash-tts');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
@@ -701,7 +742,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           podcastId: audioDiscussion.id,
           turns: audioDiscussion.turns,
           language: audioLang,
-          voiceStyle: hostVoiceStyle
+          voiceStyle: hostVoiceStyle,
+          ttsModel
         })
       });
       if (!res.ok) throw new Error('Failed to synthesize episode');
@@ -746,6 +788,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           tagline: audioDiscussion.tagline,
           language: audioLang,
           voiceStyle: hostVoiceStyle,
+          ttsModel,
           turns: audioDiscussion.turns
         })
       });
@@ -816,15 +859,15 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
     const turn = audioDiscussion.turns[index];
 
-    // 1. Primary Studio Multi-Speaker Batch Player (8 turns in 1 single Gemini TTS API call!)
-    if (hostVoiceStyle !== 'indian' && audioDiscussion.turns.length > 1) {
+    // 1. Primary Studio Multi-Speaker Batch Player (up to 55 turns in 1 single Gemini TTS API call!)
+    if (hostVoiceStyle !== 'indian' && ttsModel !== 'edge-indian' && audioDiscussion.turns.length > 1) {
       const batchStart = Math.floor(index / PODCAST_BATCH_TURN_SIZE) * PODCAST_BATCH_TURN_SIZE;
       const batchEnd = Math.min(audioDiscussion.turns.length - 1, batchStart + PODCAST_BATCH_TURN_SIZE - 1);
       const batchTurns = audioDiscussion.turns.slice(batchStart, batchEnd + 1);
 
       if (batchTurns.length > 1) {
         const batchSignature = batchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
-        const batchCacheKey = `multibatch|${hostVoiceStyle}|${audioLang}|${batchStart}-${batchEnd}|${batchSignature}`;
+        const batchCacheKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${batchStart}-${batchEnd}|${batchSignature}`;
         let batchBlobUrl = audioCacheRef.current.get(batchCacheKey);
 
         if (!batchBlobUrl) {
@@ -836,7 +879,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 podcastId: audioDiscussion.id,
                 turns: batchTurns,
                 language: audioLang,
-                voiceStyle: hostVoiceStyle
+                voiceStyle: hostVoiceStyle,
+                ttsModel
               })
             });
             if (res.ok) {
@@ -912,7 +956,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             if (myToken === playbackTokenRef.current) fallbackWebSpeech(turn, index, myToken);
           });
 
-          // Preload the next 8-turn batch in the background
+          // Preload the next batch in the background
           const nextBatchStart = batchEnd + 1;
           if (nextBatchStart < audioDiscussion.turns.length) {
             const nextBatchEnd = Math.min(
@@ -921,7 +965,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             );
             const nextBatchTurns = audioDiscussion.turns.slice(nextBatchStart, nextBatchEnd + 1);
             const nextBatchSig = nextBatchTurns.map(t => `${t.speaker}:${t.text.slice(0, 24)}`).join('|');
-            const nextBatchKey = `multibatch|${hostVoiceStyle}|${audioLang}|${nextBatchStart}-${nextBatchEnd}|${nextBatchSig}`;
+            const nextBatchKey = `multibatch|${ttsModel}|${hostVoiceStyle}|${audioLang}|${nextBatchStart}-${nextBatchEnd}|${nextBatchSig}`;
             if (!audioCacheRef.current.has(nextBatchKey)) {
               fetch(`${API_BASE_URL}/api/ai/podcasts/episode-audio`, {
                 method: 'POST',
@@ -930,7 +974,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   podcastId: audioDiscussion.id,
                   turns: nextBatchTurns,
                   language: audioLang,
-                  voiceStyle: hostVoiceStyle
+                  voiceStyle: hostVoiceStyle,
+                  ttsModel
                 })
               })
                 .then(r => (r.ok ? r.blob() : null))
@@ -950,7 +995,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
     // 2. Single-turn Neural TTS endpoint (for 'indian' voice style or single-turn fallback)
     const currentVoice = getHostVoice(hostVoiceStyle, audioLang, turn.speaker);
-    const cacheKey = `${currentVoice}|${audioLang}|${turn.text}`;
+    const cacheKey = `${ttsModel}|${currentVoice}|${audioLang}|${turn.text}`;
     let blobUrl = audioCacheRef.current.get(cacheKey);
 
     if (!blobUrl) {
@@ -962,7 +1007,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             text: turn.text,
             speaker: turn.speaker,
             language: audioLang,
-            voice: currentVoice
+            voice: currentVoice,
+            ttsModel
           })
         });
 
@@ -1000,7 +1046,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (index + 1 < audioDiscussion.turns.length) {
         const nextTurn = audioDiscussion.turns[index + 1];
         const nextVoice = getHostVoice(hostVoiceStyle, audioLang, nextTurn.speaker);
-        const nextKey = `${nextVoice}|${audioLang}|${nextTurn.text}`;
+        const nextKey = `${ttsModel}|${nextVoice}|${audioLang}|${nextTurn.text}`;
         if (!audioCacheRef.current.has(nextKey)) {
           fetch(`${API_BASE_URL}/api/ai/tts`, {
             method: 'POST',
@@ -1009,7 +1055,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               text: nextTurn.text,
               speaker: nextTurn.speaker,
               language: audioLang,
-              voice: nextVoice
+              voice: nextVoice,
+              ttsModel
             })
           })
             .then(r => (r.ok ? r.blob() : null))
@@ -1025,7 +1072,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       // Fallback to Web Speech API
       fallbackWebSpeech(turn, index, myToken);
     }
-  }, [audioDiscussion, audioLang, hostVoiceStyle, playbackRate]);
+  }, [audioDiscussion, audioLang, hostVoiceStyle, ttsModel, playbackRate]);
 
   const fallbackWebSpeech = (turn: AudioTurn, index: number, playbackToken: number) => {
     if (!('speechSynthesis' in window)) {
@@ -1642,8 +1689,31 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   </button>
                 </div>
 
-                {/* Primary Play / Pause / Skip Buttons */}
-                <div className="flex items-center gap-3">
+                {/* Primary Play / Pause / Skip Buttons + TTS Model Selector */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* TTS Model Selector (Default: Gemini 3.8 Flash TTS + Auto Fallback) */}
+                  <div
+                    className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1.5 rounded-xl border border-cyan-500/30 shadow-inner"
+                    title="Select Podcast Audio TTS Model (Auto-Fallback enabled so audio never fails if a model hits quota)"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <select
+                      value={ttsModel}
+                      onChange={e => {
+                        const selected = e.target.value as TtsModelId;
+                        setTtsModel(selected);
+                        stopAudio();
+                      }}
+                      className="bg-transparent text-xs font-bold text-cyan-200 focus:outline-none cursor-pointer pr-1"
+                    >
+                      {TTS_MODEL_OPTIONS.map(opt => (
+                        <option key={opt.id} value={opt.id} className="bg-slate-900 text-white">
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <button
                     onClick={() => {
                       if (currentTurnIndex > 0) playTurn(currentTurnIndex - 1);
@@ -1834,13 +1904,32 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 <div className="py-16 text-center text-slate-500 space-y-3">
                   <Headphones className="w-10 h-10 mx-auto text-slate-600" />
                   <p className="text-xs">No discussion script generated yet for this topic.</p>
-                  <button
-                    onClick={() => void generateAudioDiscussion()}
-                    disabled={Boolean(loadingAction)}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
-                  >
-                    Generate Audio Script with Aarav & Ananya
-                  </button>
+                  <div className="flex items-center justify-center gap-2.5 flex-wrap pt-1">
+                    <div
+                      className="flex items-center gap-1.5 bg-slate-950/90 px-3 py-2 rounded-xl border border-cyan-500/30"
+                      title="Select TTS Audio Model (Auto-Fallback enabled)"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                      <select
+                        value={ttsModel}
+                        onChange={e => setTtsModel(e.target.value as TtsModelId)}
+                        className="bg-transparent text-xs font-bold text-cyan-200 focus:outline-none cursor-pointer"
+                      >
+                        {TTS_MODEL_OPTIONS.map(opt => (
+                          <option key={opt.id} value={opt.id} className="bg-slate-900 text-white">
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={() => void generateAudioDiscussion()}
+                      disabled={Boolean(loadingAction)}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
+                    >
+                      Generate Audio Script with Aarav & Ananya
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div

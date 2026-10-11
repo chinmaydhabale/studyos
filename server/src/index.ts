@@ -1214,12 +1214,20 @@ app.post('/api/ai/notebook/audio-overview', async (req, res) => {
 });
 
 app.post('/api/ai/tts', async (req, res) => {
-  const { text, speaker, language, voice, rate, pitch } = req.body || {};
+  const { text, speaker, language, voice, rate, pitch, ttsModel } = req.body || {};
   if (!text) {
     return res.status(400).json({ error: 'text is required' });
   }
   try {
-    const result = await neuralTts.synthesizeWithMeta({ text, speaker, language, voice, rate, pitch });
+    const result = await neuralTts.synthesizeWithMeta({
+      text,
+      speaker,
+      language,
+      voice,
+      rate,
+      pitch,
+      ttsModel
+    });
     res.set({
       'Content-Type': result.mimeType,
       'Content-Length': result.buffer.length.toString(),
@@ -1245,12 +1253,17 @@ app.delete('/api/ai/podcasts/:id', (req, res) => {
 });
 
 app.post('/api/ai/podcasts/episode-audio', async (req, res) => {
-  const { turns, language, voice } = req.body || {};
+  const { turns, language, voice, voiceStyle, ttsModel } = req.body || {};
   if (!Array.isArray(turns) || turns.length === 0) {
     return res.status(400).json({ error: 'turns array is required' });
   }
   try {
-    const result = await neuralTts.synthesizeFullEpisode(turns, language || 'hinglish', voice);
+    const result = await neuralTts.synthesizeFullEpisode(
+      turns,
+      language || 'hinglish',
+      voiceStyle || voice,
+      ttsModel
+    );
     res.set({
       'Content-Type': result.mimeType,
       'Content-Length': result.buffer.length.toString(),
@@ -1264,12 +1277,17 @@ app.post('/api/ai/podcasts/episode-audio', async (req, res) => {
 });
 
 app.post('/api/ai/podcasts/save-telegram', async (req, res) => {
-  const { podcastId, title, docTitle, language, turns, voice } = req.body || {};
+  const { podcastId, title, docTitle, language, turns, voice, voiceStyle, ttsModel } = req.body || {};
   if (!Array.isArray(turns) || turns.length === 0) {
     return res.status(400).json({ error: 'turns array is required' });
   }
   try {
-    const result = await neuralTts.synthesizeFullEpisode(turns, language || 'hinglish', voice);
+    const result = await neuralTts.synthesizeFullEpisode(
+      turns,
+      language || 'hinglish',
+      voiceStyle || voice,
+      ttsModel
+    );
     const ext = result.mimeType === 'audio/wav' ? 'wav' : 'mp3';
     const safeName = (title || docTitle || 'StudyOS_Podcast')
       .replace(/[^a-zA-Z0-9_-]+/g, '_')

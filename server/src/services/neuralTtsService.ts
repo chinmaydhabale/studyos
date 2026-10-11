@@ -19,6 +19,7 @@ export interface TTSRequest {
   language?: 'hinglish' | 'hindi' | 'english';
   rate?: string;
   pitch?: string;
+  ttsModel?: string;
 }
 
 export interface TTSResult {
@@ -54,7 +55,7 @@ export const NEURAL_VOICES = {
   }
 };
 
-const GEMINI_TTS_MODELS = [
+export const GEMINI_TTS_MODELS = [
   'gemini-3.8-flash-tts',
   'gemini-3.8-flash-lite-tts',
   'gemini-3.1-flash-tts-preview',
@@ -85,6 +86,14 @@ export class NeuralTtsService {
     this.pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
   }
 
+  private getOrderedGeminiTtsModels(preferredModel?: string): string[] {
+    const clean = (preferredModel || '').trim();
+    if (clean && GEMINI_TTS_MODELS.includes(clean)) {
+      return [clean, ...GEMINI_TTS_MODELS.filter(m => m !== clean)];
+    }
+    return [...GEMINI_TTS_MODELS];
+  }
+
   private isModelKeyCoolingDown(model: string, apiKey: string): boolean {
     const keyId = `${model}:${apiKey.slice(-6)}`;
     const until = this.quotaCooldownUntil.get(keyId);
@@ -102,11 +111,19 @@ export class NeuralTtsService {
   }
 
   private getGeminiApiKeys(): string[] {
-    const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-    return raw
-      .split(',')
-      .map(k => k.trim())
-      .filter(k => k.length > 0);
+    const raw = [
+      process.env.GEMINI_API_KEYS || '',
+      process.env.GEMINI_API_KEY || '',
+      process.env.GOOGLE_API_KEY || ''
+    ].join(',');
+    return Array.from(
+      new Set(
+        raw
+          .split(',')
+          .map(k => k.trim())
+          .filter(k => k.length > 0)
+      )
+    );
   }
 
   public isFemaleSpeaker(speaker?: string): boolean {
@@ -273,13 +290,14 @@ export class NeuralTtsService {
   }
 
   /**
-   * Synthesizes expressive studio speech using Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS.
+   * Synthesizes expressive studio speech using Gemini 3.8 Flash TTS / Gemini 3.8 Flash-Lite TTS (with auto-fallback).
    */
   public async synthesizeGeminiTts(
     text: string,
     speaker?: PodcastSpeaker,
     language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
-    requestedVoice?: string
+    requestedVoice?: string,
+    preferredModel?: string
   ): Promise<TTSResult | null> {
     const keys = this.getGeminiApiKeys();
     if (!keys.length) return null;
@@ -313,7 +331,9 @@ export class NeuralTtsService {
       }
     };
 
-    for (const model of GEMINI_TTS_MODELS) {
+    const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
+
+    for (const model of modelsToTry) {
       for (let attempt = 0; attempt < keys.length; attempt++) {
         const activeIdx = (this.keyIndex + attempt) % keys.length;
         const apiKey = keys[activeIdx];
@@ -391,12 +411,13 @@ export class NeuralTtsService {
   /**
    * Synthesizes a multi-turn conversation between Aarav (Male) and Ananya (Female)
    * in a SINGLE Gemini TTS API call using native `multiSpeakerVoiceConfig`.
-   * Reduces API quota consumption by 8x–15x while producing seamless studio banter.
+   * Reduces API quota consumption by 8x–50x while producing seamless studio banter.
    */
   public async synthesizeMultiSpeakerGeminiTts(
     turns: Array<{ speaker?: string; text: string }>,
     language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
-    requestedVoice?: string
+    requestedVoice?: string,
+    preferredModel?: string
   ): Promise<TTSResult | null> {
     const validTurns = turns
       .map(t => ({
@@ -407,7 +428,13 @@ export class NeuralTtsService {
 
     if (validTurns.length === 0) return null;
     if (validTurns.length === 1) {
-      return this.synthesizeGeminiTts(validTurns[0].text, validTurns[0].speaker, language, requestedVoice);
+      return this.synthesizeGeminiTts(
+        validTurns[0].text,
+        validTurns[0].speaker,
+        language,
+        requestedVoice,
+        preferredModel
+      );
     }
 
     const keys = this.getGeminiApiKeys();
@@ -458,7 +485,9 @@ export class NeuralTtsService {
       }
     };
 
-    for (const model of GEMINI_TTS_MODELS) {
+    const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
+
+    for (const model of modelsToTry) {
       for (let attempt = 0; attempt < keys.length; attempt++) {
         const activeIdx = (this.keyIndex + attempt) % keys.length;
         const apiKey = keys[activeIdx];
@@ -715,10 +744,11 @@ export class NeuralTtsService {
     const speaker = this.normalizeSpeaker(req.speaker);
     const language = req.language || 'hinglish';
     const requestedVoice = req.voice || 'gemini-3.8';
+    const preferredModel = req.ttsModel || 'gemini-3.8-flash-tts';
 
     const hash = crypto
       .createHash('sha256')
-      .update(`gemini38_v6|${requestedVoice}|${speaker}|${language}|${req.rate || '+0%'}|${req.pitch || '+0Hz'}|${cleanedText}`)
+      .update(`gemini38_v6|${preferredModel}|${requestedVoice}|${speaker}|${language}|${req.rate || '+0%'}|${req.pitch || '+0Hz'}|${cleanedText}`)
       .digest('hex');
 
     const wavCacheFile = path.join(CACHE_DIR, `${hash}.wav`);
@@ -733,7 +763,11 @@ export class NeuralTtsService {
       } catch {}
     }
 
-    const preferEdgeVoice = requestedVoice.endsWith('Neural');
+    const preferEdgeVoice =
+      requestedVoice.endsWith('Neural') ||
+      requestedVoice === 'indian' ||
+      requestedVoice === 'edge-indian' ||
+      preferredModel === 'edge-indian';
 
     if (preferEdgeVoice && fs.existsSync(mp3CacheFile)) {
       try {
@@ -744,9 +778,15 @@ export class NeuralTtsService {
       } catch {}
     }
 
-    // 1. Priority #1: Gemini TTS (unless an explicit Edge Neural voice was requested)
+    // 1. Priority #1: Gemini TTS (unless an explicit Edge Neural voice/model was requested)
     if (!preferEdgeVoice) {
-      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language, requestedVoice);
+      const geminiRes = await this.synthesizeGeminiTts(
+        cleanedText,
+        speaker,
+        language,
+        requestedVoice,
+        preferredModel
+      );
       if (geminiRes && geminiRes.buffer.length > 0) {
         const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
         fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
@@ -755,7 +795,7 @@ export class NeuralTtsService {
     }
 
     // Resolve Indian Edge fallback voice for Aarav (Male) & Ananya (Female)
-    let edgeVoice = preferEdgeVoice ? requestedVoice : '';
+    let edgeVoice = requestedVoice.endsWith('Neural') ? requestedVoice : '';
     if (!edgeVoice) {
       if (language === 'english') {
         edgeVoice = speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural';
@@ -780,7 +820,7 @@ export class NeuralTtsService {
 
     // 3. If Edge-TTS was preferred but failed, try Gemini TTS!
     if (preferEdgeVoice) {
-      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language);
+      const geminiRes = await this.synthesizeGeminiTts(cleanedText, speaker, language, undefined, preferredModel);
       if (geminiRes && geminiRes.buffer.length > 0) {
         const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
         fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
@@ -814,13 +854,14 @@ export class NeuralTtsService {
   }
 
   /**
-   * Synthesizes a batch of dialogue turns (e.g., 8 turns) in a single multi-speaker Gemini TTS call
+   * Synthesizes a batch of dialogue turns (up to 55 turns) in a single multi-speaker Gemini TTS call
    * with disk caching, falling back to turn-by-turn Indian neural synthesis if needed.
    */
   private async synthesizeMultiSpeakerBatch(
     batchTurns: Array<{ speaker?: string; text: string }>,
     language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
-    voiceStyle?: string
+    voiceStyle?: string,
+    preferredModel?: string
   ): Promise<TTSResult> {
     const normalizedBatch = batchTurns
       .map(t => ({
@@ -834,6 +875,7 @@ export class NeuralTtsService {
     }
 
     const effectiveStyle = voiceStyle || 'gemini-3.8';
+    const effectiveModel = preferredModel || 'gemini-3.8-flash-tts';
     const serialized = normalizedBatch.map(t => `${t.speaker}:${t.text}`).join('||');
     const batchHash = crypto
       .createHash('sha256')
@@ -841,7 +883,13 @@ export class NeuralTtsService {
       .digest('hex');
 
     const wavBatchCacheFile = path.join(CACHE_DIR, `batch_${batchHash}.wav`);
-    if (fs.existsSync(wavBatchCacheFile)) {
+    const preferEdgeVoice =
+      effectiveStyle === 'indian' ||
+      effectiveStyle === 'edge-indian' ||
+      effectiveStyle.endsWith('Neural') ||
+      effectiveModel === 'edge-indian';
+
+    if (!preferEdgeVoice && fs.existsSync(wavBatchCacheFile)) {
       try {
         const cached = await fs.promises.readFile(wavBatchCacheFile);
         if (cached.length > 0) {
@@ -850,11 +898,13 @@ export class NeuralTtsService {
       } catch {}
     }
 
-    const preferEdgeVoice =
-      effectiveStyle === 'indian' || effectiveStyle === 'edge-indian' || effectiveStyle.endsWith('Neural');
-
     if (!preferEdgeVoice) {
-      const multiRes = await this.synthesizeMultiSpeakerGeminiTts(normalizedBatch, language, effectiveStyle);
+      const multiRes = await this.synthesizeMultiSpeakerGeminiTts(
+        normalizedBatch,
+        language,
+        effectiveStyle,
+        effectiveModel
+      );
       if (multiRes && multiRes.buffer.length > 0) {
         if (multiRes.mimeType === 'audio/wav') {
           fs.promises.writeFile(wavBatchCacheFile, multiRes.buffer).catch(() => {});
@@ -872,6 +922,7 @@ export class NeuralTtsService {
         text: turn.text,
         speaker: turn.speaker,
         language,
+        ttsModel: effectiveModel,
         voice: preferEdgeVoice
           ? (language === 'english'
               ? (turn.speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural')
@@ -908,7 +959,8 @@ export class NeuralTtsService {
   public async synthesizeFullEpisode(
     turns: Array<{ speaker?: string; text: string }>,
     language: 'hinglish' | 'hindi' | 'english' = 'hinglish',
-    voiceStyle?: string
+    voiceStyle?: string,
+    preferredModel?: string
   ): Promise<TTSResult> {
     const validTurns = (turns || []).filter(t => t && typeof t.text === 'string' && t.text.trim().length > 0);
     if (!validTurns.length) {
@@ -937,14 +989,14 @@ export class NeuralTtsService {
     }
 
     if (batches.length === 1) {
-      return this.synthesizeMultiSpeakerBatch(batches[0], language, voiceStyle);
+      return this.synthesizeMultiSpeakerBatch(batches[0], language, voiceStyle, preferredModel);
     }
 
     const batchBuffers: Buffer[] = [];
     let allWav = true;
 
     for (const chunk of batches) {
-      const batchRes = await this.synthesizeMultiSpeakerBatch(chunk, language, voiceStyle);
+      const batchRes = await this.synthesizeMultiSpeakerBatch(chunk, language, voiceStyle, preferredModel);
       if (batchRes.mimeType !== 'audio/wav') {
         allWav = false;
       }
