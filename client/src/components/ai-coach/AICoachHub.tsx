@@ -152,8 +152,8 @@ const getHostVoiceLabel = (style: HostVoiceStyle, _language: AudioLanguage, spea
   return male ? 'Madhur Neural' : 'Swara Neural';
 };
 
-const FIRST_BATCH_TURN_SIZE = 10;
-const NEXT_BATCH_TURN_SIZE = 10;
+const FIRST_BATCH_TURN_SIZE = 4;
+const NEXT_BATCH_TURN_SIZE = 5;
 
 const getBatchRangeForTurn = (turnIndex: number, totalTurns: number): { batchStart: number; batchEnd: number } => {
   if (turnIndex < FIRST_BATCH_TURN_SIZE) {
@@ -672,12 +672,15 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   // 1. Audio Deep Dive Engine (Gemini 3.8 TTS + Neural + Native Speech)
   // =========================================================================
 
-  const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang) => {
+  const autoPlayAfterGenerateRef = useRef(false);
+
+  const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang, autoPlay = false) => {
     if (sourceMaterialTopic !== activeTopic) {
       addToast('Study Material Needed', 'Load the source notes for this episode before generating another language.', 'warning');
       return;
     }
     cancelPodcastGeneration();
+    autoPlayAfterGenerateRef.current = autoPlay;
     const requestId = ++podcastGenerationIdRef.current;
     const controller = new AbortController();
     podcastGenerationAbortRef.current = controller;
@@ -716,6 +719,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
         addToast('Podcast Generated & Saved!', `Aarav & Ananya created a ${enriched.turns.length}-turn deep dive.`, 'success');
       }
     } catch (err: any) {
+      autoPlayAfterGenerateRef.current = false;
       if (controller.signal.aborted || requestId !== podcastGenerationIdRef.current) return;
       console.error('Failed to generate audio overview:', err);
       addToast('Audio Error', 'Could not generate discussion. Please try again.', 'alert');
@@ -953,9 +957,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       })
         .then(async res => {
           if (!res.ok) return null;
+          const engine = (res.headers.get('X-TTS-Engine') || '').toLowerCase();
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          cacheAudioUrl(bKey, url);
+          // Only cache permanently under the Gemini batch key if Gemini synthesized it (not a temporary Edge fallback)
+          if (!engine.startsWith('edge-')) {
+            cacheAudioUrl(bKey, url);
+          }
           return url;
         })
         .catch(err => {
@@ -970,7 +978,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       return reqPromise;
     };
 
-    // 1. Primary Studio Multi-Speaker Progressive Batch Player (10 turns per batch = ~3.5K tokens, safely < 10K TPM)
+    // 1. Primary Studio Multi-Speaker Progressive Batch Player (4-5 turns per batch = ~1.5K tokens, fast 10-18s synthesis)
     const isBatchMode = hostVoiceStyle !== 'indian' && ttsModel !== 'edge-indian' && audioDiscussion.turns.length > 1;
     if (isBatchMode) {
       const { batchStart, batchEnd } = getBatchRangeForTurn(index, audioDiscussion.turns.length);
@@ -1027,11 +1035,10 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               scrollToTurnInTranscript(matched.turnIdx);
             }
 
-            // Lazy preload the next 10-turn batch ONLY after 50s of listening (or <=18s remaining)
-            // so two batches NEVER run in the same 60-second window and exceed the 10K TPM limit!
+            // Lazy preload the next 5-turn batch after 25s of listening (or <=15s remaining)
             if (
               !preloadedNextBatch &&
-              (audio.currentTime >= 50 || (audio.duration > 20 && audio.duration - audio.currentTime <= 18))
+              (audio.currentTime >= 25 || (audio.duration > 12 && audio.duration - audio.currentTime <= 15))
             ) {
               preloadedNextBatch = true;
               const nextTurnIdx = batchEnd + 1;
@@ -1143,6 +1150,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     }
   }, [audioDiscussion, audioLang, hostVoiceStyle, ttsModel, playbackRate]);
 
+  useEffect(() => {
+    if (autoPlayAfterGenerateRef.current && audioDiscussion && audioDiscussion.turns?.length > 0) {
+      autoPlayAfterGenerateRef.current = false;
+      void playTurn(0);
+    }
+  }, [audioDiscussion, playTurn]);
+
   const fallbackWebSpeech = (turn: AudioTurn, index: number, playbackToken: number) => {
     if (!('speechSynthesis' in window)) {
       if (playbackToken === playbackTokenRef.current) setIsPlaying(false);
@@ -1168,9 +1182,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       stopAudio();
     } else {
       if (!audioDiscussion) {
-        generateAudioDiscussion();
+        void generateAudioDiscussion(audioLang, true);
       } else {
-        playTurn(currentTurnIndex);
+        void playTurn(currentTurnIndex);
       }
     }
   };
@@ -1701,7 +1715,12 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-white/10 flex-wrap">
                   <Mic className="w-3.5 h-3.5 text-cyan-400 ml-2" />
                   <button
-                    onClick={() => { setHostVoiceStyle('gemini38'); stopAudio(); clearAudioCache(); }}
+                    onClick={() => {
+                      setHostVoiceStyle('gemini38');
+                      if (ttsModel === 'edge-indian') setTtsModel('gemini-3.8-flash-tts');
+                      stopAudio();
+                      clearAudioCache();
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'gemini38' ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1710,7 +1729,12 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     ✨ Gemini 3.8 Studio
                   </button>
                   <button
-                    onClick={() => { setHostVoiceStyle('notebooklm'); stopAudio(); clearAudioCache(); }}
+                    onClick={() => {
+                      setHostVoiceStyle('notebooklm');
+                      if (ttsModel === 'edge-indian') setTtsModel('gemini-3.8-flash-tts');
+                      stopAudio();
+                      clearAudioCache();
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'notebooklm' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1719,7 +1743,12 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                     🎙️ NotebookLM Deep
                   </button>
                   <button
-                    onClick={() => { setHostVoiceStyle('indian'); stopAudio(); clearAudioCache(); }}
+                    onClick={() => {
+                      setHostVoiceStyle('indian');
+                      setTtsModel('edge-indian');
+                      stopAudio();
+                      clearAudioCache();
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                       hostVoiceStyle === 'indian' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                     }`}
@@ -1771,7 +1800,13 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       onChange={e => {
                         const selected = e.target.value as TtsModelId;
                         setTtsModel(selected);
+                        if (selected === 'edge-indian') {
+                          setHostVoiceStyle('indian');
+                        } else if (hostVoiceStyle === 'indian') {
+                          setHostVoiceStyle('gemini38');
+                        }
                         stopAudio();
+                        clearAudioCache();
                       }}
                       className="bg-transparent text-xs font-bold text-cyan-200 focus:outline-none cursor-pointer pr-1"
                     >
@@ -1981,7 +2016,15 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                       <select
                         value={ttsModel}
-                        onChange={e => setTtsModel(e.target.value as TtsModelId)}
+                        onChange={e => {
+                          const selected = e.target.value as TtsModelId;
+                          setTtsModel(selected);
+                          if (selected === 'edge-indian') {
+                            setHostVoiceStyle('indian');
+                          } else if (hostVoiceStyle === 'indian') {
+                            setHostVoiceStyle('gemini38');
+                          }
+                        }}
                         className="bg-transparent text-xs font-bold text-cyan-200 focus:outline-none cursor-pointer"
                       >
                         {TTS_MODEL_OPTIONS.map(opt => (
@@ -1992,7 +2035,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                       </select>
                     </div>
                     <button
-                      onClick={() => void generateAudioDiscussion()}
+                      onClick={() => void generateAudioDiscussion(audioLang, true)}
                       disabled={Boolean(loadingAction)}
                       className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/30"
                     >

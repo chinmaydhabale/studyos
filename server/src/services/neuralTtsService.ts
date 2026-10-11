@@ -74,8 +74,8 @@ const GEMINI_VOICE_NAMES = new Set([
   'Zephyr'
 ]);
 
-export const EPISODE_BATCH_TURN_SIZE = 10;
-export const EPISODE_BATCH_MAX_CHARS = 2200;
+export const EPISODE_BATCH_TURN_SIZE = 5;
+export const EPISODE_BATCH_MAX_CHARS = 2600;
 
 export class NeuralTtsService {
   private pythonCmd: string;
@@ -110,10 +110,11 @@ export class NeuralTtsService {
   }
 
   /**
-   * Returns at most 2 models (the preferred model + 1 fallback model that is not on cooldown)
-   * so a single request can never cascade across all 5 Gemini TTS models at once.
+   * Returns ordered Gemini TTS models starting with the preferred model, filtering out models
+   * whose keys are all currently on cooldown so fast 429/404 errors automatically fall back
+   * to working Gemini Flash TTS models (e.g. 3.8-flash -> 3.8-flash-lite -> 3.1-flash -> 2.5-flash).
    */
-  private getOrderedGeminiTtsModels(preferredModel?: string, maxModels = 2): string[] {
+  private getOrderedGeminiTtsModels(preferredModel?: string, maxModels = GEMINI_TTS_MODELS.length): string[] {
     const clean = (preferredModel || '').trim();
     const ordered =
       clean && GEMINI_TTS_MODELS.includes(clean)
@@ -121,26 +122,11 @@ export class NeuralTtsService {
         : [...GEMINI_TTS_MODELS];
 
     const available = ordered.filter(m => !this.isModelCoolingDown(m));
-    const list = available.length > 0 ? available : ordered.slice(0, 1);
+    const list = available.length > 0 ? available : ordered.slice(0, 2);
     return list.slice(0, maxModels);
   }
 
-  private isModelCoolingDown(model: string): boolean {
-    const until = this.modelCooldownUntil.get(model);
-    if (!until) return false;
-    if (Date.now() > until) {
-      this.modelCooldownUntil.delete(model);
-      return false;
-    }
-    return true;
-  }
-
-  private markModelCooldown(model: string, durationMs: number): void {
-    this.modelCooldownUntil.set(model, Date.now() + durationMs);
-  }
-
-  private isModelKeyCoolingDown(model: string, apiKey: string): boolean {
-    if (this.isModelCoolingDown(model)) return true;
+  private isKeyCoolingDownRaw(model: string, apiKey: string): boolean {
     const keyId = `${model}:${apiKey.slice(-6)}`;
     const until = this.quotaCooldownUntil.get(keyId);
     if (!until) return false;
@@ -149,6 +135,31 @@ export class NeuralTtsService {
       return false;
     }
     return true;
+  }
+
+  private isModelCoolingDown(model: string): boolean {
+    const until = this.modelCooldownUntil.get(model);
+    if (until) {
+      if (Date.now() <= until) {
+        return true;
+      }
+      this.modelCooldownUntil.delete(model);
+    }
+    const keys = this.getGeminiApiKeys();
+    if (keys.length > 0 && keys.every(k => this.isKeyCoolingDownRaw(model, k))) {
+      return true;
+    }
+    return false;
+  }
+
+  private markModelCooldown(model: string, durationMs: number): void {
+    this.modelCooldownUntil.set(model, Date.now() + durationMs);
+  }
+
+  private isModelKeyCoolingDown(model: string, apiKey: string): boolean {
+    const until = this.modelCooldownUntil.get(model);
+    if (until && Date.now() <= until) return true;
+    return this.isKeyCoolingDownRaw(model, apiKey);
   }
 
   private markModelKeyCooldown(model: string, apiKey: string, durationMs: number): void {
@@ -383,8 +394,8 @@ export class NeuralTtsService {
         }
       };
 
-      // At most 2 models (selected model + 1 fallback) to prevent cascading across all models
-      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel, 2);
+      // Try non-cooling-down Gemini TTS models in priority order on fast HTTP errors (429/404)
+      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
 
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
@@ -426,8 +437,11 @@ export class NeuralTtsService {
             });
 
             if (!res.ok) {
+              const errBody = await res.text().catch(() => '');
+              console.warn(`[tts] ${model} (key ...${apiKey.slice(-4)}) HTTP ${res.status}: ${errBody.slice(0, 180)}`);
               if (res.status === 429) {
-                this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+                const isDailyQuota = /PerDay|GenerateRequestsPerDay|daily/i.test(errBody);
+                this.markModelKeyCooldown(model, apiKey, isDailyQuota ? 30 * 60 * 1000 : 65 * 1000);
               } else if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
                 this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
                 if (res.status === 404) {
@@ -439,13 +453,21 @@ export class NeuralTtsService {
             }
 
             const data = (await res.json()) as any;
-            const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            const parts: any[] = data?.candidates?.[0]?.content?.parts || [];
+            const audioPart = parts.find((p: any) => p?.inlineData?.data);
+            const inlineData = audioPart?.inlineData;
             if (!inlineData?.data) {
-              return null;
+              const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || 'no-audio-part';
+              console.warn(`[tts] ${model} (key ...${apiKey.slice(-4)}) returned empty audio (${reason}), trying next`);
+              this.markModelKeyCooldown(model, apiKey, 60 * 1000);
+              continue;
             }
 
             const rawBuf = Buffer.from(inlineData.data, 'base64');
-            if (rawBuf.length === 0) return null;
+            if (rawBuf.length === 0) {
+              this.markModelKeyCooldown(model, apiKey, 60 * 1000);
+              continue;
+            }
 
             this.keyIndex = (activeIdx + 1) % keys.length;
             const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
@@ -481,7 +503,7 @@ export class NeuralTtsService {
         }
 
         if (triedAnyKey) {
-          this.markModelCooldown(model, 5 * 60 * 1000);
+          this.markModelCooldown(model, 65 * 1000);
         }
       }
 
@@ -492,7 +514,7 @@ export class NeuralTtsService {
   /**
    * Synthesizes a multi-turn conversation between Aarav (Male) and Ananya (Female)
    * in a SINGLE Gemini TTS API call using native `multiSpeakerVoiceConfig`.
-   * Serialized and rate-guarded so a batch never cascades across all models or exceeds 10K TPM.
+   * Serialized and rate-guarded so a batch never cascades on timeout or exceeds 10K TPM.
    */
   public async synthesizeMultiSpeakerGeminiTts(
     turns: Array<{ speaker?: string; text: string }>,
@@ -582,8 +604,8 @@ export class NeuralTtsService {
         }
       };
 
-      // Try at most 2 models (user's selected model + 1 immediate fallback if 429/404)
-      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel, 2);
+      // Try non-cooling-down Gemini TTS models in priority order on fast HTTP errors (429/404)
+      const modelsToTry = this.getOrderedGeminiTtsModels(preferredModel);
 
       for (const model of modelsToTry) {
         if (this.isModelCoolingDown(model)) continue;
@@ -624,8 +646,8 @@ export class NeuralTtsService {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
           const controller = new AbortController();
-          // 75s timeout so a valid 10-turn batch generation is never aborted prematurely after tokens are billed
-          const timer = setTimeout(() => controller.abort(), 75000);
+          // 65s timeout for a 4-5 turn batch (typically completes in 10-20s)
+          const timer = setTimeout(() => controller.abort(), 65000);
 
           try {
             const res = await fetch(url, {
@@ -636,8 +658,11 @@ export class NeuralTtsService {
             });
 
             if (!res.ok) {
+              const errBody = await res.text().catch(() => '');
+              console.warn(`[tts-multi] ${model} (key ...${apiKey.slice(-4)}) HTTP ${res.status}: ${errBody.slice(0, 180)}`);
               if (res.status === 429) {
-                this.markModelKeyCooldown(model, apiKey, 15 * 60 * 1000);
+                const isDailyQuota = /PerDay|GenerateRequestsPerDay|daily/i.test(errBody);
+                this.markModelKeyCooldown(model, apiKey, isDailyQuota ? 30 * 60 * 1000 : 65 * 1000);
               } else if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
                 this.markModelKeyCooldown(model, apiKey, 60 * 60 * 1000);
                 if (res.status === 404) {
@@ -649,13 +674,21 @@ export class NeuralTtsService {
             }
 
             const data = (await res.json()) as any;
-            const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            const parts: any[] = data?.candidates?.[0]?.content?.parts || [];
+            const audioPart = parts.find((p: any) => p?.inlineData?.data);
+            const inlineData = audioPart?.inlineData;
             if (!inlineData?.data) {
-              return null;
+              const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || 'no-audio-part';
+              console.warn(`[tts-multi] ${model} (key ...${apiKey.slice(-4)}) returned empty audio (${reason}), trying next`);
+              this.markModelKeyCooldown(model, apiKey, 60 * 1000);
+              continue;
             }
 
             const rawBuf = Buffer.from(inlineData.data, 'base64');
-            if (rawBuf.length === 0) return null;
+            if (rawBuf.length === 0) {
+              this.markModelKeyCooldown(model, apiKey, 60 * 1000);
+              continue;
+            }
 
             this.keyIndex = (activeIdx + 1) % keys.length;
             const mime = String(inlineData.mimeType || 'audio/wav').toLowerCase();
@@ -691,7 +724,7 @@ export class NeuralTtsService {
         }
 
         if (triedAnyKey) {
-          this.markModelCooldown(model, 5 * 60 * 1000);
+          this.markModelCooldown(model, 65 * 1000);
         }
       }
 
@@ -891,7 +924,13 @@ export class NeuralTtsService {
     const wavCacheFile = path.join(CACHE_DIR, `${hash}.wav`);
     const mp3CacheFile = path.join(CACHE_DIR, `${hash}.mp3`);
 
-    if (fs.existsSync(wavCacheFile)) {
+    const preferEdgeVoice =
+      requestedVoice.endsWith('Neural') ||
+      requestedVoice === 'indian' ||
+      requestedVoice === 'edge-indian' ||
+      preferredModel === 'edge-indian';
+
+    if (!preferEdgeVoice && fs.existsSync(wavCacheFile)) {
       try {
         const cached = await fs.promises.readFile(wavCacheFile);
         if (cached.length > 0) {
@@ -899,12 +938,6 @@ export class NeuralTtsService {
         }
       } catch {}
     }
-
-    const preferEdgeVoice =
-      requestedVoice.endsWith('Neural') ||
-      requestedVoice === 'indian' ||
-      requestedVoice === 'edge-indian' ||
-      preferredModel === 'edge-indian';
 
     if (preferEdgeVoice && fs.existsSync(mp3CacheFile)) {
       try {
@@ -981,7 +1014,7 @@ export class NeuralTtsService {
   }
 
   /**
-   * Synthesizes a batch of dialogue turns (up to 10 turns) in a single multi-speaker Gemini TTS call
+   * Synthesizes a batch of dialogue turns (up to 5 turns) in a single multi-speaker Gemini TTS call
    * with disk caching, falling back to turn-by-turn Indian Edge Neural synthesis (0 Gemini quota!) if needed.
    */
   private async synthesizeMultiSpeakerBatch(
@@ -1120,7 +1153,7 @@ export class NeuralTtsService {
       return this.synthesizeMultiSpeakerBatch(batches[0], language, voiceStyle, preferredModel);
     }
 
-    const batchBuffers: Buffer[] = [];
+    const batchResults: Array<{ chunk: Array<{ speaker?: string; text: string }>; res: TTSResult }> = [];
     let allWav = true;
 
     for (const chunk of batches) {
@@ -1128,11 +1161,11 @@ export class NeuralTtsService {
       if (batchRes.mimeType !== 'audio/wav') {
         allWav = false;
       }
-      batchBuffers.push(batchRes.buffer);
+      batchResults.push({ chunk, res: batchRes });
     }
 
     if (allWav) {
-      const mergedWav = this.mergeWavBuffers(batchBuffers, 320);
+      const mergedWav = this.mergeWavBuffers(batchResults.map(b => b.res.buffer), 320);
       return {
         buffer: mergedWav,
         mimeType: 'audio/wav',
@@ -1140,8 +1173,19 @@ export class NeuralTtsService {
       };
     }
 
+    // Ensure we never concatenate raw RIFF WAV bytes into an MP3 stream if only some batches fell back to MP3
+    const mp3Buffers: Buffer[] = [];
+    for (const item of batchResults) {
+      if (item.res.mimeType === 'audio/mpeg') {
+        mp3Buffers.push(item.res.buffer);
+      } else {
+        const edgeRes = await this.synthesizeMultiSpeakerBatch(item.chunk, language, 'indian', 'edge-indian');
+        mp3Buffers.push(edgeRes.buffer);
+      }
+    }
+
     return {
-      buffer: Buffer.concat(batchBuffers),
+      buffer: Buffer.concat(mp3Buffers),
       mimeType: 'audio/mpeg',
       engine: 'mp3-episode-merger'
     };
