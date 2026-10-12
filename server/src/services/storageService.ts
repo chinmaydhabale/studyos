@@ -1626,13 +1626,13 @@ export class StorageService {
 
   public getSavedPodcasts(userId?: string): SavedPodcastRecord[] {
     if (userId) {
-      return this.savedPodcasts.filter(p => p.userId === userId);
+      return this.savedPodcasts.filter(p => !p.userId || p.userId === userId);
     }
-    return this.savedPodcasts.filter(p => !p.userId);
+    return this.savedPodcasts;
   }
 
   public getSavedPodcastById(id: string, userId?: string): SavedPodcastRecord | undefined {
-    return this.savedPodcasts.find(p => p.id === id && p.userId === userId);
+    return this.savedPodcasts.find(p => p.id === id && (!userId || !p.userId || p.userId === userId));
   }
 
   public savePodcast(

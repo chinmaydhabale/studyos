@@ -171,6 +171,35 @@ const getBatchRangeForTurn = (turnIndex: number, totalTurns: number): { batchSta
 
 const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
 const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
+const STUDYOS_ACTIVE_CONTEXT_STORAGE_KEY = 'studyos_active_context_v1';
+const PODCAST_PENDING_JOB_STORAGE_KEY = 'studyos_pending_podcast_job_v1';
+
+interface PendingPodcastJob {
+  docTitle: string;
+  language: AudioLanguage;
+  voiceStyle: HostVoiceStyle;
+  ttsModel: TtsModelId;
+  sourceText: string;
+  userId?: string;
+  autoPlay?: boolean;
+  startedAt: number;
+}
+
+interface ServerPodcastJob {
+  jobId: string;
+  userId?: string;
+  docTitle: string;
+  language: AudioLanguage;
+  status: 'generating_script' | 'synthesizing_audio' | 'completed' | 'failed';
+  progressText: string;
+  segmentsCompleted: number;
+  totalSegments: number;
+  turnsGenerated: number;
+  startedAt: string;
+  updatedAt: string;
+  podcastId?: string;
+  podcast?: AudioDiscussion;
+}
 
 interface ConceptCheatSheet {
   docTitle: string;
@@ -286,14 +315,53 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const { addToast, currentUser } = useSocket();
   const { addXp } = useStudy();
 
-  // Active Study Context State
-  const initialTopic = initialSource?.title || PRESET_TOPICS[0].title;
-  const initialDomain = initialSource ? 'PDF Document' : PRESET_TOPICS[0].domain;
-  const initialMaterial = initialSource?.text || PRESET_TOPICS[0].content;
+  // Active Study Context State (persisted across reloads & tab closes)
+  const storedContext = (() => {
+    try {
+      const raw = localStorage.getItem(STUDYOS_ACTIVE_CONTEXT_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.topic === 'string' && typeof parsed.material === 'string' && parsed.material.trim()) {
+          return parsed as { topic: string; domain: string; material: string };
+        }
+      }
+    } catch {}
+    return null;
+  })();
+
+  const initialTopic = initialSource?.title || storedContext?.topic || PRESET_TOPICS[0].title;
+  const initialDomain = initialSource ? 'PDF Document' : (storedContext?.domain || PRESET_TOPICS[0].domain);
+  const initialMaterial = initialSource?.text || storedContext?.material || PRESET_TOPICS[0].content;
   const [activeTopic, setActiveTopic] = useState(initialTopic);
   const [activeDomain, setActiveDomain] = useState(initialDomain);
   const [sourceMaterial, setSourceMaterial] = useState(initialMaterial);
   const [sourceMaterialTopic, setSourceMaterialTopic] = useState(initialTopic);
+
+  // Sync active study context to localStorage so reload/tab-close never wipes uploaded PDFs or notes
+  useEffect(() => {
+    try {
+      if (activeTopic && sourceMaterial && sourceMaterialTopic === activeTopic) {
+        localStorage.setItem(
+          STUDYOS_ACTIVE_CONTEXT_STORAGE_KEY,
+          JSON.stringify({
+            topic: activeTopic,
+            domain: activeDomain,
+            material: sourceMaterial.slice(0, 120000)
+          })
+        );
+      }
+    } catch {}
+  }, [activeTopic, activeDomain, sourceMaterial, sourceMaterialTopic]);
+
+  // Apply external initialSource when passed from PDF Reader
+  useEffect(() => {
+    if (initialSource?.title && initialSource?.text) {
+      setActiveTopic(initialSource.title);
+      setActiveDomain('PDF Document');
+      setSourceMaterial(initialSource.text);
+      setSourceMaterialTopic(initialSource.title);
+    }
+  }, [initialSource?.title, initialSource?.text]);
 
   // Active Workspace Tab
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('audio');
@@ -305,8 +373,22 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const [isUploading, setIsUploading] = useState(false);
   const [isPresetsOpen, setIsPresetsOpen] = useState(false);
 
-  // Loading States
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  // Loading States & Background Job State
+  const [hasPendingBackgroundJob, setHasPendingBackgroundJob] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem(PODCAST_PENDING_JOB_STORAGE_KEY));
+    } catch {
+      return false;
+    }
+  });
+  const [loadingAction, setLoadingAction] = useState<string | null>(() => {
+    try {
+      if (localStorage.getItem(PODCAST_PENDING_JOB_STORAGE_KEY)) {
+        return 'Generating Podcast in Background...';
+      }
+    } catch {}
+    return null;
+  });
 
   // ----------------------------------------------------
   // 1. Audio Deep Dive State & Persistent Podcast Library
@@ -361,6 +443,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const podcastGenerationIdRef = useRef(0);
   const podcastGenerationAbortRef = useRef<AbortController | null>(null);
+  const isClientPostInFlightRef = useRef(false);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
   const playbackTokenRef = useRef(0);
   const MAX_AUDIO_CACHE_ENTRIES = 24;
@@ -413,29 +496,6 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     } catch {}
   }, [savedPodcasts]);
 
-  // Fetch server-stored podcasts on mount and merge with local library
-  useEffect(() => {
-    const query = currentUser?.id ? `?userId=${encodeURIComponent(currentUser.id)}` : '';
-    fetch(`${API_BASE_URL}/api/ai/podcasts${query}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data && Array.isArray(data.podcasts) && data.podcasts.length > 0) {
-          setSavedPodcasts(prev => {
-            const byKey = new Map<string, AudioDiscussion>();
-            [...data.podcasts, ...prev].forEach((p: AudioDiscussion) => {
-              if (p && Array.isArray(p.turns) && p.turns.length > 0) {
-                const key = p.id || `${p.docTitle}|${p.language || 'hinglish'}|${p.title}`;
-                if (!byKey.has(key)) byKey.set(key, p);
-              }
-            });
-            return Array.from(byKey.values()).slice(0, 30);
-          });
-          setAudioDiscussion(current => current || data.podcasts[0]);
-        }
-      })
-      .catch(() => {});
-  }, [currentUser?.id]);
-
   const upsertPodcastToLibrary = useCallback((podcast: AudioDiscussion) => {
     setSavedPodcasts(prev => {
       const key = podcast.id || `${podcast.docTitle}|${podcast.language || 'hinglish'}|${podcast.title}`;
@@ -450,7 +510,21 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     podcastGenerationIdRef.current += 1;
     podcastGenerationAbortRef.current?.abort();
     podcastGenerationAbortRef.current = null;
-    setLoadingAction(previous => previous === 'Generating Audio Discussion...' ? null : previous);
+    isClientPostInFlightRef.current = false;
+    try {
+      localStorage.removeItem(PODCAST_PENDING_JOB_STORAGE_KEY);
+    } catch {}
+    setHasPendingBackgroundJob(false);
+    setLoadingAction(previous =>
+      previous &&
+      (previous.includes('Podcast') ||
+        previous.includes('Audio') ||
+        previous.includes('Background') ||
+        previous.includes('Synthesizing') ||
+        previous.includes('Writing'))
+        ? null
+        : previous
+    );
   };
 
   const clearAudioCache = () => {
@@ -459,8 +533,6 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   };
 
   useEffect(() => () => {
-    podcastGenerationIdRef.current += 1;
-    podcastGenerationAbortRef.current?.abort();
     if (activeAudioRef.current) activeAudioRef.current.pause();
     audioCacheRef.current.forEach(url => URL.revokeObjectURL(url));
     audioCacheRef.current.clear();
@@ -552,9 +624,9 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
 
   // Clear every piece of generated content so a new source never shows stale
   // artifacts (study plan, flashcards, quiz, cheat sheet, chat), while restoring
-  // any previously saved podcast for the newly selected topic.
+  // any previously saved podcast for the newly selected topic without aborting
+  // any background podcast generation.
   const resetGeneratedContent = (title: string) => {
-    cancelPodcastGeneration();
     clearAudioCache();
     const matchingSaved =
       savedPodcasts.find(p => p.docTitle === title && (p.language || 'hinglish') === audioLang) ||
@@ -669,33 +741,61 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   };
 
   // =========================================================================
-  // 1. Audio Deep Dive Engine (Gemini 3.8 TTS + Neural + Native Speech)
+  // 1. Audio Deep Dive Engine (Gemini 3.8 TTS + Neural + Background Recovery)
   // =========================================================================
 
   const autoPlayAfterGenerateRef = useRef(false);
 
-  const generateAudioDiscussion = async (requestedLanguage: AudioLanguage = audioLang, autoPlay = false) => {
-    if (sourceMaterialTopic !== activeTopic) {
+  const generateAudioDiscussion = async (
+    requestedLanguage: AudioLanguage = audioLang,
+    autoPlay = false,
+    resumeJob?: PendingPodcastJob
+  ) => {
+    if (!resumeJob && sourceMaterialTopic !== activeTopic) {
       addToast('Study Material Needed', 'Load the source notes for this episode before generating another language.', 'warning');
       return;
     }
-    cancelPodcastGeneration();
-    autoPlayAfterGenerateRef.current = autoPlay;
-    const requestId = ++podcastGenerationIdRef.current;
+
+    podcastGenerationIdRef.current += 1;
+    podcastGenerationAbortRef.current?.abort();
+    const requestId = podcastGenerationIdRef.current;
     const controller = new AbortController();
     podcastGenerationAbortRef.current = controller;
-    setLoadingAction('Generating Audio Discussion...');
-    stopAudio();
+    isClientPostInFlightRef.current = true;
+
+    const jobPayload: PendingPodcastJob = resumeJob || {
+      docTitle: activeTopic,
+      language: requestedLanguage,
+      voiceStyle: hostVoiceStyle,
+      ttsModel,
+      sourceText: sourceMaterial.slice(0, 120000),
+      userId: currentUser?.id,
+      autoPlay,
+      startedAt: Date.now()
+    };
+
+    try {
+      localStorage.setItem(PODCAST_PENDING_JOB_STORAGE_KEY, JSON.stringify(jobPayload));
+    } catch {}
+    setHasPendingBackgroundJob(true);
+    autoPlayAfterGenerateRef.current = Boolean(jobPayload.autoPlay);
+    setLoadingAction('Generating Audio Discussion (Background Safe)...');
+    if (!resumeJob) {
+      stopAudio();
+    }
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/notebook/audio-overview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          docTitle: activeTopic,
-          sourceText: sourceMaterial,
-          language: requestedLanguage,
-          userId: currentUser?.id
+          docTitle: jobPayload.docTitle,
+          sourceText: jobPayload.sourceText,
+          language: jobPayload.language,
+          userId: jobPayload.userId || currentUser?.id,
+          voiceStyle: jobPayload.voiceStyle,
+          ttsModel: jobPayload.ttsModel
         })
       });
       if (!res.ok) throw new Error('Audio generation failed');
@@ -704,10 +804,19 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (!Array.isArray(data.turns) || data.turns.length === 0) {
         throw new Error('Audio generation returned an empty script');
       }
+
+      isClientPostInFlightRef.current = false;
+      podcastGenerationAbortRef.current = null;
+      try {
+        localStorage.removeItem(PODCAST_PENDING_JOB_STORAGE_KEY);
+      } catch {}
+      setHasPendingBackgroundJob(false);
+      setLoadingAction(null);
+
       const enriched: AudioDiscussion = {
         ...data,
-        docTitle: data.docTitle || activeTopic,
-        language: data.language || requestedLanguage,
+        docTitle: data.docTitle || jobPayload.docTitle,
+        language: data.language || jobPayload.language,
         createdAt: data.createdAt || new Date().toISOString()
       };
       setAudioDiscussion(enriched);
@@ -716,25 +825,197 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (enriched.source === 'fallback') {
         addToast('Notes-based fallback ready', 'AI script generation was unavailable; this recap uses excerpts from your source notes.', 'warning');
       } else {
-        addToast('Podcast Generated & Saved!', `Aarav & Ananya created a ${enriched.turns.length}-turn deep dive.`, 'success');
+        addToast('Podcast Generated & Saved! 🎧', `Aarav & Ananya created a ${enriched.turns.length}-turn deep dive.`, 'success');
       }
     } catch (err: any) {
-      autoPlayAfterGenerateRef.current = false;
+      isClientPostInFlightRef.current = false;
       if (controller.signal.aborted || requestId !== podcastGenerationIdRef.current) return;
-      console.error('Failed to generate audio overview:', err);
-      addToast('Audio Error', 'Could not generate discussion. Please try again.', 'alert');
-    } finally {
-      if (requestId === podcastGenerationIdRef.current) {
-        podcastGenerationAbortRef.current = null;
-        setLoadingAction(previous => previous === 'Generating Audio Discussion...' ? null : previous);
-      }
+      console.warn('Podcast generation request interrupted — continuing in background sync mode:', err);
+      // Do NOT clear PODCAST_PENDING_JOB_STORAGE_KEY! The server continues generating in the background
+      // (or we will auto-resume as soon as internet reconnects).
+      setHasPendingBackgroundJob(true);
+      setLoadingAction('Background Mode: Creating Podcast on Server (Auto-syncing)...');
+      addToast(
+        'Background Mode Active 🔄',
+        'Internet disconnected or page switched — your podcast is being created in the background and will appear automatically when ready!',
+        'info'
+      );
     }
   };
 
+  // Persistent Background Sync & Auto-Recovery (survives internet drops, page reloads, tab closes & tab switches)
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncPodcastsAndBackgroundJobs = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return;
+      }
+
+      let pendingJob: PendingPodcastJob | null = null;
+      try {
+        const raw = localStorage.getItem(PODCAST_PENDING_JOB_STORAGE_KEY);
+        if (raw) {
+          pendingJob = JSON.parse(raw) as PendingPodcastJob;
+        }
+      } catch {}
+
+      try {
+        const query = currentUser?.id ? `?userId=${encodeURIComponent(currentUser.id)}` : '';
+        const res = await fetch(`${API_BASE_URL}/api/ai/podcasts${query}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+
+        const serverList: AudioDiscussion[] = Array.isArray(data?.podcasts) ? data.podcasts : [];
+        const activeJobs: ServerPodcastJob[] = Array.isArray(data?.activeJobs) ? data.activeJobs : [];
+
+        if (serverList.length > 0) {
+          setSavedPodcasts(prev => {
+            const mergedMap = new Map<string, AudioDiscussion>();
+            for (const p of [...serverList, ...prev]) {
+              if (!p || !Array.isArray(p.turns) || p.turns.length === 0) continue;
+              const k = p.id || `${p.docTitle}|${p.language || 'hinglish'}|${p.title}`;
+              if (!mergedMap.has(k)) mergedMap.set(k, p);
+            }
+            return Array.from(mergedMap.values()).slice(0, 30);
+          });
+
+          setAudioDiscussion(prev => {
+            if (prev && Array.isArray(prev.turns) && prev.turns.length > 0) return prev;
+            const matching = serverList.find(p => p.docTitle === activeTopic);
+            return matching || serverList[0];
+          });
+        }
+
+        // Check if there is an active in-progress job on the server
+        const runningJob = activeJobs.find(
+          j =>
+            (j.status === 'generating_script' || j.status === 'synthesizing_audio') &&
+            (!pendingJob || (j.docTitle === pendingJob.docTitle && j.language === pendingJob.language))
+        );
+
+        if (runningJob) {
+          setHasPendingBackgroundJob(true);
+          setLoadingAction(runningJob.progressText || 'Generating Podcast in Background...');
+          return;
+        }
+
+        // Check if our pending background job has completed on the server
+        if (pendingJob) {
+          const completedJobMatch = activeJobs.find(
+            j =>
+              j.status === 'completed' &&
+              j.podcast &&
+              j.docTitle === pendingJob!.docTitle &&
+              j.language === pendingJob!.language
+          )?.podcast;
+
+          const libraryMatch = serverList.find(p => {
+            if (p.docTitle !== pendingJob!.docTitle) return false;
+            if ((p.language || 'hinglish') !== pendingJob!.language) return false;
+            if (!p.createdAt) return true;
+            const createdTime = new Date(p.createdAt).getTime();
+            return Number.isNaN(createdTime) || createdTime >= pendingJob!.startedAt - 60000;
+          });
+
+          const finishedPodcast = completedJobMatch || libraryMatch;
+          if (finishedPodcast && Array.isArray(finishedPodcast.turns) && finishedPodcast.turns.length > 0) {
+            try {
+              localStorage.removeItem(PODCAST_PENDING_JOB_STORAGE_KEY);
+            } catch {}
+            podcastGenerationAbortRef.current?.abort();
+            podcastGenerationAbortRef.current = null;
+            isClientPostInFlightRef.current = false;
+            setHasPendingBackgroundJob(false);
+            setLoadingAction(prev =>
+              prev &&
+              (prev.includes('Podcast') ||
+                prev.includes('Audio') ||
+                prev.includes('Background') ||
+                prev.includes('Synthesizing') ||
+                prev.includes('Writing'))
+                ? null
+                : prev
+            );
+
+            setAudioDiscussion(finishedPodcast);
+            upsertPodcastToLibrary(finishedPodcast);
+            setCurrentTurnIndex(0);
+            if (pendingJob.autoPlay) {
+              autoPlayAfterGenerateRef.current = true;
+            }
+            addToast(
+              'Background Podcast Ready! 🎧',
+              `"${finishedPodcast.title}" (${finishedPodcast.turns.length} turns) finished in the background and is ready to play!`,
+              'success'
+            );
+            return;
+          }
+
+          // If no running job and no finished podcast on the server, and our client POST is not currently in flight:
+          // This happens if internet dropped BEFORE the initial POST reached the server, or right as the user reloaded.
+          const ageMs = Date.now() - (pendingJob.startedAt || 0);
+          if (ageMs > 30 * 60 * 1000) {
+            try {
+              localStorage.removeItem(PODCAST_PENDING_JOB_STORAGE_KEY);
+            } catch {}
+            setHasPendingBackgroundJob(false);
+            setLoadingAction(null);
+          } else if (!isClientPostInFlightRef.current && pendingJob.sourceText) {
+            void generateAudioDiscussion(pendingJob.language, Boolean(pendingJob.autoPlay), pendingJob);
+          }
+        } else {
+          setHasPendingBackgroundJob(false);
+          setLoadingAction(prev =>
+            prev &&
+            (prev.includes('Podcast') ||
+              prev.includes('Audio Discussion') ||
+              prev.includes('Background') ||
+              prev.includes('Synthesizing') ||
+              prev.includes('Writing'))
+              ? null
+              : prev
+          );
+        }
+      } catch {
+        // Offline or transient network error — keep polling silently until back online
+      }
+    };
+
+    void syncPodcastsAndBackgroundJobs();
+
+    const intervalId = hasPendingBackgroundJob
+      ? window.setInterval(() => {
+          void syncPodcastsAndBackgroundJobs();
+        }, 3500)
+      : undefined;
+
+    const handleOnlineOrFocus = () => {
+      void syncPodcastsAndBackgroundJobs();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncPodcastsAndBackgroundJobs();
+      }
+    };
+
+    window.addEventListener('online', handleOnlineOrFocus);
+    window.addEventListener('focus', handleOnlineOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== undefined) window.clearInterval(intervalId);
+      window.removeEventListener('online', handleOnlineOrFocus);
+      window.removeEventListener('focus', handleOnlineOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser?.id, hasPendingBackgroundJob]);
+
   const handleAudioLanguageChange = (language: AudioLanguage) => {
     if (language === audioLang) return;
-    const shouldRegenerate = Boolean(audioDiscussion) || loadingAction === 'Generating Audio Discussion...';
-    cancelPodcastGeneration();
+    const shouldRegenerate = Boolean(audioDiscussion) || Boolean(hasPendingBackgroundJob);
     stopAudio();
     clearAudioCache();
     setAudioLang(language);
@@ -1924,6 +2205,37 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 </div>
               </div>
             </div>
+
+            {/* Active Background Podcast Generation Banner */}
+            {hasPendingBackgroundJob && (
+              <div className="bg-gradient-to-r from-cyan-950/70 via-indigo-950/70 to-purple-950/70 border border-cyan-500/40 rounded-3xl p-4 shadow-xl flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center shrink-0">
+                    <RefreshCw className="w-4 h-4 text-cyan-300 animate-spin" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-extrabold text-cyan-200">
+                        {loadingAction || 'Generating Podcast in Background...'}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Background Safe
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 mt-0.5">
+                      Safe to switch tabs, reload the page, or reconnect internet — your podcast is being created on the server and will appear automatically when ready!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={cancelPodcastGeneration}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold transition-all"
+                  title="Cancel background podcast tracking"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
             {/* Saved Podcasts Library (Persistent Across Reloads) */}
             {savedPodcasts.length > 0 && (

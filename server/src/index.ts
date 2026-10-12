@@ -1211,12 +1211,19 @@ app.post('/api/ai/notebook/briefing', async (req, res) => {
 });
 
 app.post('/api/ai/notebook/audio-overview', async (req, res) => {
-  const { docTitle, sourceText, language, userId } = req.body || {};
+  const { docTitle, sourceText, language, userId, voiceStyle, ttsModel } = req.body || {};
   if (typeof sourceText !== 'string' || !sourceText.trim()) {
     return res.status(400).json({ error: 'sourceText is required' });
   }
   try {
-    const result = await aiCoach.generateAudioOverview({ docTitle, sourceText, language, userId });
+    const result = await aiCoach.generateAudioOverview({
+      docTitle,
+      sourceText,
+      language,
+      userId,
+      voiceStyle,
+      ttsModel
+    });
     res.json(result);
   } catch (err) {
     console.error('[ai] notebook/audio-overview failed:', err);
@@ -1255,7 +1262,10 @@ app.post('/api/ai/tts', async (req, res) => {
 // Saved Podcasts Library & Telegram Cloud Backup Endpoints
 app.get('/api/ai/podcasts', (req, res) => {
   const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
-  res.json({ podcasts: storage.getSavedPodcasts(userId) });
+  res.json({
+    podcasts: storage.getSavedPodcasts(userId),
+    activeJobs: aiCoach.getActivePodcastJobs(userId)
+  });
 });
 
 app.delete('/api/ai/podcasts/:id', (req, res) => {

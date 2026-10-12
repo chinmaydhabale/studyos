@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { storage, localDateKey } from './storageService.js';
 import { gemini, DEFAULT_GEMINI_MODEL } from './geminiService.js';
+import { neuralTts } from './neuralTtsService.js';
 import { StudyTask, QuizQuestion, Flashcard } from '../types.js';
 
 /** Where a given payload came from — surfaced so the UI can be honest about it. */
@@ -157,8 +158,46 @@ const EXAM_COACH_PERSONA =
   '   - Use Markdown bold (**text**), bullet lists, and tables with pipe (|) borders for tabular comparisons.\n' +
   '   - Never leave formulas unformatted.';
 
+export interface PodcastBackgroundJob {
+  jobId: string;
+  userId?: string;
+  docTitle: string;
+  language: 'hinglish' | 'hindi' | 'english';
+  voiceStyle?: string;
+  ttsModel?: string;
+  status: 'generating_script' | 'synthesizing_audio' | 'completed' | 'failed';
+  progressText: string;
+  segmentsCompleted: number;
+  totalSegments: number;
+  turnsGenerated: number;
+  startedAt: string;
+  updatedAt: string;
+  podcastId?: string;
+  podcast?: NotebookAudioOverview;
+  error?: string;
+}
+
 export class AICoachService {
   private podcastGenerationInFlight = new Map<string, Promise<NotebookAudioOverview>>();
+  private podcastJobs = new Map<string, PodcastBackgroundJob>();
+
+  public getActivePodcastJobs(userId?: string): PodcastBackgroundJob[] {
+    const now = Date.now();
+    const results: PodcastBackgroundJob[] = [];
+    for (const [key, job] of this.podcastJobs.entries()) {
+      const updatedMs = new Date(job.updatedAt).getTime() || now;
+      const isFinished = job.status === 'completed' || job.status === 'failed';
+      // Keep finished jobs visible for 5 minutes so reconnecting/reloading clients can observe completion
+      if (isFinished && now - updatedMs > 5 * 60 * 1000) {
+        this.podcastJobs.delete(key);
+        continue;
+      }
+      if (!userId || !job.userId || job.userId === userId) {
+        results.push(job);
+      }
+    }
+    return results;
+  }
 
   /** Model id currently in use, for the client status badge. */
   public getModel(): string {
@@ -1744,6 +1783,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     sourceText: string;
     language?: 'hinglish' | 'hindi' | 'english';
     userId?: string;
+    voiceStyle?: string;
+    ttsModel?: string;
   }): Promise<NotebookAudioOverview> {
     const docTitle = this.cleanString(input.docTitle, 200) || 'Study Deep Dive';
     const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
@@ -1779,7 +1820,10 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       sourceText,
       language,
       userId: input.userId,
-      sourceHash
+      voiceStyle: input.voiceStyle,
+      ttsModel: input.ttsModel,
+      sourceHash,
+      inFlightKey
     });
     this.podcastGenerationInFlight.set(inFlightKey, generation);
     try {
@@ -1796,7 +1840,10 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     sourceText: string;
     language: 'hinglish' | 'hindi' | 'english';
     userId?: string;
+    voiceStyle?: string;
+    ttsModel?: string;
     sourceHash: string;
+    inFlightKey: string;
   }): Promise<NotebookAudioOverview> {
     const { docTitle, sourceText, language } = input;
 
@@ -1821,161 +1868,234 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     }
 
     const segments = this.splitSourceIntoPodcastSegments(sourceText, PODCAST_SCRIPT_SEGMENT_CHARS);
+    const nowIso = new Date().toISOString();
+    const job: PodcastBackgroundJob = {
+      jobId: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userId: input.userId,
+      docTitle,
+      language,
+      voiceStyle: input.voiceStyle,
+      ttsModel: input.ttsModel,
+      status: 'generating_script',
+      progressText:
+        segments.length > 1
+          ? `Generating Podcast Script in Background (Part 1/${segments.length})...`
+          : 'Generating Podcast Script in Background...',
+      segmentsCompleted: 0,
+      totalSegments: segments.length,
+      turnsGenerated: 0,
+      startedAt: nowIso,
+      updatedAt: nowIso
+    };
+    this.podcastJobs.set(input.inFlightKey, job);
+
     const allTurns: AudioTurn[] = [];
     let episodeTitle = '';
     let episodeTagline = '';
 
-    for (let segIdx = 0; segIdx < segments.length; segIdx++) {
-      const segText = segments[segIdx];
-      const isFirst = segIdx === 0;
-      const isLast = segIdx === segments.length - 1;
+    try {
+      for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+        const segText = segments[segIdx];
+        const isFirst = segIdx === 0;
+        const isLast = segIdx === segments.length - 1;
 
-      // Dynamically scale target turns based on how much content is in this segment
-      let minTurns = 16;
-      let maxTurns = 22;
-      if (segText.length > 10000) {
-        minTurns = 34;
-        maxTurns = 48;
-      } else if (segText.length > 5000) {
-        minTurns = 26;
-        maxTurns = 36;
-      } else if (segText.length > 2500) {
-        minTurns = 20;
-        maxTurns = 28;
-      }
-      const turnScale = Math.max(1, segText.length / 18000);
-      minTurns = Math.ceil(minTurns * turnScale);
-      maxTurns = Math.ceil(maxTurns * turnScale);
+        job.progressText =
+          segments.length > 1
+            ? `Generating Podcast Script (Part ${segIdx + 1}/${segments.length}${allTurns.length ? ` • ${allTurns.length} turns ready` : ''})...`
+            : 'Generating Podcast Script in Background...';
+        job.updatedAt = new Date().toISOString();
 
-      let flowInstruction = '';
-      if (segments.length === 1) {
-        flowInstruction =
-          `- Turns 1-2: Warm, spontaneous studio intro & a relatable hook about why "${docTitle}" matters.\n` +
-          `- Middle Turns (Turns 3 to ${maxTurns - 3}): Exhaustive, sequential page-by-page / section-by-section walkthrough of EVERY SINGLE concept, definition, law, formula, numerical example, table, and exam trap in the source text. Do NOT skip or compress any subtopic!\n` +
-          `- Final 2-3 Turns: Rapid-fire revision checklist & energetic sign-off.`;
-      } else if (isFirst) {
-        flowInstruction =
-          `This is PART 1 of ${segments.length} of a comprehensive Masterclass Podcast on "${docTitle}".\n` +
-          `- Turns 1-2: Warm, spontaneous studio intro & hook.\n` +
-          `- Remaining Turns: Walk sequentially through EVERY SINGLE topic, definition, formula, example, and exam trick in this Part 1 text without skipping anything.\n` +
-          `- Final Turn of Part 1: Do NOT end or sign off the podcast! End with a natural transition like "अच्छा आरव, यह तो था पहला हिस्सा—अब चलो अगले सेक्शन पर चलते हैं!" so Part 2 continues seamlessly.`;
-      } else if (!isLast) {
-        flowInstruction =
-          `This is PART ${segIdx + 1} of ${segments.length} (Seamless Continuation) of the podcast on "${docTitle}".\n` +
-          `- Do NOT re-introduce the podcast or say "Welcome back". Continue the conversation directly from the previous turn!\n` +
-          `- Walk sequentially through EVERY SINGLE topic, definition, formula, example, and exam trap in this Part ${segIdx + 1} text without skipping any detail.\n` +
-          `- Final Turn of Part ${segIdx + 1}: Do NOT sign off! End with a smooth transition to the next section.`;
-      } else {
-        flowInstruction =
-          `This is the FINAL PART (Part ${segIdx + 1} of ${segments.length}) of the podcast on "${docTitle}".\n` +
-          `- Do NOT re-introduce the podcast. Continue the conversation directly!\n` +
-          `- Walk sequentially through EVERY SINGLE remaining topic, definition, formula, example, and exam trap in this section without skipping anything.\n` +
-          `- Final 2-3 Turns: Wrap up the entire episode with a high-yield rapid-fire revision recap and energetic sign-off.`;
-      }
+        // Dynamically scale target turns based on how much content is in this segment
+        let minTurns = 16;
+        let maxTurns = 22;
+        if (segText.length > 10000) {
+          minTurns = 34;
+          maxTurns = 48;
+        } else if (segText.length > 5000) {
+          minTurns = 26;
+          maxTurns = 36;
+        } else if (segText.length > 2500) {
+          minTurns = 20;
+          maxTurns = 28;
+        }
+        const turnScale = Math.max(1, segText.length / 18000);
+        minTurns = Math.ceil(minTurns * turnScale);
+        maxTurns = Math.ceil(maxTurns * turnScale);
 
-      const result = await gemini.generateJson<{
-        title?: string;
-        tagline?: string;
-        durationEstimate?: string;
-        turns?: Array<{ speaker?: string; text?: string; emotion?: string }>;
-      }>({
-        model: 'gemini-3.8-flash',
-        tier: 'heavy',
-        systemInstruction:
-          'You are the master podcast showrunner for StudyOS Audio Deep Dives, powered by Gemini 3.8 Flash and Gemini 3.8 TTS. ' +
-          'You write scripts for two unforgettable Indian hosts:\n' +
-          '- Aarav (Male Host): Curious, energetic, relatable, thinks out loud like a sharp student, asks the exact "Wait, why does that happen?" questions listeners have in their heads, and occasionally shares how he used to get confused by a concept.\n' +
-          '- Ananya (Female Co-Host): Warm, razor-sharp exam topper and storyteller who breaks down dense PDF material using vivid real-life analogies, reveals hidden exam traps, and gives 10-second mental shortcuts.\n\n' +
-          'CRITICAL MANDATE — 100% COMPLETE COVERAGE (ZERO OMISSION):\n' +
-          '- JITNA BADA CONTENT, UTNA BADA PODCAST: Never summarize a rich PDF into a brief overview! You MUST go through the provided source material sequentially from start to finish.\n' +
-          '- Every single heading, subtopic, definition, rule, mathematical formula, numerical example, comparison table, and exam trick present in the source text MUST be explained clearly and thoroughly by Aarav and Ananya.\n' +
-          '- If the document has 15 concepts, explain all 15 concepts one by one with examples. Never skip middle paragraphs or rush to the end.\n\n' +
-          'RULES FOR 100% HUMAN-LIKE, UNSCRIPTED-FEELING CONVERSATION:\n' +
-          '1. NO ROBOTIC PING-PONG OR LECTURING: Never write stiff Q&A where Aarav asks a textbook question and Ananya recites a paragraph. Instead, make them finish each other\'s thoughts, react with surprise ("अरे बाप रे!", "ओह अच्छा!", "Wait, seriously?"), chuckle ("हाहा, बिल्कुल!"), and build momentum together.\n' +
-          '2. VARIED RHYTHM & PACING: Mix short, punchy 1-sentence reactions/interjections with rich, detailed 3-to-5 sentence explanations so every concept is deeply understood.\n' +
-          '3. PURE SPOKEN AUDIO FORMAT FOR GEMINI 3.8 TTS: Write ONLY what is spoken aloud. NEVER include markdown (*, #, _, `, bullets) or raw math symbols (write "Delta U barabar Q minus W" or "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Use natural punctuation (commas, ellipses "...", em-dashes "—", exclamation marks "!", question marks "?") to guide voice intonation and breathing pauses. Respond with JSON only.\n' +
-          languageDirective,
-        prompt:
-          `Document Title: "${docTitle}" (Section ${segIdx + 1} of ${segments.length})\n\n` +
-          `--- SOURCE TEXT START ---\n${segText}\n--- SOURCE TEXT END ---\n\n` +
-          `Generate a comprehensive, ${minTurns} to ${maxTurns} turn human-like podcast conversation between Aarav (Male) and Ananya (Female) that explains 100% of the information in the source text above without missing a single concept, formula, or example.\n` +
-          `${flowInstruction}\n` +
-          'Ensure Aarav and Ananya alternate turns naturally. Return JSON with title, tagline, durationEstimate, and turns[{speaker, text, emotion}].',
-        schema: {
-          type: 'OBJECT',
-          properties: {
-            title: { type: 'STRING' },
-            tagline: { type: 'STRING' },
-            durationEstimate: { type: 'STRING' },
-            turns: {
-              type: 'ARRAY',
-              items: {
-                type: 'OBJECT',
-                properties: {
-                  speaker: { type: 'STRING' },
-                  text: { type: 'STRING' },
-                  emotion: { type: 'STRING' }
-                },
-                required: ['speaker', 'text']
+        let flowInstruction = '';
+        if (segments.length === 1) {
+          flowInstruction =
+            `- Turns 1-2: Warm, spontaneous studio intro & a relatable hook about why "${docTitle}" matters.\n` +
+            `- Middle Turns (Turns 3 to ${maxTurns - 3}): Exhaustive, sequential page-by-page / section-by-section walkthrough of EVERY SINGLE concept, definition, law, formula, numerical example, table, and exam trap in the source text. Do NOT skip or compress any subtopic!\n` +
+            `- Final 2-3 Turns: Rapid-fire revision checklist & energetic sign-off.`;
+        } else if (isFirst) {
+          flowInstruction =
+            `This is PART 1 of ${segments.length} of a comprehensive Masterclass Podcast on "${docTitle}".\n` +
+            `- Turns 1-2: Warm, spontaneous studio intro & hook.\n` +
+            `- Remaining Turns: Walk sequentially through EVERY SINGLE topic, definition, formula, example, and exam trick in this Part 1 text without skipping anything.\n` +
+            `- Final Turn of Part 1: Do NOT end or sign off the podcast! End with a natural transition like "अच्छा आरव, यह तो था पहला हिस्सा—अब चलो अगले सेक्शन पर चलते हैं!" so Part 2 continues seamlessly.`;
+        } else if (!isLast) {
+          flowInstruction =
+            `This is PART ${segIdx + 1} of ${segments.length} (Seamless Continuation) of the podcast on "${docTitle}".\n` +
+            `- Do NOT re-introduce the podcast or say "Welcome back". Continue the conversation directly from the previous turn!\n` +
+            `- Walk sequentially through EVERY SINGLE topic, definition, formula, example, and exam trap in this Part ${segIdx + 1} text without skipping any detail.\n` +
+            `- Final Turn of Part ${segIdx + 1}: Do NOT sign off! End with a smooth transition to the next section.`;
+        } else {
+          flowInstruction =
+            `This is the FINAL PART (Part ${segIdx + 1} of ${segments.length}) of the podcast on "${docTitle}".\n` +
+            `- Do NOT re-introduce the podcast. Continue the conversation directly!\n` +
+            `- Walk sequentially through EVERY SINGLE remaining topic, definition, formula, example, and exam trap in this section without skipping anything.\n` +
+            `- Final 2-3 Turns: Wrap up the entire episode with a high-yield rapid-fire revision recap and energetic sign-off.`;
+        }
+
+        const result = await gemini.generateJson<{
+          title?: string;
+          tagline?: string;
+          durationEstimate?: string;
+          turns?: Array<{ speaker?: string; text?: string; emotion?: string }>;
+        }>({
+          model: 'gemini-3.8-flash',
+          tier: 'heavy',
+          systemInstruction:
+            'You are the master podcast showrunner for StudyOS Audio Deep Dives, powered by Gemini 3.8 Flash and Gemini 3.8 TTS. ' +
+            'You write scripts for two unforgettable Indian hosts:\n' +
+            '- Aarav (Male Host): Curious, energetic, relatable, thinks out loud like a sharp student, asks the exact "Wait, why does that happen?" questions listeners have in their heads, and occasionally shares how he used to get confused by a concept.\n' +
+            '- Ananya (Female Co-Host): Warm, razor-sharp exam topper and storyteller who breaks down dense PDF material using vivid real-life analogies, reveals hidden exam traps, and gives 10-second mental shortcuts.\n\n' +
+            'CRITICAL MANDATE — 100% COMPLETE COVERAGE (ZERO OMISSION):\n' +
+            '- JITNA BADA CONTENT, UTNA BADA PODCAST: Never summarize a rich PDF into a brief overview! You MUST go through the provided source material sequentially from start to finish.\n' +
+            '- Every single heading, subtopic, definition, rule, mathematical formula, numerical example, comparison table, and exam trick present in the source text MUST be explained clearly and thoroughly by Aarav and Ananya.\n' +
+            '- If the document has 15 concepts, explain all 15 concepts one by one with examples. Never skip middle paragraphs or rush to the end.\n\n' +
+            'RULES FOR 100% HUMAN-LIKE, UNSCRIPTED-FEELING CONVERSATION:\n' +
+            '1. NO ROBOTIC PING-PONG OR LECTURING: Never write stiff Q&A where Aarav asks a textbook question and Ananya recites a paragraph. Instead, make them finish each other\'s thoughts, react with surprise ("अरे बाप रे!", "ओह अच्छा!", "Wait, seriously?"), chuckle ("हाहा, बिल्कुल!"), and build momentum together.\n' +
+            '2. VARIED RHYTHM & PACING: Mix short, punchy 1-sentence reactions/interjections with rich, detailed 3-to-5 sentence explanations so every concept is deeply understood.\n' +
+            '3. PURE SPOKEN AUDIO FORMAT FOR GEMINI 3.8 TTS: Write ONLY what is spoken aloud. NEVER include markdown (*, #, _, `, bullets) or raw math symbols (write "Delta U barabar Q minus W" or "Delta U equals Q minus W" instead of "\\Delta U = Q - W"). Use natural punctuation (commas, ellipses "...", em-dashes "—", exclamation marks "!", question marks "?") to guide voice intonation and breathing pauses. Respond with JSON only.\n' +
+            languageDirective,
+          prompt:
+            `Document Title: "${docTitle}" (Section ${segIdx + 1} of ${segments.length})\n\n` +
+            `--- SOURCE TEXT START ---\n${segText}\n--- SOURCE TEXT END ---\n\n` +
+            `Generate a comprehensive, ${minTurns} to ${maxTurns} turn human-like podcast conversation between Aarav (Male) and Ananya (Female) that explains 100% of the information in the source text above without missing a single concept, formula, or example.\n` +
+            `${flowInstruction}\n` +
+            'Ensure Aarav and Ananya alternate turns naturally. Return JSON with title, tagline, durationEstimate, and turns[{speaker, text, emotion}].',
+          schema: {
+            type: 'OBJECT',
+            properties: {
+              title: { type: 'STRING' },
+              tagline: { type: 'STRING' },
+              durationEstimate: { type: 'STRING' },
+              turns: {
+                type: 'ARRAY',
+                items: {
+                  type: 'OBJECT',
+                  properties: {
+                    speaker: { type: 'STRING' },
+                    text: { type: 'STRING' },
+                    emotion: { type: 'STRING' }
+                  },
+                  required: ['speaker', 'text']
+                }
               }
-            }
+            },
+            required: ['title', 'tagline', 'durationEstimate', 'turns']
           },
-          required: ['title', 'tagline', 'durationEstimate', 'turns']
-        },
-        temperature: 0.8,
-        maxOutputTokens: 65536
-      });
+          temperature: 0.8,
+          maxOutputTokens: 65536
+        });
 
-      if (result && Array.isArray(result.turns) && result.turns.length > 0) {
-        if (!episodeTitle && result.title) {
-          episodeTitle = this.cleanString(result.title, 200) || '';
+        if (result && Array.isArray(result.turns) && result.turns.length > 0) {
+          if (!episodeTitle && result.title) {
+            episodeTitle = this.cleanString(result.title, 200) || '';
+          }
+          if (!episodeTagline && result.tagline) {
+            episodeTagline = this.cleanString(result.tagline, 250) || '';
+          }
+
+          const segTurns: AudioTurn[] = result.turns
+            .map(t => {
+              const speakerRaw = (t?.speaker || '').toLowerCase();
+              const speaker: 'Aarav' | 'Ananya' =
+                speakerRaw.includes('ananya') || speakerRaw.includes('sam') || speakerRaw.includes('female')
+                  ? 'Ananya'
+                  : 'Aarav';
+              return {
+                speaker,
+                text: this.cleanString(t?.text, 3500) || '',
+                emotion: this.cleanString(t?.emotion, 50) || 'conversational'
+              };
+            })
+            .filter(t => t.text.length > 0);
+
+          allTurns.push(...segTurns);
+          job.segmentsCompleted = segIdx + 1;
+          job.turnsGenerated = allTurns.length;
+          job.updatedAt = new Date().toISOString();
         }
-        if (!episodeTagline && result.tagline) {
-          episodeTagline = this.cleanString(result.tagline, 250) || '';
-        }
-
-        const segTurns: AudioTurn[] = result.turns
-          .map(t => {
-            const speakerRaw = (t?.speaker || '').toLowerCase();
-            const speaker: 'Aarav' | 'Ananya' =
-              speakerRaw.includes('ananya') || speakerRaw.includes('sam') || speakerRaw.includes('female')
-                ? 'Ananya'
-                : 'Aarav';
-            return {
-              speaker,
-              text: this.cleanString(t?.text, 3500) || '',
-              emotion: this.cleanString(t?.emotion, 50) || 'conversational'
-            };
-          })
-          .filter(t => t.text.length > 0);
-
-        allTurns.push(...segTurns);
       }
-    }
 
-    if (allTurns.length >= 4) {
-      const wordCount = allTurns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
-      const durationMinutes = Math.max(1, Math.round(wordCount / 135));
-      const saved = storage.savePodcast({
-        userId: input.userId,
-        docTitle,
-        title: episodeTitle || `${docTitle}: Complete Deep Dive`,
-        tagline:
-          episodeTagline ||
-          `Aarav & Ananya explain every concept, formula, and exam trick from ${docTitle} in complete detail.`,
-        durationEstimate: `~${durationMinutes} min listen (${allTurns.length} turns)`,
-        language,
-        turns: allTurns,
-        source: 'gemini',
-        sourceHash: input.sourceHash
-      });
-      return {
-        ...saved,
-        source: 'gemini'
-      };
-    }
+      if (allTurns.length >= 4) {
+        const wordCount = allTurns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
+        const durationMinutes = Math.max(1, Math.round(wordCount / 135));
+        const saved = storage.savePodcast({
+          userId: input.userId,
+          docTitle,
+          title: episodeTitle || `${docTitle}: Complete Deep Dive`,
+          tagline:
+            episodeTagline ||
+            `Aarav & Ananya explain every concept, formula, and exam trick from ${docTitle} in complete detail.`,
+          durationEstimate: `~${durationMinutes} min listen (${allTurns.length} turns)`,
+          language,
+          turns: allTurns,
+          source: 'gemini',
+          sourceHash: input.sourceHash
+        });
 
-    return this.fallbackAudioOverview(docTitle, language, sourceText, input.userId);
+        const enrichedPodcast: NotebookAudioOverview = {
+          ...saved,
+          source: 'gemini'
+        };
+
+        job.podcastId = saved.id;
+        job.podcast = enrichedPodcast;
+        job.status = 'synthesizing_audio';
+        job.progressText = 'Pre-synthesizing Gemini Flash TTS Studio Audio...';
+        job.updatedAt = new Date().toISOString();
+
+        // Pre-warm the first 4-turn batch in the background on the server so audio plays in 0ms when ready
+        void neuralTts
+          .synthesizeFullEpisode(
+            allTurns.slice(0, 4),
+            language,
+            input.voiceStyle || 'gemini38',
+            input.ttsModel || 'gemini-3.8-flash-tts'
+          )
+          .catch(err => {
+            console.warn('[podcast-bg] first batch pre-warm notice:', err?.message || err);
+          })
+          .finally(() => {
+            const currentJob = this.podcastJobs.get(input.inFlightKey);
+            if (currentJob) {
+              currentJob.status = 'completed';
+              currentJob.progressText = 'Podcast & Studio Audio Ready!';
+              currentJob.updatedAt = new Date().toISOString();
+            }
+          });
+
+        return enrichedPodcast;
+      }
+
+      const fallbackRes = this.fallbackAudioOverview(docTitle, language, sourceText, input.userId);
+      job.podcastId = fallbackRes.id;
+      job.podcast = fallbackRes;
+      job.status = 'completed';
+      job.progressText = 'Podcast Ready!';
+      job.updatedAt = new Date().toISOString();
+      return fallbackRes;
+    } catch (err: any) {
+      job.status = 'failed';
+      job.error = err?.message || 'Generation failed';
+      job.progressText = 'Generation encountered an error';
+      job.updatedAt = new Date().toISOString();
+      throw err;
+    }
   }
 
   public async askSourceQuestion(input: {

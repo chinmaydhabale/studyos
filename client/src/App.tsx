@@ -195,20 +195,18 @@ const MainLayout: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 6: Personal AI Study Coach & Teacher */}
-        {activeTab === 'ai-coach' && (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <AICoachHub
-              initialPrompt={aiCoachPresetPrompt}
-              initialSource={aiCoachPresetSource}
-              onClearInitialPrompt={() => {
-                setAiCoachPresetPrompt('');
-                setAiCoachPresetSource(null);
-              }}
-              onNavigateToCalendar={() => setActiveTab('calendar')}
-            />
-          </div>
-        )}
+        {/* Tab 6: Personal AI Study Coach & Teacher (kept mounted so background podcast generation & audio playback survive tab switches) */}
+        <div className={activeTab === 'ai-coach' ? 'flex-1 min-h-0 overflow-y-auto' : 'hidden'}>
+          <AICoachHub
+            initialPrompt={aiCoachPresetPrompt}
+            initialSource={aiCoachPresetSource}
+            onClearInitialPrompt={() => {
+              setAiCoachPresetPrompt('');
+              setAiCoachPresetSource(null);
+            }}
+            onNavigateToCalendar={() => setActiveTab('calendar')}
+          />
+        </div>
 
         {/* Tab 7: Productivity Analytics */}
         {activeTab === 'analytics' && (
