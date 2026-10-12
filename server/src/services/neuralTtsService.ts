@@ -84,6 +84,8 @@ export class NeuralTtsService {
   private modelCooldownUntil = new Map<string, number>();
   private geminiSerializationPromise: Promise<any> = Promise.resolve();
   private lastGeminiRequestFinishedAt = 0;
+  private batchInFlight = new Map<string, Promise<TTSResult>>();
+  private singleInFlight = new Map<string, Promise<TTSResult>>();
 
   constructor() {
     this.pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
@@ -913,7 +915,8 @@ export class NeuralTtsService {
 
     const speaker = this.normalizeSpeaker(req.speaker);
     const language = req.language || 'hinglish';
-    const requestedVoice = req.voice || 'gemini-3.8';
+    const rawVoice = req.voice || 'gemini38';
+    const requestedVoice = rawVoice === 'gemini-3.8' ? 'gemini38' : rawVoice;
     const preferredModel = req.ttsModel || 'gemini-3.8-flash-tts';
 
     const hash = crypto
@@ -948,61 +951,77 @@ export class NeuralTtsService {
       } catch {}
     }
 
-    // 1. Priority #1: Gemini TTS (unless an explicit Edge Neural voice/model was requested)
-    if (!preferEdgeVoice) {
-      const geminiRes = await this.synthesizeGeminiTts(
-        cleanedText,
-        speaker,
-        language,
-        requestedVoice,
-        preferredModel
-      );
-      if (geminiRes && geminiRes.buffer.length > 0) {
-        const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
-        fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
-        return geminiRes;
-      }
+    const existingSingle = this.singleInFlight.get(hash);
+    if (existingSingle) {
+      return existingSingle;
     }
 
-    // Resolve Indian Edge fallback voice for Aarav (Male) & Ananya (Female)
-    let edgeVoice = requestedVoice.endsWith('Neural') ? requestedVoice : '';
-    if (!edgeVoice) {
-      if (language === 'english') {
-        edgeVoice = speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural';
-      } else {
-        // Both Hindi and Hinglish sound most natural with Indian MadhurNeural & SwaraNeural
-        edgeVoice = speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
-      }
-    }
-
-    // 2. Priority #2: Indian Edge-TTS Neural Voice
-    try {
-      const edgeBuf = await this.synthesizeEdgeTts(cleanedText, edgeVoice, req.rate, req.pitch);
-      if (edgeBuf && edgeBuf.length > 0) {
-        if (preferEdgeVoice) {
-          fs.promises.writeFile(mp3CacheFile, edgeBuf).catch(() => {});
+    const task = (async (): Promise<TTSResult> => {
+      // 1. Priority #1: Gemini TTS (unless an explicit Edge Neural voice/model was requested)
+      if (!preferEdgeVoice) {
+        const geminiRes = await this.synthesizeGeminiTts(
+          cleanedText,
+          speaker,
+          language,
+          requestedVoice,
+          preferredModel
+        );
+        if (geminiRes && geminiRes.buffer.length > 0) {
+          const targetCache = geminiRes.mimeType === 'audio/wav' ? wavCacheFile : mp3CacheFile;
+          await fs.promises.writeFile(targetCache, geminiRes.buffer).catch(() => {});
+          return geminiRes;
         }
-        return { buffer: edgeBuf, mimeType: 'audio/mpeg', engine: `edge-tts:${edgeVoice}` };
       }
-    } catch (e: any) {
-      console.warn(`[tts] edge-tts fallback notice:`, e?.message || e);
-    }
 
-    // 3. Priority #3: Google Cloud Neural2 TTS
+      // Resolve Indian Edge fallback voice for Aarav (Male) & Ananya (Female)
+      let edgeVoice = requestedVoice.endsWith('Neural') ? requestedVoice : '';
+      if (!edgeVoice) {
+        if (language === 'english') {
+          edgeVoice = speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural';
+        } else {
+          // Both Hindi and Hinglish sound most natural with Indian MadhurNeural & SwaraNeural
+          edgeVoice = speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural';
+        }
+      }
+
+      // 2. Priority #2: Indian Edge-TTS Neural Voice
+      try {
+        const edgeBuf = await this.synthesizeEdgeTts(cleanedText, edgeVoice, req.rate, req.pitch);
+        if (edgeBuf && edgeBuf.length > 0) {
+          if (preferEdgeVoice) {
+            await fs.promises.writeFile(mp3CacheFile, edgeBuf).catch(() => {});
+          }
+          return { buffer: edgeBuf, mimeType: 'audio/mpeg', engine: `edge-tts:${edgeVoice}` };
+        }
+      } catch (e: any) {
+        console.warn(`[tts] edge-tts fallback notice:`, e?.message || e);
+      }
+
+      // 3. Priority #3: Google Cloud Neural2 TTS
+      try {
+        const cloudBuf = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
+        if (cloudBuf && cloudBuf.length > 0) {
+          return { buffer: cloudBuf, mimeType: 'audio/mpeg', engine: 'google-cloud-neural2' };
+        }
+      } catch {}
+
+      // 4. Priority #4: Google translate_tts fallback
+      const googleBuf = await this.synthesizeGoogle(cleanedText, speaker, language);
+      if (googleBuf && googleBuf.length > 0) {
+        return { buffer: googleBuf, mimeType: 'audio/mpeg', engine: 'google-translate-tts' };
+      }
+
+      throw new Error('All TTS synthesis methods failed');
+    })();
+
+    this.singleInFlight.set(hash, task);
     try {
-      const cloudBuf = await this.synthesizeGoogleCloud(cleanedText, speaker, language);
-      if (cloudBuf && cloudBuf.length > 0) {
-        return { buffer: cloudBuf, mimeType: 'audio/mpeg', engine: 'google-cloud-neural2' };
+      return await task;
+    } finally {
+      if (this.singleInFlight.get(hash) === task) {
+        this.singleInFlight.delete(hash);
       }
-    } catch {}
-
-    // 4. Priority #4: Google translate_tts fallback
-    const googleBuf = await this.synthesizeGoogle(cleanedText, speaker, language);
-    if (googleBuf && googleBuf.length > 0) {
-      return { buffer: googleBuf, mimeType: 'audio/mpeg', engine: 'google-translate-tts' };
     }
-
-    throw new Error('All TTS synthesis methods failed');
   }
 
   /**
@@ -1015,7 +1034,7 @@ export class NeuralTtsService {
 
   /**
    * Synthesizes a batch of dialogue turns (up to 5 turns) in a single multi-speaker Gemini TTS call
-   * with disk caching, falling back to turn-by-turn Indian Edge Neural synthesis (0 Gemini quota!) if needed.
+   * with disk caching and in-flight deduplication, falling back to turn-by-turn Indian Edge Neural synthesis (0 Gemini quota!) if needed.
    */
   private async synthesizeMultiSpeakerBatch(
     batchTurns: Array<{ speaker?: string; text: string }>,
@@ -1034,7 +1053,8 @@ export class NeuralTtsService {
       throw new Error('Empty batch turns');
     }
 
-    const effectiveStyle = voiceStyle || 'gemini-3.8';
+    const rawStyle = voiceStyle || 'gemini38';
+    const effectiveStyle = rawStyle === 'gemini-3.8' ? 'gemini38' : rawStyle;
     const effectiveModel = preferredModel || 'gemini-3.8-flash-tts';
     const serialized = normalizedBatch.map(t => `${t.speaker}:${t.text}`).join('||');
     const batchHash = crypto
@@ -1058,59 +1078,76 @@ export class NeuralTtsService {
       } catch {}
     }
 
-    if (!preferEdgeVoice) {
-      const multiRes = await this.synthesizeMultiSpeakerGeminiTts(
-        normalizedBatch,
-        language,
-        effectiveStyle,
-        effectiveModel
-      );
-      if (multiRes && multiRes.buffer.length > 0) {
-        if (multiRes.mimeType === 'audio/wav') {
-          fs.promises.writeFile(wavBatchCacheFile, multiRes.buffer).catch(() => {});
+    // Deduplicate concurrent requests for the exact same batch (e.g., server pre-warm + client auto-play or reload)
+    const existingInFlight = this.batchInFlight.get(batchHash);
+    if (existingInFlight) {
+      return existingInFlight;
+    }
+
+    const batchTask = (async (): Promise<TTSResult> => {
+      if (!preferEdgeVoice) {
+        const multiRes = await this.synthesizeMultiSpeakerGeminiTts(
+          normalizedBatch,
+          language,
+          effectiveStyle,
+          effectiveModel
+        );
+        if (multiRes && multiRes.buffer.length > 0) {
+          if (multiRes.mimeType === 'audio/wav') {
+            await fs.promises.writeFile(wavBatchCacheFile, multiRes.buffer).catch(() => {});
+          }
+          return multiRes;
         }
-        return multiRes;
       }
-    }
 
-    // Fallback: synthesize turns using FREE Unlimited Indian Edge Neural voices ONLY!
-    // CRITICAL: Never call Gemini TTS turn-by-turn here, as that would consume 10x–50x quota!
-    const buffers: Buffer[] = [];
-    let allWav = true;
+      // Fallback: synthesize turns using FREE Unlimited Indian Edge Neural voices ONLY!
+      // CRITICAL: Never call Gemini TTS turn-by-turn here, as that would consume 10x–50x quota!
+      const buffers: Buffer[] = [];
+      let allWav = true;
 
-    for (const turn of normalizedBatch) {
-      const indianFallbackVoice =
-        language === 'english'
-          ? (turn.speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural')
-          : (turn.speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural');
+      for (const turn of normalizedBatch) {
+        const indianFallbackVoice =
+          language === 'english'
+            ? (turn.speaker === 'Ananya' ? 'en-IN-NeerjaNeural' : 'en-IN-PrabhatNeural')
+            : (turn.speaker === 'Ananya' ? 'hi-IN-SwaraNeural' : 'hi-IN-MadhurNeural');
 
-      const res = await this.synthesizeWithMeta({
-        text: turn.text,
-        speaker: turn.speaker,
-        language,
-        ttsModel: 'edge-indian',
-        voice: indianFallbackVoice
-      });
-      if (res.mimeType !== 'audio/wav') {
-        allWav = false;
+        const res = await this.synthesizeWithMeta({
+          text: turn.text,
+          speaker: turn.speaker,
+          language,
+          ttsModel: 'edge-indian',
+          voice: indianFallbackVoice
+        });
+        if (res.mimeType !== 'audio/wav') {
+          allWav = false;
+        }
+        buffers.push(res.buffer);
       }
-      buffers.push(res.buffer);
-    }
 
-    if (allWav) {
-      const mergedWav = this.mergeWavBuffers(buffers, 280);
+      if (allWav) {
+        const mergedWav = this.mergeWavBuffers(buffers, 280);
+        return {
+          buffer: mergedWav,
+          mimeType: 'audio/wav',
+          engine: 'edge-batch-merger'
+        };
+      }
+
       return {
-        buffer: mergedWav,
-        mimeType: 'audio/wav',
-        engine: 'edge-batch-merger'
+        buffer: Buffer.concat(buffers),
+        mimeType: 'audio/mpeg',
+        engine: 'edge-mp3-batch-merger'
       };
-    }
+    })();
 
-    return {
-      buffer: Buffer.concat(buffers),
-      mimeType: 'audio/mpeg',
-      engine: 'edge-mp3-batch-merger'
-    };
+    this.batchInFlight.set(batchHash, batchTask);
+    try {
+      return await batchTask;
+    } finally {
+      if (this.batchInFlight.get(batchHash) === batchTask) {
+        this.batchInFlight.delete(batchHash);
+      }
+    }
   }
 
   /**

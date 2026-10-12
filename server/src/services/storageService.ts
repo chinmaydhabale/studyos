@@ -1639,14 +1639,20 @@ export class StorageService {
     podcast: Omit<SavedPodcastRecord, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
   ): SavedPodcastRecord {
     const id = podcast.id || `pod-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const existingIdx = this.savedPodcasts.findIndex(p =>
-      p.userId === podcast.userId &&
-      (p.id === id || (p.docTitle === podcast.docTitle && p.language === podcast.language && p.title === podcast.title))
+    const existingIdx = this.savedPodcasts.findIndex(
+      p =>
+        p.id === id ||
+        (Boolean(podcast.sourceHash) && p.sourceHash === podcast.sourceHash) ||
+        ((!p.userId || !podcast.userId || p.userId === podcast.userId) &&
+          p.docTitle === podcast.docTitle &&
+          p.language === podcast.language &&
+          p.title === podcast.title)
     );
 
     const record: SavedPodcastRecord = {
       ...podcast,
       id: existingIdx >= 0 ? this.savedPodcasts[existingIdx].id : id,
+      userId: podcast.userId || (existingIdx >= 0 ? this.savedPodcasts[existingIdx].userId : undefined),
       telegramFileId: podcast.telegramFileId || (existingIdx >= 0 ? this.savedPodcasts[existingIdx].telegramFileId : undefined),
       telegramMessageId: podcast.telegramMessageId || (existingIdx >= 0 ? this.savedPodcasts[existingIdx].telegramMessageId : undefined),
       createdAt: podcast.createdAt || new Date().toISOString()

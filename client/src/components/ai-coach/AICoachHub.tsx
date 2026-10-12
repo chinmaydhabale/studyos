@@ -173,6 +173,7 @@ const PODCAST_ACTIVE_STORAGE_KEY = 'studyos_active_podcast_v1';
 const PODCAST_LIBRARY_STORAGE_KEY = 'studyos_saved_podcasts_v1';
 const STUDYOS_ACTIVE_CONTEXT_STORAGE_KEY = 'studyos_active_context_v1';
 const PODCAST_PENDING_JOB_STORAGE_KEY = 'studyos_pending_podcast_job_v1';
+const PODCAST_TURN_PROGRESS_STORAGE_KEY = 'studyos_podcast_turn_progress_v1';
 
 interface PendingPodcastJob {
   docTitle: string;
@@ -182,6 +183,7 @@ interface PendingPodcastJob {
   sourceText: string;
   userId?: string;
   autoPlay?: boolean;
+  forceRegenerate?: boolean;
   startedAt: number;
 }
 
@@ -433,7 +435,22 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const [hostVoiceStyle, setHostVoiceStyle] = useState<HostVoiceStyle>('gemini38');
   const [ttsModel, setTtsModel] = useState<TtsModelId>('gemini-3.8-flash-tts');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [currentTurnIndex, setCurrentTurnIndex] = useState<number>(() => {
+    try {
+      const rawPod = localStorage.getItem(PODCAST_ACTIVE_STORAGE_KEY);
+      const rawProg = localStorage.getItem(PODCAST_TURN_PROGRESS_STORAGE_KEY);
+      if (rawPod && rawProg) {
+        const pod = JSON.parse(rawPod);
+        const progMap = JSON.parse(rawProg);
+        const key = pod?.id || `${pod?.docTitle}|${pod?.language || 'hinglish'}`;
+        const savedTurn = progMap?.[key];
+        if (typeof savedTurn === 'number' && savedTurn >= 0 && Array.isArray(pod?.turns) && savedTurn < pod.turns.length) {
+          return savedTurn;
+        }
+      }
+    } catch {}
+    return 0;
+  });
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [audioBuffering, setAudioBuffering] = useState(false);
   const [isTelegramSaving, setIsTelegramSaving] = useState(false);
@@ -472,7 +489,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     }
   };
 
-  // Sync active podcast to localStorage so page reload never loses it
+  // Sync active podcast and current playback turn to localStorage so page reload or closing laptop never resets progress
   useEffect(() => {
     try {
       if (audioDiscussion && Array.isArray(audioDiscussion.turns) && audioDiscussion.turns.length > 0) {
@@ -482,6 +499,18 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       }
     } catch {}
   }, [audioDiscussion]);
+
+  useEffect(() => {
+    try {
+      if (audioDiscussion && Array.isArray(audioDiscussion.turns) && audioDiscussion.turns.length > 0) {
+        const key = audioDiscussion.id || `${audioDiscussion.docTitle}|${audioDiscussion.language || 'hinglish'}`;
+        const rawProg = localStorage.getItem(PODCAST_TURN_PROGRESS_STORAGE_KEY);
+        const progMap = rawProg ? JSON.parse(rawProg) : {};
+        progMap[key] = currentTurnIndex;
+        localStorage.setItem(PODCAST_TURN_PROGRESS_STORAGE_KEY, JSON.stringify(progMap));
+      }
+    } catch {}
+  }, [currentTurnIndex, audioDiscussion?.id, audioDiscussion?.docTitle, audioDiscussion?.language]);
 
   useEffect(() => {
     if (audioDiscussion?.docTitle && audioDiscussion.docTitle !== activeTopic) {
@@ -749,11 +778,31 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
   const generateAudioDiscussion = async (
     requestedLanguage: AudioLanguage = audioLang,
     autoPlay = false,
-    resumeJob?: PendingPodcastJob
+    resumeJob?: PendingPodcastJob,
+    forceRegenerate = false
   ) => {
     if (!resumeJob && sourceMaterialTopic !== activeTopic) {
       addToast('Study Material Needed', 'Load the source notes for this episode before generating another language.', 'warning');
       return;
+    }
+
+    // If not explicitly regenerating, check if a valid Gemini podcast already exists locally for this topic & language (0 API requests!)
+    if (!resumeJob && !forceRegenerate) {
+      const existingLocal = savedPodcasts.find(
+        p =>
+          p.docTitle?.trim().toLowerCase() === activeTopic.trim().toLowerCase() &&
+          (p.language || 'hinglish') === requestedLanguage &&
+          p.source !== 'fallback' &&
+          Array.isArray(p.turns) &&
+          p.turns.length >= 4
+      );
+      if (existingLocal) {
+        setAudioDiscussion(existingLocal);
+        if (autoPlay) {
+          autoPlayAfterGenerateRef.current = true;
+        }
+        return;
+      }
     }
 
     podcastGenerationIdRef.current += 1;
@@ -771,6 +820,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       sourceText: sourceMaterial.slice(0, 120000),
       userId: currentUser?.id,
       autoPlay,
+      forceRegenerate,
       startedAt: Date.now()
     };
 
@@ -795,7 +845,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           language: jobPayload.language,
           userId: jobPayload.userId || currentUser?.id,
           voiceStyle: jobPayload.voiceStyle,
-          ttsModel: jobPayload.ttsModel
+          ttsModel: jobPayload.ttsModel,
+          forceRegenerate: Boolean(jobPayload.forceRegenerate)
         })
       });
       if (!res.ok) throw new Error('Audio generation failed');
@@ -832,18 +883,18 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       if (controller.signal.aborted || requestId !== podcastGenerationIdRef.current) return;
       console.warn('Podcast generation request interrupted — continuing in background sync mode:', err);
       // Do NOT clear PODCAST_PENDING_JOB_STORAGE_KEY! The server continues generating in the background
-      // (or we will auto-resume as soon as internet reconnects).
+      // (or we will auto-resume from the exact saved segment checkpoint as soon as internet reconnects).
       setHasPendingBackgroundJob(true);
       setLoadingAction('Background Mode: Creating Podcast on Server (Auto-syncing)...');
       addToast(
         'Background Mode Active 🔄',
-        'Internet disconnected or page switched — your podcast is being created in the background and will appear automatically when ready!',
+        'Internet disconnected or page switched — your podcast is being created on the server (0 extra API calls) and will appear automatically when ready!',
         'info'
       );
     }
   };
 
-  // Persistent Background Sync & Auto-Recovery (survives internet drops, page reloads, tab closes & tab switches)
+  // Persistent Background Sync & Auto-Recovery (survives laptop sleep/close, internet drops, page reloads & tab switches without restarting from Phase 0)
   useEffect(() => {
     let cancelled = false;
 
@@ -882,22 +933,42 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           });
 
           setAudioDiscussion(prev => {
-            if (prev && Array.isArray(prev.turns) && prev.turns.length > 0) return prev;
-            const matching = serverList.find(p => p.docTitle === activeTopic);
+            if (prev && Array.isArray(prev.turns) && prev.turns.length > 0) {
+              // If the server has an updated version of the same podcast (e.g. more segments completed), upgrade it in place!
+              const updatedOnServer = serverList.find(
+                p =>
+                  (p.id && p.id === prev.id) ||
+                  (p.docTitle?.trim().toLowerCase() === prev.docTitle?.trim().toLowerCase() &&
+                    (p.language || 'hinglish') === (prev.language || 'hinglish') &&
+                    Array.isArray(p.turns) &&
+                    p.turns.length > prev.turns.length)
+              );
+              return updatedOnServer || prev;
+            }
+            const matching = serverList.find(
+              p => p.docTitle?.trim().toLowerCase() === activeTopic.trim().toLowerCase()
+            );
             return matching || serverList[0];
           });
         }
 
         // Check if there is an active in-progress job on the server
+        const normalizedPendingTitle = pendingJob?.docTitle?.trim().toLowerCase();
         const runningJob = activeJobs.find(
           j =>
             (j.status === 'generating_script' || j.status === 'synthesizing_audio') &&
-            (!pendingJob || (j.docTitle === pendingJob.docTitle && j.language === pendingJob.language))
+            (!pendingJob ||
+              (j.docTitle?.trim().toLowerCase() === normalizedPendingTitle && j.language === pendingJob.language))
         );
 
         if (runningJob) {
           setHasPendingBackgroundJob(true);
           setLoadingAction(runningJob.progressText || 'Generating Podcast in Background...');
+          // If the running job has already completed Segment 1 (progressive checkpoint), surface it immediately!
+          if (runningJob.podcast && Array.isArray(runningJob.podcast.turns) && runningJob.podcast.turns.length >= 4) {
+            setAudioDiscussion(runningJob.podcast);
+            upsertPodcastToLibrary(runningJob.podcast);
+          }
           return;
         }
 
@@ -907,16 +978,15 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             j =>
               j.status === 'completed' &&
               j.podcast &&
-              j.docTitle === pendingJob!.docTitle &&
+              j.docTitle?.trim().toLowerCase() === normalizedPendingTitle &&
               j.language === pendingJob!.language
           )?.podcast;
 
           const libraryMatch = serverList.find(p => {
-            if (p.docTitle !== pendingJob!.docTitle) return false;
+            if (p.docTitle?.trim().toLowerCase() !== normalizedPendingTitle) return false;
             if ((p.language || 'hinglish') !== pendingJob!.language) return false;
-            if (!p.createdAt) return true;
-            const createdTime = new Date(p.createdAt).getTime();
-            return Number.isNaN(createdTime) || createdTime >= pendingJob!.startedAt - 60000;
+            if (!Array.isArray(p.turns) || p.turns.length < 4) return false;
+            return p.source !== 'fallback';
           });
 
           const finishedPodcast = completedJobMatch || libraryMatch;
@@ -934,14 +1004,14 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                 prev.includes('Audio') ||
                 prev.includes('Background') ||
                 prev.includes('Synthesizing') ||
-                prev.includes('Writing'))
+                prev.includes('Writing') ||
+                prev.includes('Resumed'))
                 ? null
                 : prev
             );
 
             setAudioDiscussion(finishedPodcast);
             upsertPodcastToLibrary(finishedPodcast);
-            setCurrentTurnIndex(0);
             if (pendingJob.autoPlay) {
               autoPlayAfterGenerateRef.current = true;
             }
@@ -954,16 +1024,22 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           }
 
           // If no running job and no finished podcast on the server, and our client POST is not currently in flight:
-          // This happens if internet dropped BEFORE the initial POST reached the server, or right as the user reloaded.
+          // Wait at least 8 seconds after startedAt before re-sending so a quick page reload never races with the server.
+          // Even when called, the server reuses any completed segment checkpoints from disk (0 wasted API requests!).
           const ageMs = Date.now() - (pendingJob.startedAt || 0);
-          if (ageMs > 30 * 60 * 1000) {
+          if (ageMs > 6 * 60 * 60 * 1000) {
             try {
               localStorage.removeItem(PODCAST_PENDING_JOB_STORAGE_KEY);
             } catch {}
             setHasPendingBackgroundJob(false);
             setLoadingAction(null);
-          } else if (!isClientPostInFlightRef.current && pendingJob.sourceText) {
-            void generateAudioDiscussion(pendingJob.language, Boolean(pendingJob.autoPlay), pendingJob);
+          } else if (!isClientPostInFlightRef.current && pendingJob.sourceText && ageMs >= 8000) {
+            void generateAudioDiscussion(
+              pendingJob.language,
+              Boolean(pendingJob.autoPlay),
+              { ...pendingJob, forceRegenerate: false },
+              false
+            );
           }
         } else {
           setHasPendingBackgroundJob(false);
@@ -973,7 +1049,8 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
               prev.includes('Audio Discussion') ||
               prev.includes('Background') ||
               prev.includes('Synthesizing') ||
-              prev.includes('Writing'))
+              prev.includes('Writing') ||
+              prev.includes('Resumed'))
               ? null
               : prev
           );
@@ -2195,7 +2272,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                   )}
 
                   <button
-                    onClick={() => void generateAudioDiscussion()}
+                    onClick={() => void generateAudioDiscussion(audioLang, false, undefined, true)}
                     disabled={Boolean(loadingAction)}
                     className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
                     title="Regenerate Discussion"

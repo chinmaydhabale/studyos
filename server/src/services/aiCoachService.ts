@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { storage, localDateKey } from './storageService.js';
 import { gemini, DEFAULT_GEMINI_MODEL } from './geminiService.js';
 import { neuralTts } from './neuralTtsService.js';
@@ -158,6 +160,13 @@ const EXAM_COACH_PERSONA =
   '   - Use Markdown bold (**text**), bullet lists, and tables with pipe (|) borders for tabular comparisons.\n' +
   '   - Never leave formulas unformatted.';
 
+const PODCAST_CHECKPOINT_DIR = path.join(process.cwd(), 'data', 'podcast_checkpoints');
+if (!fs.existsSync(PODCAST_CHECKPOINT_DIR)) {
+  try {
+    fs.mkdirSync(PODCAST_CHECKPOINT_DIR, { recursive: true });
+  } catch {}
+}
+
 export interface PodcastBackgroundJob {
   jobId: string;
   userId?: string;
@@ -187,8 +196,8 @@ export class AICoachService {
     for (const [key, job] of this.podcastJobs.entries()) {
       const updatedMs = new Date(job.updatedAt).getTime() || now;
       const isFinished = job.status === 'completed' || job.status === 'failed';
-      // Keep finished jobs visible for 5 minutes so reconnecting/reloading clients can observe completion
-      if (isFinished && now - updatedMs > 5 * 60 * 1000) {
+      // Keep finished jobs visible for 6 hours so laptops closed for hours can observe completion
+      if (isFinished && now - updatedMs > 6 * 60 * 60 * 1000) {
         this.podcastJobs.delete(key);
         continue;
       }
@@ -1785,6 +1794,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     userId?: string;
     voiceStyle?: string;
     ttsModel?: string;
+    forceRegenerate?: boolean;
   }): Promise<NotebookAudioOverview> {
     const docTitle = this.cleanString(input.docTitle, 200) || 'Study Deep Dive';
     const sourceText = (input.sourceText || '').trim().slice(0, MAX_NOTEBOOK_SOURCE_CHARS);
@@ -1796,24 +1806,45 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       return this.fallbackAudioOverview(docTitle, language, sourceText);
     }
 
+    const normalizedTitle = docTitle.trim().toLowerCase();
+    // Do NOT include userId in sourceHash or inFlightKey so page reloads before/after auth hydration
+    // never start a duplicate generation from Phase 0 or waste Gemini API quota!
     const sourceHash = createHash('sha256')
-      .update(`${PODCAST_SCRIPT_CACHE_VERSION}\0${PODCAST_SCRIPT_SEGMENT_CHARS}\0${input.userId || 'anonymous'}\0${docTitle}\0${language}\0${sourceText}`)
+      .update(`${PODCAST_SCRIPT_CACHE_VERSION}\0${PODCAST_SCRIPT_SEGMENT_CHARS}\0${normalizedTitle}\0${language}\0${sourceText}`)
       .digest('hex');
-    const cachedPodcast = storage.getSavedPodcasts(input.userId).find(podcast =>
-      podcast.source === 'gemini' &&
-      podcast.sourceHash === sourceHash &&
-      podcast.docTitle === docTitle &&
-      podcast.language === language &&
-      Array.isArray(podcast.turns) &&
-      podcast.turns.length >= 4
-    );
-    if (cachedPodcast) {
-      return { ...cachedPodcast, source: 'gemini' };
+
+    const inFlightKey = sourceHash;
+    // 1. Check in-flight generation FIRST! If a job for this document/language is already running
+    // (e.g. user reloaded page or closed/reopened laptop), attach to the running promise (0 extra API calls).
+    const inFlight = this.podcastGenerationInFlight.get(inFlightKey);
+    if (inFlight) {
+      console.log(`[podcast-bg] Reusing in-flight podcast generation for "${docTitle}" (${language}) — 0 extra API calls`);
+      return inFlight;
     }
 
-    const inFlightKey = `${input.userId || 'anonymous'}:${sourceHash}`;
-    const inFlight = this.podcastGenerationInFlight.get(inFlightKey);
-    if (inFlight) return inFlight;
+    // 2. Check saved podcasts on disk (unless forceRegenerate was explicitly requested AND all segments are checked)
+    const segments = this.splitSourceIntoPodcastSegments(sourceText, PODCAST_SCRIPT_SEGMENT_CHARS);
+    const allSegmentCheckpointsExist = segments.every((_, idx) =>
+      fs.existsSync(path.join(PODCAST_CHECKPOINT_DIR, `seg_${sourceHash}_${idx}_of_${segments.length}.json`))
+    );
+
+    if (!input.forceRegenerate) {
+      const allSaved = storage.getSavedPodcasts(input.userId);
+      const cachedPodcast = allSaved.find(
+        podcast =>
+          podcast.source === 'gemini' &&
+          Array.isArray(podcast.turns) &&
+          podcast.turns.length >= 4 &&
+          (podcast.sourceHash === sourceHash ||
+            (podcast.docTitle?.trim().toLowerCase() === normalizedTitle &&
+              (podcast.language || 'hinglish') === language &&
+              (segments.length === 1 || allSegmentCheckpointsExist)))
+      );
+      if (cachedPodcast && (segments.length === 1 || allSegmentCheckpointsExist)) {
+        console.log(`[podcast-bg] Returning cached completed podcast for "${docTitle}" (${language}) — 0 API calls`);
+        return { ...cachedPodcast, source: 'gemini' };
+      }
+    }
 
     const generation = this.generateAudioOverviewUncached({
       docTitle,
@@ -1822,6 +1853,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
       userId: input.userId,
       voiceStyle: input.voiceStyle,
       ttsModel: input.ttsModel,
+      forceRegenerate: input.forceRegenerate,
       sourceHash,
       inFlightKey
     });
@@ -1842,6 +1874,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     userId?: string;
     voiceStyle?: string;
     ttsModel?: string;
+    forceRegenerate?: boolean;
     sourceHash: string;
     inFlightKey: string;
   }): Promise<NotebookAudioOverview> {
@@ -1869,6 +1902,13 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
 
     const segments = this.splitSourceIntoPodcastSegments(sourceText, PODCAST_SCRIPT_SEGMENT_CHARS);
     const nowIso = new Date().toISOString();
+
+    // Check if there is already a saved partial/previous podcast ID for this sourceHash so progressive updates overwrite in place
+    const existingSaved = storage
+      .getSavedPodcasts(input.userId)
+      .find(p => p.sourceHash === input.sourceHash && p.docTitle === docTitle && p.language === language);
+    let progressivePodcastId: string | undefined = existingSaved?.id;
+
     const job: PodcastBackgroundJob = {
       jobId: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       userId: input.userId,
@@ -1890,18 +1930,48 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
     this.podcastJobs.set(input.inFlightKey, job);
 
     const allTurns: AudioTurn[] = [];
-    let episodeTitle = '';
-    let episodeTagline = '';
+    let episodeTitle = existingSaved?.title || '';
+    let episodeTagline = existingSaved?.tagline || '';
 
     try {
       for (let segIdx = 0; segIdx < segments.length; segIdx++) {
         const segText = segments[segIdx];
         const isFirst = segIdx === 0;
         const isLast = segIdx === segments.length - 1;
+        const segCheckpointPath = path.join(
+          PODCAST_CHECKPOINT_DIR,
+          `seg_${input.sourceHash}_${segIdx}_of_${segments.length}.json`
+        );
+
+        // PER-SEGMENT DISK CHECKPOINT RECOVERY:
+        // If this segment was already generated earlier (e.g. before server restart or quota pause),
+        // load it directly from disk with 0 API calls instead of starting from the initial phase!
+        if (!input.forceRegenerate && fs.existsSync(segCheckpointPath)) {
+          try {
+            const rawCheckpoint = await fs.promises.readFile(segCheckpointPath, 'utf8');
+            const parsedCheckpoint = JSON.parse(rawCheckpoint);
+            if (Array.isArray(parsedCheckpoint?.turns) && parsedCheckpoint.turns.length > 0) {
+              if (!episodeTitle && parsedCheckpoint.title) episodeTitle = parsedCheckpoint.title;
+              if (!episodeTagline && parsedCheckpoint.tagline) episodeTagline = parsedCheckpoint.tagline;
+              allTurns.push(...parsedCheckpoint.turns);
+              job.segmentsCompleted = segIdx + 1;
+              job.turnsGenerated = allTurns.length;
+              job.progressText =
+                segments.length > 1
+                  ? `Resumed Part ${segIdx + 1}/${segments.length} from checkpoint (${allTurns.length} turns ready)...`
+                  : 'Loaded script from checkpoint...';
+              job.updatedAt = new Date().toISOString();
+              console.log(
+                `[podcast-checkpoint] Resumed segment ${segIdx + 1}/${segments.length} for "${docTitle}" from disk (0 API calls)`
+              );
+              continue;
+            }
+          } catch {}
+        }
 
         job.progressText =
           segments.length > 1
-            ? `Generating Podcast Script (Part ${segIdx + 1}/${segments.length}${allTurns.length ? ` • ${allTurns.length} turns ready` : ''})...`
+            ? `Generating Podcast Script (Part ${segIdx + 1}/${segments.length}${allTurns.length ? ` • ${allTurns.length} turns saved` : ''})...`
             : 'Generating Podcast Script in Background...';
         job.updatedAt = new Date().toISOString();
 
@@ -2024,10 +2094,52 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
             })
             .filter(t => t.text.length > 0);
 
-          allTurns.push(...segTurns);
-          job.segmentsCompleted = segIdx + 1;
-          job.turnsGenerated = allTurns.length;
-          job.updatedAt = new Date().toISOString();
+          if (segTurns.length > 0) {
+            allTurns.push(...segTurns);
+            job.segmentsCompleted = segIdx + 1;
+            job.turnsGenerated = allTurns.length;
+            job.updatedAt = new Date().toISOString();
+
+            // 1. Write segment checkpoint to disk immediately so this segment is NEVER regenerated again
+            await fs.promises
+              .writeFile(
+                segCheckpointPath,
+                JSON.stringify({
+                  title: episodeTitle,
+                  tagline: episodeTagline,
+                  turns: segTurns,
+                  completedAt: job.updatedAt
+                }),
+                'utf8'
+              )
+              .catch(() => {});
+
+            // 2. Progressively save the podcast after every segment so work is never lost
+            if (allTurns.length >= 4) {
+              const wordCount = allTurns.reduce(
+                (total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length,
+                0
+              );
+              const durationMinutes = Math.max(1, Math.round(wordCount / 135));
+              const savedProgressive = storage.savePodcast({
+                id: progressivePodcastId,
+                userId: input.userId,
+                docTitle,
+                title: episodeTitle || `${docTitle}: Complete Deep Dive`,
+                tagline:
+                  episodeTagline ||
+                  `Aarav & Ananya explain every concept, formula, and exam trick from ${docTitle} in complete detail.`,
+                durationEstimate: `~${durationMinutes} min listen (${allTurns.length} turns)`,
+                language,
+                turns: [...allTurns],
+                source: 'gemini',
+                sourceHash: input.sourceHash
+              });
+              progressivePodcastId = savedProgressive.id;
+              job.podcastId = savedProgressive.id;
+              job.podcast = { ...savedProgressive, source: 'gemini' };
+            }
+          }
         }
       }
 
@@ -2035,6 +2147,7 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         const wordCount = allTurns.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0);
         const durationMinutes = Math.max(1, Math.round(wordCount / 135));
         const saved = storage.savePodcast({
+          id: progressivePodcastId,
           userId: input.userId,
           docTitle,
           title: episodeTitle || `${docTitle}: Complete Deep Dive`,
@@ -2059,7 +2172,8 @@ CRITICAL INSTRUCTIONS FOR QUALITY & STRUCTURE:
         job.progressText = 'Pre-synthesizing Gemini Flash TTS Studio Audio...';
         job.updatedAt = new Date().toISOString();
 
-        // Pre-warm the first 4-turn batch in the background on the server so audio plays in 0ms when ready
+        // Pre-warm the first 4-turn batch in the background on the server so audio plays in 0ms when ready.
+        // Deduplicated via neuralTts.batchInFlight so even if client plays immediately, only 1 TTS call is made!
         void neuralTts
           .synthesizeFullEpisode(
             allTurns.slice(0, 4),

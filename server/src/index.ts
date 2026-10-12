@@ -1211,7 +1211,7 @@ app.post('/api/ai/notebook/briefing', async (req, res) => {
 });
 
 app.post('/api/ai/notebook/audio-overview', async (req, res) => {
-  const { docTitle, sourceText, language, userId, voiceStyle, ttsModel } = req.body || {};
+  const { docTitle, sourceText, language, userId, voiceStyle, ttsModel, forceRegenerate } = req.body || {};
   if (typeof sourceText !== 'string' || !sourceText.trim()) {
     return res.status(400).json({ error: 'sourceText is required' });
   }
@@ -1222,7 +1222,8 @@ app.post('/api/ai/notebook/audio-overview', async (req, res) => {
       language,
       userId,
       voiceStyle,
-      ttsModel
+      ttsModel,
+      forceRegenerate: Boolean(forceRegenerate)
     });
     res.json(result);
   } catch (err) {
