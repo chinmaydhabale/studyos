@@ -699,9 +699,12 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
     setIsUploading(true);
     stopAudio();
     try {
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      const fileNameLower = file.name.toLowerCase();
+      const isPdf = file.type === 'application/pdf' || fileNameLower.endsWith('.pdf');
+      const isMd = fileNameLower.endsWith('.md') || fileNameLower.endsWith('.markdown');
+
       if (isPdf) {
-        const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ');
+        const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' ');
         setLoadingAction('Reading PDF pages...');
         const extracted = await extractFullDocumentText({
           file,
@@ -733,11 +736,36 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
           `Extracted ${extracted.text.length.toLocaleString()} chars across ${extracted.pagesRead}/${extracted.totalPages} pages of "${cleanTitle}". Ready for Podcast & Study Tools!`,
           'success'
         );
+      } else if (isMd) {
+        setLoadingAction('Reading Markdown notes...');
+        const text = await file.text();
+        if (!text.trim()) {
+          addToast('Empty Markdown File', 'The selected markdown file contains no text.', 'alert');
+          return;
+        }
+
+        // If the markdown file has a top header (# Header), extract it for a clean episode title
+        const headerMatch = text.match(/^\s*#\s+([^\r\n#]+)/m);
+        const fileNameClean = file.name.replace(/\.(md|markdown)$/i, '').replace(/[-_]/g, ' ').trim();
+        const cleanTitle = (headerMatch ? headerMatch[1].trim() : fileNameClean) || fileNameClean || 'Markdown Study Notes';
+
+        setActiveTopic(cleanTitle);
+        setActiveDomain('Markdown Notes (.md)');
+        setSourceMaterial(text);
+        setSourceMaterialTopic(cleanTitle);
+        setTempEditorTitle(cleanTitle);
+        setTempEditorText(text);
+        resetGeneratedContent(cleanTitle);
+        addToast(
+          'Markdown Document Loaded! 📝',
+          `Loaded "${cleanTitle}" (${text.length.toLocaleString()} chars). Ready for Podcast, Flashcards & Study Tools!`,
+          'success'
+        );
       } else {
         const text = await file.text();
-        const cleanTitle = file.name.replace(/\.[^/.]+$/, '');
+        const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim() || 'Custom Study Notes';
         setActiveTopic(cleanTitle);
-        setActiveDomain('Custom File');
+        setActiveDomain('Custom Text Notes');
         setSourceMaterial(text);
         setSourceMaterialTopic(cleanTitle);
         setTempEditorTitle(cleanTitle);
@@ -750,7 +778,7 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
       addToast('Upload Error', 'Failed to read document text. Please try another file.', 'alert');
     } finally {
       setIsUploading(false);
-      setLoadingAction(prev => (prev && (prev.includes('PDF') || prev.includes('page') || prev.includes('OCR')) ? null : prev));
+      setLoadingAction(prev => (prev && (prev.includes('PDF') || prev.includes('Markdown') || prev.includes('page') || prev.includes('OCR')) ? null : prev));
       if (e.target) e.target.value = '';
     }
   };
@@ -1826,13 +1854,16 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             )}
           </div>
 
-          {/* Upload PDF / Document */}
-          <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold border border-white/10 cursor-pointer transition-colors">
+          {/* Upload PDF / Markdown / Document */}
+          <label
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-200 hover:text-white text-xs font-semibold border border-purple-500/30 cursor-pointer transition-colors shadow-sm"
+            title="Upload PDF, Markdown (.md), or text file for podcast generation & study tools"
+          >
             <Upload className={`w-3.5 h-3.5 text-purple-400 ${isUploading ? 'animate-bounce' : ''}`} />
-            <span>{isUploading ? 'Reading...' : 'Upload PDF'}</span>
+            <span>{isUploading ? 'Reading...' : 'Upload PDF / MD'}</span>
             <input
               type="file"
-              accept=".pdf,.txt,.md"
+              accept=".pdf,.md,.markdown,.txt"
               onChange={handleFileUpload}
               className="hidden"
               disabled={isUploading}
@@ -2423,6 +2454,20 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
                         ))}
                       </select>
                     </div>
+                    <label
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded-xl transition-all border border-cyan-500/30 cursor-pointer flex items-center gap-1.5 shadow-sm"
+                      title="Upload Markdown notes (.md) or PDF to generate podcast"
+                    >
+                      <Upload className={`w-3.5 h-3.5 text-cyan-400 ${isUploading ? 'animate-bounce' : ''}`} />
+                      <span>{isUploading ? 'Reading...' : 'Upload PDF / MD'}</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.md,.markdown,.txt"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        disabled={isUploading}
+                      />
+                    </label>
                     <button
                       onClick={() => void generateAudioDiscussion(audioLang, true)}
                       disabled={Boolean(loadingAction)}
@@ -3092,9 +3137,40 @@ export const AICoachHub: React.FC<AICoachHubProps> = ({ initialPrompt = '', init
             </div>
 
             <div className="flex items-center justify-between pt-2">
-              <span className="text-[11px] text-slate-500">
-                {tempEditorText.split(/\s+/).filter(Boolean).length} words
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-slate-500">
+                  {tempEditorText.split(/\s+/).filter(Boolean).length} words
+                </span>
+                <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-cyan-300 border border-cyan-500/30 cursor-pointer transition-all">
+                  <FileText className="w-3 h-3 text-cyan-400" />
+                  <span>Import .md / .txt</span>
+                  <input
+                    type="file"
+                    accept=".md,.markdown,.txt"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const content = await file.text();
+                        if (content.trim()) {
+                          setTempEditorText(content);
+                          const lines = content.split('\n');
+                          const headerLine = lines.find((l) => l.trim().startsWith('#'));
+                          const suggestedTitle = headerLine
+                            ? headerLine.replace(/^#+\s*/, '').trim()
+                            : file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                          if (suggestedTitle) setTempEditorTitle(suggestedTitle);
+                          addToast('Imported File', `Loaded ${file.name}`, 'success');
+                        }
+                      } catch {
+                        addToast('Import Failed', 'Could not read markdown file', 'alert');
+                      }
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
               <div className="flex gap-2">
                 <button
                   onClick={() => setIsEditorOpen(false)}
