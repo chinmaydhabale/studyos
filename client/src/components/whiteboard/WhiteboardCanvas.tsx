@@ -562,12 +562,16 @@ export const WhiteboardCanvas: React.FC = () => {
     commitDrawnShape(endPos);
   };
 
-  // Leaving the canvas cancels the in-progress stroke instead of committing a
-  // half-drawn shape.
-  const handleMouseLeave = () => {
+  // Leaving the canvas commits the stroke up to the canvas boundary
+  // so accidental mouse-out does not discard the user's diagram or handwriting.
+  const handleMouseLeave = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing || !startPos) {
+      setIsDrawing(false);
+      return;
+    }
+    const endPos = getCanvasCoords(e);
     setIsDrawing(false);
-    setCurrentPoints([]);
-    setStartPos(null);
+    commitDrawnShape(endPos);
   };
 
   // Touch Event Handlers for Tablets / Mobile

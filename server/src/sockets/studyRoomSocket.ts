@@ -659,15 +659,25 @@ export function setupStudyRoomSocket(io: Server, socket: Socket) {
     acceptorId: string;
     acceptorName: string;
     acceptorAvatar?: string;
+    acceptorSocketId?: string;
+    senderId?: string;
+    senderName?: string;
+    senderAvatar?: string;
     roomId: string;
     seed: number;
     gameMode: string;
     timeLimit: number;
+    difficulty?: string;
+    isMultiOp?: boolean;
   }) => {
     if (!canSignal(io, socket, data.challengerSocketId)) return;
+    const startPayload = {
+      ...data,
+      acceptorSocketId: socket.id
+    };
     // Broadcast match start to both players
-    io.to(data.challengerSocketId).emit('math:duel_start', data);
-    socket.emit('math:duel_start', data);
+    io.to(data.challengerSocketId).emit('math:duel_start', startPayload);
+    socket.emit('math:duel_start', startPayload);
   });
 
   socket.on('math:duel_decline', (data: { challengerSocketId: string; duelId: string; message?: string }) => {

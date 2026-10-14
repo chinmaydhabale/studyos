@@ -4,8 +4,8 @@
  * or on Vercel with automatic failover to the active Cloudflare tunnel.
  */
 
-// Active production tunnel endpoint on the VPS
-export const DEFAULT_PRODUCTION_TUNNEL = 'https://ste-gourmet-camera-holder.trycloudflare.com';
+// Active production endpoint (set VITE_API_URL in production environment)
+export const DEFAULT_PRODUCTION_TUNNEL = (import.meta as any).env?.VITE_API_URL || '';
 
 const resolveApiBaseUrl = (): string => {
   if (typeof window === 'undefined') return 'http://localhost:4000';
@@ -21,22 +21,18 @@ const resolveApiBaseUrl = (): string => {
     }
   } catch (e) {}
 
-  // 2. Check if user set custom backend in localStorage (discard dead tunnel endpoints)
+  // 2. Check if user set custom backend in localStorage
   try {
     const saved = localStorage.getItem('studyos_custom_api_url');
     if (saved && saved.trim().startsWith('http')) {
-      if (saved.includes('trycloudflare.com') && !saved.includes('ste-gourmet-camera-holder')) {
-        localStorage.removeItem('studyos_custom_api_url');
-      } else {
-        return saved.trim().replace(/\/+$/, '');
-      }
+      return saved.trim().replace(/\/+$/, '');
     }
   } catch (e) {}
 
   const host = window.location.hostname;
 
-  // 3. If running on same origin on the VPS (e.g. *.trycloudflare.com or custom domain)
-  if (host.includes('trycloudflare.com') || (!host.includes('vercel.app') && host !== 'localhost' && host !== '127.0.0.1')) {
+  // 3. If running on same origin on a VPS or reverse proxy
+  if (!host.includes('vercel.app') && host !== 'localhost' && host !== '127.0.0.1') {
     return ''; // Relative paths point directly to the same-origin server
   }
 
@@ -46,18 +42,12 @@ const resolveApiBaseUrl = (): string => {
     return envUrl && envUrl.trim() ? envUrl.trim().replace(/\/+$/, '') : 'http://localhost:4000';
   }
 
-  // 5. If running on Vercel (*.vercel.app):
-  // Check if env var is set and NOT an outdated trycloudflare domain
+  // 5. If running on Vercel or remote host
   const envUrl = (import.meta as any).env?.VITE_API_URL;
-  if (
-    envUrl &&
-    envUrl.trim() &&
-    (!envUrl.includes('trycloudflare.com') || envUrl.includes('ste-gourmet-camera-holder'))
-  ) {
+  if (envUrl && envUrl.trim()) {
     return envUrl.trim().replace(/\/+$/, '');
   }
 
-  // 6. Default to active Cloudflare production tunnel
   return DEFAULT_PRODUCTION_TUNNEL;
 };
 

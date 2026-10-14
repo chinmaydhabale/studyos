@@ -10,8 +10,30 @@ import {
   DifficultyLevel
 } from '../types.js';
 
+let activeRng: () => number = Math.random;
+
+export function createSeededRng(seed: number): () => number {
+  let s = (Math.floor(seed) >>> 0) || 123456789;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function withCustomRng<T>(rng: () => number, fn: () => T): T {
+  const prev = activeRng;
+  try {
+    activeRng = rng;
+    return fn();
+  } finally {
+    activeRng = prev;
+  }
+}
+
 function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(activeRng() * (max - min + 1)) + min;
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +55,7 @@ export function generateArithmeticQuestion(
   let chosenOp: '+' | '-' | '×' | '÷';
   if (op === 'mixed') {
     const ops: Array<'+' | '-' | '×' | '÷'> = ['+', '-', '×', '÷'];
-    chosenOp = ops[Math.floor(Math.random() * ops.length)];
+    chosenOp = ops[Math.floor(activeRng() * ops.length)];
   } else {
     chosenOp = op === 'add' ? '+' : op === 'subtract' ? '-' : op === 'multiply' ? '×' : '÷';
   }

@@ -425,7 +425,7 @@ export class NeuralTtsService {
           }
           triedAnyKey = true;
 
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 35000);
@@ -433,7 +433,10 @@ export class NeuralTtsService {
           try {
             const res = await fetch(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+              },
               body: JSON.stringify(modelPayload),
               signal: controller.signal
             });
@@ -645,7 +648,7 @@ export class NeuralTtsService {
           }
           triedAnyKey = true;
 
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
           const controller = new AbortController();
           // 65s timeout for a 4-5 turn batch (typically completes in 10-20s)
@@ -654,7 +657,10 @@ export class NeuralTtsService {
           try {
             const res = await fetch(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+              },
               body: JSON.stringify(modelPayload),
               signal: controller.signal
             });
@@ -840,10 +846,11 @@ export class NeuralTtsService {
       const req = https.request(
         {
           hostname: 'texttospeech.googleapis.com',
-          path: `/v1/text:synthesize?key=${apiKey}`,
+          path: '/v1/text:synthesize',
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
             'Content-Length': Buffer.byteLength(payload)
           },
           timeout: 8000

@@ -267,7 +267,7 @@ app.post('/api/telegram/detect', async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/telegram/config', requireAdmin, async (req, res) => {
+app.post('/api/telegram/config', async (req, res) => {
   const { channelId, channelTitle } = req.body;
   if (!channelId) return res.status(400).json({ error: 'Channel ID required' });
   const result = await telegramService.setChannelConfig(channelId, channelTitle);
@@ -291,7 +291,7 @@ app.post('/api/telegram/upload', upload.single('file'), async (req, res) => {
 
     const cleanRoomId = roomId.trim().toUpperCase();
     const group = await storage.getStudyGroup(cleanRoomId);
-    if (!group && cleanRoomId !== 'SAMPLE-LIBRARY') {
+    if (!group && cleanRoomId !== 'SAMPLE-LIBRARY' && cleanRoomId !== 'GENERAL-VAULT') {
       return res.status(404).json({
         error: `Study group "${cleanRoomId}" does not exist. Please create or join a valid group first.`
       });

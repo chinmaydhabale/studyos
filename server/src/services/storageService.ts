@@ -43,12 +43,18 @@ const stripDbFields = <T extends object>(obj: T): T => {
   return rest as T;
 };
 
-// "Today" must follow the local calendar day — toISOString() would give the UTC day,
-// which is still yesterday for users in India between 00:00 and 05:30 local time.
+// "Today" follows Indian Standard Time (IST, UTC+5:30) so midnight-to-5:30 AM study sessions
+// are correctly credited to the Indian calendar day regardless of the host server's UTC timezone.
 export const localDateKey = (date: Date = new Date()): string => {
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date);
+  } catch {
+    const istMs = date.getTime() + (5.5 * 60 * 60 * 1000);
+    const istDate = new Date(istMs);
+    const month = `${istDate.getUTCMonth() + 1}`.padStart(2, '0');
+    const day = `${istDate.getUTCDate()}`.padStart(2, '0');
+    return `${istDate.getUTCFullYear()}-${month}-${day}`;
+  }
 };
 
 const getDirname = (): string => {

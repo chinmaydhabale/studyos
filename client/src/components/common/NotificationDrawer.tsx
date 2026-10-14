@@ -22,34 +22,40 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   onClose,
   onNavigateTab
 }) => {
-  const { notifications, dismissNotification } = useSocket();
+  const { notifications, dismissNotification, currentUser, peers, roomId } = useSocket();
 
-  // Curated proactive system reminders
+  const peerName = peers && peers.length > 0 ? (peers[0].name || 'A study partner') : null;
+  const currentStreak = currentUser?.streak || 0;
+  const exam = currentUser?.targetExam || 'Competitive Exam';
+
+  // Contextual proactive system reminders
   const systemReminders = [
-    {
+    ...(peerName ? [{
       id: 'sys-rem-1',
-      title: 'Friend Studying Live',
-      message: 'Aarav Patel started studying "Physics - Thermodynamics" in room study-room-alpha.',
+      title: 'Buddy Studying Live',
+      message: `${peerName} is studying live in room ${roomId || 'StudyOS'}.`,
       type: 'info',
       icon: UserCheck,
       color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
       action: () => onNavigateTab('video'),
-      actionText: 'Join Lecture'
-    },
+      actionText: 'Join Room'
+    }] : []),
     {
       id: 'sys-rem-2',
-      title: 'Assigned Task Pending',
-      message: 'Task "30 minutes of Current Affairs" is scheduled for tomorrow at 09:00 AM.',
+      title: 'Exam Objectives Pending',
+      message: `Daily prep schedule for ${exam} is active in your planner.`,
       type: 'warning',
       icon: Clock,
       color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
       action: () => onNavigateTab('ai-coach'),
-      actionText: 'View in AI Planner'
+      actionText: 'View Planner'
     },
     {
       id: 'sys-rem-3',
-      title: 'Maintain Your 7-Day Streak 🔥',
-      message: 'Complete today\'s planned Calculus session to preserve your 7-day study streak!',
+      title: currentStreak > 0 ? `Maintain Your ${currentStreak}-Day Streak 🔥` : 'Start Your Study Streak 🔥',
+      message: currentStreak > 0
+        ? `Complete today's planned session to preserve your ${currentStreak}-day focus streak!`
+        : 'Complete your first deep focus block today to ignite your streak!',
       type: 'alert',
       icon: Flame,
       color: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
@@ -58,8 +64,8 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     },
     {
       id: 'sys-rem-4',
-      title: 'Time for Spaced Revision',
-      message: 'Organic Chemistry Reaction Mechanisms are due for review today.',
+      title: 'Target Revision Queue',
+      message: `Practice questions and high-yield flashcards for ${exam} are ready.`,
       type: 'info',
       icon: CheckCircle,
       color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',

@@ -19,7 +19,7 @@ import {
 import { useSocket } from '../../../context/SocketContext.js';
 import { useStudy } from '../../../context/StudyContext.js';
 import { ArithmeticQuestion, DifficultyLevel, DuelInvite, DuelPeerProgress } from '../types.js';
-import { generateArithmeticQuestion } from '../engines/mathEngine.js';
+import { generateArithmeticQuestion, createSeededRng, withCustomRng } from '../engines/mathEngine.js';
 import { mathSounds } from '../engines/mathSoundEffects.js';
 import { MathNumpad } from '../shared/MathNumpad.js';
 import { ComboStreakBadge } from '../shared/ComboStreakBadge.js';
@@ -71,6 +71,14 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
   activeDuelIdRef.current = activeDuelId;
   const opponentRef = useRef(opponent);
   opponentRef.current = opponent;
+  const matchSeedRef = useRef<number>(123456789);
+
+  // Synchronized question generation using deterministic PRNG seeded by match start
+  const getDuelQuestion = useCallback((qIndex: number, diff: DifficultyLevel, isMulti: boolean) => {
+    const seed = (matchSeedRef.current || 123456789) + qIndex * 7919;
+    const rng = createSeededRng(seed);
+    return withCustomRng(rng, () => generateArithmeticQuestion('mixed', diff, isMulti));
+  }, []);
 
   // Sound toggle
   const toggleMute = () => {
@@ -110,6 +118,7 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
 
       if (data.difficulty) setDuelDifficulty(data.difficulty);
       if (data.isMultiOp !== undefined) setDuelIsMultiOp(data.isMultiOp);
+      if (data.seed) matchSeedRef.current = Number(data.seed);
 
       setOpponent(opp);
       setActiveDuelId(data.duelId);
@@ -193,10 +202,10 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
         isFinished: false
       });
       setOpponentFinal(null);
-      setCurrentQ(generateArithmeticQuestion('mixed', duelDifficulty, duelIsMultiOp));
+      setCurrentQ(getDuelQuestion(0, duelDifficulty, duelIsMultiOp));
       setMatchState('playing');
     }
-  }, [matchState, countdown, opponent, duelDifficulty, duelIsMultiOp]);
+  }, [matchState, countdown, opponent, duelDifficulty, duelIsMultiOp, getDuelQuestion]);
 
   // Send Invite to Peer
   const sendDuelInvite = (targetPeer: any) => {
@@ -363,9 +372,9 @@ export const MultiplayerDuelArena: React.FC<MultiplayerDuelArenaProps> = ({ onBa
     setTimeout(() => {
       setFeedback(null);
       setInputVal('');
-      setCurrentQ(generateArithmeticQuestion('mixed', duelDifficulty, duelIsMultiOp));
+      setCurrentQ(getDuelQuestion(nextSolved, duelDifficulty, duelIsMultiOp));
     }, 180);
-  }, [currentQ, inputVal, myScore, myStreak, myMaxStreak, mySolvedCount, socket, opponent, activeDuelId, currentUser?.id, duelDifficulty, duelIsMultiOp]);
+  }, [currentQ, inputVal, myScore, myStreak, myMaxStreak, mySolvedCount, socket, opponent, activeDuelId, currentUser?.id, duelDifficulty, duelIsMultiOp, getDuelQuestion]);
 
   // Keyboard listener during duel
   useEffect(() => {

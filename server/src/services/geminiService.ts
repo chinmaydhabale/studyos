@@ -317,10 +317,21 @@ export class GeminiService {
     if (str.startsWith('```')) {
       str = str.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
-    const first = str.indexOf('{');
-    const last = str.lastIndexOf('}');
-    if (first !== -1 && last > first) {
-      str = str.slice(first, last + 1);
+    const firstBrace = str.indexOf('{');
+    const firstBracket = str.indexOf('[');
+    const hasBrace = firstBrace !== -1;
+    const hasBracket = firstBracket !== -1;
+
+    if (hasBracket && (!hasBrace || firstBracket < firstBrace)) {
+      const lastBracket = str.lastIndexOf(']');
+      if (lastBracket > firstBracket) {
+        str = str.slice(firstBracket, lastBracket + 1);
+      }
+    } else if (hasBrace) {
+      const lastBrace = str.lastIndexOf('}');
+      if (lastBrace > firstBrace) {
+        str = str.slice(firstBrace, lastBrace + 1);
+      }
     }
 
     // Direct attempt

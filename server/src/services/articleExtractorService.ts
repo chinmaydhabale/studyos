@@ -32,6 +32,52 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#8212;/g, '--');
 }
 
+function sanitizeInlineHtml(raw: string, originalUrl: string): string {
+  if (!raw) return '';
+  // 1. Strip dangerous executable/interactive tags
+  let sanitized = raw.replace(/<(script|style|iframe|object|embed|svg|form|input|button|link|meta)[\s\S]*?<\/\1>/gi, '');
+  sanitized = sanitized.replace(/<(script|style|iframe|object|embed|svg|form|input|button|link|meta)[^>]*\/?>/gi, '');
+
+  // 2. Strip all inline on* event attributes (e.g. onerror=, onclick=)
+  sanitized = sanitized.replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+
+  // 3. Remove all tags except whitelist
+  sanitized = sanitized.replace(/<(?!\/?(strong|em|b|i|a|span|code|mark)\b)[^>]+>/gi, ' ');
+
+  // 4. Clean attributes: only allow safe http/https hrefs on <a>
+  sanitized = sanitized.replace(/<a\b([^>]*)>/gi, (_match, attrs) => {
+    const hrefMatch = attrs.match(/href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    let href = hrefMatch ? (hrefMatch[1] || hrefMatch[2] || hrefMatch[3] || '').trim() : '';
+
+    if (href.startsWith('/')) {
+      try {
+        href = new URL(href, originalUrl).href;
+      } catch {}
+    }
+
+    if (/^https?:\/\//i.test(href)) {
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline hover:text-cyan-300">`;
+    }
+    return '<span>';
+  });
+
+  // Strip all attributes from other allowed tags
+  sanitized = sanitized.replace(/<(strong|em|b|i|span|code|mark)\b[^>]*>/gi, '<$1>');
+  return sanitized.replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeTableHtml(raw: string): string {
+  if (!raw) return '';
+  // Strip dangerous tags and event handlers
+  let sanitized = raw.replace(/<(script|style|iframe|object|embed|svg|form|input|button)[\s\S]*?<\/\1>/gi, '');
+  sanitized = sanitized.replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  // Whitelist table tags and basic text styling
+  sanitized = sanitized.replace(/<(?!\/?(table|thead|tbody|tfoot|tr|th|td|strong|em|b|i|span|code|br)\b)[^>]+>/gi, ' ');
+  // Strip all attributes from all table elements
+  sanitized = sanitized.replace(/<(table|thead|tbody|tfoot|tr|th|td|strong|em|b|i|span|code|br)\b[^>]*>/gi, '<$1>');
+  return sanitized.trim();
+}
+
 export function extractArticleFromHtml(html: string, originalUrl: string): ExtractedArticle {
   let hostname = '';
   try {
@@ -163,20 +209,8 @@ export function extractArticleFromHtml(html: string, originalUrl: string): Extra
       continue;
     }
 
-    // Sanitize inner HTML: allow strong, em, b, i, a, span
-    let sanitizedInner = innerContent
-      .replace(/<(?!\/?(strong|em|b|i|a|span|li|tr|td|th)\b)[^>]+>/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Rebase links
-    sanitizedInner = sanitizedInner.replace(/href=["'](\/[^"']*)["']/gi, (_m, path) => {
-      try {
-        return `href="${new URL(path, originalUrl).href}"`;
-      } catch {
-        return `href="${path}"`;
-      }
-    });
+    // Sanitize inner HTML with strict whitelist and attribute cleaning
+    const sanitizedInner = sanitizeInlineHtml(innerContent, originalUrl);
 
     if (tagName.startsWith('h')) {
       contentItems.push(`<${tagName} class="font-bold text-slate-100 mt-6 mb-3 text-lg">${textOnly}</${tagName}>`);
@@ -185,7 +219,10 @@ export function extractArticleFromHtml(html: string, originalUrl: string): Extra
     } else if (tagName === 'ul' || tagName === 'ol') {
       contentItems.push(`<${tagName} class="list-disc list-inside space-y-1 my-3 text-slate-300 pl-2 leading-relaxed">${sanitizedInner}</${tagName}>`);
     } else if (tagName === 'table') {
-      contentItems.push(`<div class="overflow-x-auto my-4 border border-white/10 rounded-xl p-2 bg-slate-900/60">${innerContent}</div>`);
+      const safeTable = sanitizeTableHtml(innerContent);
+      if (safeTable) {
+        contentItems.push(`<div class="overflow-x-auto my-4 border border-white/10 rounded-xl p-2 bg-slate-900/60">${safeTable}</div>`);
+      }
     } else {
       contentItems.push(`<p class="text-slate-300 leading-relaxed mb-4 text-sm sm:text-base">${sanitizedInner}</p>`);
     }

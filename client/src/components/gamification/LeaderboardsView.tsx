@@ -59,12 +59,53 @@ export const LeaderboardsView: React.FC = () => {
     return () => controller.abort();
   }, [filter, currentUser.id, addToast]);
 
+  const currentStreak = currentUser?.streak || streak || 0;
+  const bestStreak = currentUser?.bestStreak || currentStreak;
+  const studyHours = currentUser?.totalStudyHours || 0;
+  const tasksCompleted = currentUser?.tasksCompleted || 0;
+  const focusScore = currentUser?.focusScore || 0;
+
   const achievementBadges = [
-    { title: '🔥 7-Day Streak', desc: 'Maintained 7 consecutive study days without missing.', unlocked: true, color: 'from-amber-500/20 to-orange-500/20 border-amber-500/30 text-amber-300' },
-    { title: '🏆 100 Study Hours', desc: 'Accumulated over 100 deep focus hours on StudyOS.', unlocked: true, color: 'from-yellow-500/20 to-amber-500/20 border-yellow-500/30 text-yellow-300' },
-    { title: '⚡ No Break Session', desc: 'Completed a 50-minute uninterrupted deep focus block.', unlocked: true, color: 'from-cyan-500/20 to-blue-500/20 border-cyan-500/30 text-cyan-300' },
-    { title: '📚 Completed 500 Tasks', desc: 'Crushed 500 individual study objectives and quizzes.', unlocked: false, color: 'from-slate-800 to-slate-900 border-white/5 text-slate-500' },
-    { title: '🎯 Perfect Week', desc: 'Hit 100% of planned study targets for 7 days straight.', unlocked: true, color: 'from-emerald-500/20 to-teal-500/20 border-emerald-500/30 text-emerald-300' }
+    {
+      title: '🔥 7-Day Streak',
+      desc: 'Maintained 7 consecutive study days without missing.',
+      unlocked: bestStreak >= 7,
+      color: bestStreak >= 7
+        ? 'from-amber-500/20 to-orange-500/20 border-amber-500/30 text-amber-300'
+        : 'from-slate-800 to-slate-900 border-white/5 text-slate-500'
+    },
+    {
+      title: '🏆 100 Study Hours',
+      desc: 'Accumulated over 100 deep focus hours on StudyOS.',
+      unlocked: studyHours >= 100,
+      color: studyHours >= 100
+        ? 'from-yellow-500/20 to-amber-500/20 border-yellow-500/30 text-yellow-300'
+        : 'from-slate-800 to-slate-900 border-white/5 text-slate-500'
+    },
+    {
+      title: '⚡ No Break Session',
+      desc: 'Completed a 50-minute uninterrupted deep focus block.',
+      unlocked: focusScore >= 80,
+      color: focusScore >= 80
+        ? 'from-cyan-500/20 to-blue-500/20 border-cyan-500/30 text-cyan-300'
+        : 'from-slate-800 to-slate-900 border-white/5 text-slate-500'
+    },
+    {
+      title: '📚 Completed 500 Tasks',
+      desc: 'Crushed 500 individual study objectives and quizzes.',
+      unlocked: tasksCompleted >= 500,
+      color: tasksCompleted >= 500
+        ? 'from-purple-500/20 to-indigo-500/20 border-purple-500/30 text-purple-300'
+        : 'from-slate-800 to-slate-900 border-white/5 text-slate-500'
+    },
+    {
+      title: '🎯 Perfect Week',
+      desc: 'Hit 100% of planned study targets for 7 days straight.',
+      unlocked: streak >= 7 && tasksCompleted >= 14,
+      color: streak >= 7 && tasksCompleted >= 14
+        ? 'from-emerald-500/20 to-teal-500/20 border-emerald-500/30 text-emerald-300'
+        : 'from-slate-800 to-slate-900 border-white/5 text-slate-500'
+    }
   ];
 
   const getTierBadge = (tier: string) => {
